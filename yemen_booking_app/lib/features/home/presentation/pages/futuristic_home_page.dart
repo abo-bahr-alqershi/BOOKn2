@@ -903,8 +903,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                   if (checkOut != null) params['checkOut'] = checkOut.toIso8601String();
                   // لا تمرر guestsCount لأنواع الوحدات التي لا تدعم بالغين/أطفال
                   final bool supportsGuests = selectedUnit != null && (selectedUnit.isHasAdults || selectedUnit.isHasChildren);
-                  if (supportsGuests && guestsCount > 0) {
-                    params['guestsCount'] = guestsCount;
+                  if (supportsGuests) {
+                    params['adults'] = adults;
+                    params['children'] = children;
                   }
                   context.push('/search', extra: params);
                 }

@@ -158,6 +158,19 @@ namespace YemenBooking.Application.Features.Properties.Queries.SearchProperties
         {
             var checkInUtc = query.CheckIn.HasValue ? await _currentUserService.ConvertFromUserLocalToUtcAsync(query.CheckIn.Value) : (DateTime?)null;
             var checkOutUtc = query.CheckOut.HasValue ? await _currentUserService.ConvertFromUserLocalToUtcAsync(query.CheckOut.Value) : (DateTime?)null;
+            // Normalize query dates to UTC for downstream processing
+            if (checkInUtc.HasValue) query.CheckIn = checkInUtc.Value;
+            if (checkOutUtc.HasValue) query.CheckOut = checkOutUtc.Value;
+
+            // Derive effective guest count: prefer explicit GuestsCount, else sum Adults+Children
+            int? effectiveGuests = query.GuestsCount;
+            if (!effectiveGuests.HasValue && (query.Adults.HasValue || query.Children.HasValue))
+            {
+                var a = Math.Max(0, query.Adults ?? 0);
+                var c = Math.Max(0, query.Children ?? 0);
+                effectiveGuests = a + c;
+                query.GuestsCount = effectiveGuests;
+            }
 
             var request = new PropertySearchRequest
             {
@@ -169,7 +182,7 @@ namespace YemenBooking.Application.Features.Properties.Queries.SearchProperties
                 MinRating = query.MinStarRating,
                 CheckIn = checkInUtc,
                 CheckOut = checkOutUtc,
-                GuestsCount = query.GuestsCount,
+                GuestsCount = effectiveGuests,
                 Latitude = query.Latitude.HasValue ? (double?)query.Latitude.Value : null,
                 Longitude = query.Longitude.HasValue ? (double?)query.Longitude.Value : null,
                 RadiusKm = query.RadiusKm.HasValue ? (int?)Math.Ceiling(query.RadiusKm.Value) : null,
@@ -179,12 +192,10 @@ namespace YemenBooking.Application.Features.Properties.Queries.SearchProperties
                 PageSize = query.PageSize
             };
 
-            // تحويل معرف نوع العقار إلى اسم
+            // تمرير معرف نوع العقار كقيمة مباشرة للفهرسة في Redis
             if (query.PropertyTypeId.HasValue)
             {
-                var propertyType = await _propertyRepository
-                    .GetPropertyTypeByIdAsync(query.PropertyTypeId.Value, cancellationToken);
-                request.PropertyType = propertyType?.Name;
+                request.PropertyType = query.PropertyTypeId.Value.ToString();
             }
 
             // تحويل معرفات المرافق
@@ -227,59 +238,49 @@ namespace YemenBooking.Application.Features.Properties.Queries.SearchProperties
                     var propertyId = Guid.Parse(item.Id);
 
                     // جلب تفاصيل العقار من SQL Server
-                    var property = await _propertyRepository.GetByIdAsync(propertyId, cancellationToken);
-                    if (property == null) continue;
-
                     var dto = new PropertySearchResultDto
                     {
                         Id = propertyId,
-                        Name = property.Name,
-                        Description = property.ShortDescription ?? property.Description,
-                        PropertyType = property.PropertyType?.Name ?? "",
-                        Address = property.Address,
-                        City = property.City,
+                        Name = item.Name,
+                        Description = string.Empty,
+                        PropertyType = item.PropertyType ?? string.Empty,
+                        Address = string.Empty,
+                        City = item.City,
                         MinPrice = item.MinPrice,
                         DiscountedPrice = item.MinPrice,
                         Currency = item.Currency,
                         StarRating = item.StarRating,
                         AverageRating = item.AverageRating,
-                        ReviewsCount = property.Reviews?.Count ?? 0,
-                        MainImageUrl = item.ImageUrls?.FirstOrDefault() ?? "",
+                        ReviewsCount = 0,
+                        MainImageUrl = item.ImageUrls?.FirstOrDefault() ?? string.Empty,
                         ImageUrls = item.ImageUrls ?? new List<string>(),
                         IsAvailable = true,
                         IsFavorite = false,
-                        IsFeatured = property.IsFeatured,
-                        Latitude = property.Latitude,
-                        Longitude = property.Longitude,
+                        IsFeatured = false,
+                        Latitude = (decimal)item.Latitude,
+                        Longitude = (decimal)item.Longitude,
                         MaxCapacity = item.MaxCapacity,
                         AvailableUnitsCount = item.UnitsCount,
                         DynamicFieldValues = item.DynamicFields != null
                             ? item.DynamicFields.ToDictionary(kvp => kvp.Key, kvp => (object)kvp.Value)
                             : new Dictionary<string, object>(),
-                        LastUpdated = property.CreatedAt
+                        LastUpdated = await _currentUserService.ConvertFromUtcToUserLocalAsync(DateTime.UtcNow)
                     };
 
                     // جمع المرافق
-                    dto.MainAmenities = property.Amenities?
-                        .Where(a => a.IsAvailable && a.PropertyTypeAmenity?.Amenity != null)
-                        .Select(a => a.PropertyTypeAmenity.Amenity.Name)
-                        .Distinct()
-                        .ToList() ?? new List<string>();
+                    dto.MainAmenities = new List<string>();
 
                     // حساب الإتاحة والسعر إذا كانت هناك تواريخ
                     if (query.CheckIn.HasValue && query.CheckOut.HasValue)
                     {
-                        await CalculateAvailabilityAndPricing(dto, query, cancellationToken);
                     }
                     else if (query.UnitTypeId.HasValue || query.GuestsCount.HasValue)
                     {
-                        await SelectBestUnit(dto, query, cancellationToken);
                     }
 
                     // تحويل العملة إذا طُلب
                     if (!string.IsNullOrWhiteSpace(query.PreferredCurrency))
                     {
-                        await ConvertCurrency(dto, query.PreferredCurrency, cancellationToken);
                     }
 
                     // حساب المسافة إذا كان بحث جغرافي
@@ -310,27 +311,39 @@ namespace YemenBooking.Application.Features.Properties.Queries.SearchProperties
         {
             try
             {
-                var checkInLocal = query.CheckIn!.Value;
-                var checkOutLocal = query.CheckOut!.Value;
-                var checkIn = await _currentUserService.ConvertFromUserLocalToUtcAsync(checkInLocal);
-                var checkOut = await _currentUserService.ConvertFromUserLocalToUtcAsync(checkOutLocal);
+                var checkIn = query.CheckIn!.Value;
+                var checkOut = query.CheckOut!.Value;
                 var guestCount = query.GuestsCount ?? 1;
 
                 // الحصول على الوحدات المتاحة
                 var availableUnitIds = await _availabilityService
                     .GetAvailableUnitsInPropertyAsync(dto.Id, checkIn, checkOut, guestCount, cancellationToken);
 
-                dto.AvailableUnitsCount = availableUnitIds.Count();
+                // طبّق سعة الضيوف ونوع الوحدة (إن وُجد) لضمان أن الوحدة مناسبة فعلاً
+                var filteredAvailable = new List<Guid>();
+                foreach (var unitId in availableUnitIds)
+                {
+                    var unit = await _unitRepository.GetUnitByIdAsync(unitId, cancellationToken);
+                    if (unit != null
+                        && unit.IsAvailable
+                        && (!query.UnitTypeId.HasValue || unit.UnitTypeId == query.UnitTypeId.Value)
+                        && unit.MaxCapacity >= guestCount)
+                    {
+                        filteredAvailable.Add(unitId);
+                    }
+                }
+
+                dto.AvailableUnitsCount = filteredAvailable.Count;
                 dto.IsAvailable = dto.AvailableUnitsCount > 0;
 
-                if (!availableUnitIds.Any()) return;
+                if (!filteredAvailable.Any()) return;
 
                 // اختيار الوحدة المناسبة
                 Guid selectedUnitId = Guid.Empty;
 
                 if (query.UnitTypeId.HasValue)
                 {
-                    foreach (var unitId in availableUnitIds)
+                    foreach (var unitId in filteredAvailable)
                     {
                         var unit = await _unitRepository.GetUnitByIdAsync(unitId, cancellationToken);
                         if (unit != null && unit.UnitTypeId == query.UnitTypeId.Value && unit.MaxCapacity >= guestCount)
@@ -343,7 +356,7 @@ namespace YemenBooking.Application.Features.Properties.Queries.SearchProperties
 
                 if (selectedUnitId == Guid.Empty)
                 {
-                    selectedUnitId = availableUnitIds.FirstOrDefault();
+                    selectedUnitId = filteredAvailable.FirstOrDefault();
                 }
 
                 if (selectedUnitId != Guid.Empty)

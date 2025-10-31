@@ -1,0 +1,224 @@
+%%{init: {'theme':'dark', 'themeVariables': { 'primaryColor':'#1e40af', 'primaryTextColor':'#fff', 'primaryBorderColor':'#3b82f6', 'lineColor':'#60a5fa', 'fontSize': '16px'}}}%%
+
+%% ================================================================
+%% التدفق الأمثل لنظام الفهرسة والبحث في Redis
+%% ================================================================
+
+flowchart TB
+    %% ================== الطبقة الأولى: الفهرسة ==================
+    subgraph IndexingLayer["🏗️ طبقة الفهرسة الذكية"]
+        subgraph DataStructure["📊 هيكلة البيانات في Redis"]
+            DS1["<b>🔑 المفاتيح الأساسية</b><br/>property:{id} → Hash<br/>property:{id}:bin → MessagePack<br/>property:{id}:meta → Metadata"]
+            DS2["<b>📍 الفهارس الجغرافية</b><br/>geo:properties → GEOADD<br/>geo:cities:{city} → GEOADD"]
+            DS3["<b>📈 فهارس الترتيب</b><br/>idx:price → Sorted Set<br/>idx:rating → Sorted Set<br/>idx:created → Sorted Set"]
+            DS4["<b>🏷️ فهارس التصنيف</b><br/>tag:type:{typeId} → Set<br/>tag:city:{city} → Set<br/>tag:amenity:{id} → Set"]
+            DS5["<b>📅 فهارس الإتاحة</b><br/>avail:unit:{id} → Sorted Set<br/>avail:date:{YYYYMMDD} → Set"]
+            DS6["<b>🔍 فهرس البحث النصي</b><br/>FT.CREATE idx:properties<br/>ON HASH PREFIX property:"]
+        end
+        
+        subgraph IndexingProcess["⚙️ عملية الفهرسة"]
+            IP1[["📥 استقبال بيانات العقار"]] --> IP2{{"🔄 نوع العملية؟"}}
+            IP2 -->|"إضافة"| IP3["🆕 إنشاء فهرسة جديدة"]
+            IP2 -->|"تحديث"| IP4["♻️ تحديث الفهارس"]
+            IP2 -->|"حذف"| IP5["🗑️ إزالة من الفهارس"]
+            
+            IP3 --> IP6["📦 Pipeline Transaction"]
+            IP4 --> IP6
+            IP5 --> IP6
+            
+            IP6 --> IP7["✅ تأكيد الفهرسة"]
+        end
+    end
+
+    %% ================== الطبقة الثانية: البحث المحسن ==================
+    subgraph OptimizedSearch["🔎 محرك البحث المحسن"]
+        Start([🎯 طلب البحث]) --> CacheCheck{{"💾 موجود في الكاش؟"}}
+        
+        CacheCheck -->|"✅ نعم"| ReturnCached["📤 إرجاع من الكاش<br/><i>~5ms</i>"]
+        CacheCheck -->|"❌ لا"| AnalyzeRequest["🧠 تحليل الطلب"]
+        
+        AnalyzeRequest --> DetermineStrategy{{"🎯 اختيار الاستراتيجية"}}
+        
+        DetermineStrategy -->|"بحث نصي"| TextSearchPath
+        DetermineStrategy -->|"بحث جغرافي"| GeoSearchPath
+        DetermineStrategy -->|"فلترة معقدة"| ComplexFilterPath
+        DetermineStrategy -->|"بحث بسيط"| SimpleSearchPath
+        
+        subgraph TextSearchPath["📝 مسار البحث النصي"]
+            TS1["FT.SEARCH مع RediSearch"] --> TS2["تطبيق فلاتر إضافية"]
+        end
+        
+        subgraph GeoSearchPath["🌍 مسار البحث الجغرافي"]
+            GS1["GEOSEARCH بالموقع"] --> GS2["فلترة بالمسافة"]
+        end
+        
+        subgraph ComplexFilterPath["🔧 مسار الفلترة المعقدة"]
+            CF1["Lua Script محسن"] --> CF2["فلترة متعددة المعايير"]
+        end
+        
+        subgraph SimpleSearchPath["⚡ مسار البحث البسيط"]
+            SS1["SINTER للتقاطعات"] --> SS2["ZRANGE للترتيب"]
+        end
+        
+        TS2 --> MergeResults["🔀 دمج النتائج"]
+        GS2 --> MergeResults
+        CF2 --> MergeResults
+        SS2 --> MergeResults
+    end
+
+    %% ================== الطبقة الثالثة: معالجة الإتاحة ==================
+    subgraph AvailabilityLayer["📅 طبقة فحص الإتاحة المحسنة"]
+        MergeResults --> CheckAvailability{{"📅 فحص التواريخ مطلوب؟"}}
+        
+        CheckAvailability -->|"نعم"| AvailabilityPipeline
+        CheckAvailability -->|"لا"| SkipAvailability["⏭️ تخطي فحص الإتاحة"]
+        
+        subgraph AvailabilityPipeline["🔄 خط معالجة الإتاحة"]
+            AP1["📋 جلب الوحدات المتاحة<br/>SINTER avail:date:{dates}"]
+            AP1 --> AP2["🏢 فلترة حسب نوع الوحدة"]
+            AP2 --> AP3["👥 فحص السعة"]
+            AP3 --> AP4["💰 فحص السعر"]
+            AP4 --> AP5["✅ الوحدات المؤكدة"]
+        end
+        
+        AvailabilityPipeline --> EnrichData
+        SkipAvailability --> EnrichData
+    end
+
+    %% ================== الطبقة الرابعة: إثراء البيانات ==================
+    subgraph EnrichmentLayer["💎 طبقة إثراء البيانات"]
+        EnrichData["🔄 إثراء البيانات"] --> BatchFetch{{"📦 استراتيجية الجلب"}}
+        
+        BatchFetch --> UsePipeline["🚀 Redis Pipeline"]
+        
+        subgraph UsePipeline["Pipeline محسن"]
+            PL1["MGET للبيانات المسلسلة"]
+            PL2["HMGET للحقول المحددة"]
+            PL3["SMEMBERS للعلاقات"]
+            PL4["تنفيذ دفعة واحدة"]
+            
+            PL1 --> PL4
+            PL2 --> PL4
+            PL3 --> PL4
+        end
+        
+        PL4 --> ProcessBatch["⚙️ معالجة الدفعة"]
+        ProcessBatch --> ApplyTransformation["🔄 تطبيق التحويلات"]
+    end
+
+    %% ================== الطبقة الخامسة: التقسيم والترتيب ==================
+    subgraph PaginationLayer["📄 طبقة التقسيم والترتيب"]
+        ApplyTransformation --> SortStrategy{{"📊 استراتيجية الترتيب"}}
+        
+        SortStrategy -->|"السعر"| SortByPrice["💰 ترتيب بالسعر<br/>من idx:price"]
+        SortStrategy -->|"التقييم"| SortByRating["⭐ ترتيب بالتقييم<br/>من idx:rating"]
+        SortStrategy -->|"الحداثة"| SortByDate["📅 ترتيب بالتاريخ<br/>من idx:created"]
+        SortStrategy -->|"المسافة"| SortByDistance["📍 ترتيب بالمسافة<br/>GEODIST"]
+        
+        SortByPrice --> ApplyPagination
+        SortByRating --> ApplyPagination
+        SortByDate --> ApplyPagination
+        SortByDistance --> ApplyPagination
+        
+        ApplyPagination["📄 تطبيق Pagination<br/>LIMIT offset, count"]
+        ApplyPagination --> PrepareResponse
+    end
+
+    %% ================== الطبقة السادسة: الكاش والاستجابة ==================
+    subgraph ResponseLayer["📤 طبقة الاستجابة"]
+        PrepareResponse["📦 تحضير الاستجابة"] --> CacheResult["💾 حفظ في الكاش"]
+        
+        subgraph MultiLevelCache["🏗️ كاش متعدد المستويات"]
+            L1Cache["L1: Memory Cache<br/>TTL: 30s"]
+            L2Cache["L2: Redis Result Cache<br/>TTL: 2min"]
+            L3Cache["L3: Redis Data Cache<br/>TTL: 10min"]
+        end
+        
+        CacheResult --> StoreInCache["💾 تخزين النتيجة"]
+        StoreInCache --> ReturnResponse([✅ إرجاع النتيجة])
+    end
+
+    %% ================== نظام المراقبة ==================
+    subgraph MonitoringSystem["📊 نظام المراقبة"]
+        MS1["⏱️ قياس الأداء<br/>Response Time"]
+        MS2["📈 معدل النجاح<br/>Hit Rate"]
+        MS3["💾 استخدام الذاكرة<br/>Memory Usage"]
+        MS4["🔄 معدل الكاش<br/>Cache Hit Ratio"]
+        MS5["⚠️ تتبع الأخطاء<br/>Error Tracking"]
+    end
+
+    %% ================== معالجة الأخطاء المحسنة ==================
+    subgraph ErrorHandling["🛡️ معالجة الأخطاء الذكية"]
+        EH1["🔁 Retry Policy<br/>3 محاولات"]
+        EH2["⚡ Circuit Breaker<br/>حماية من الفشل"]
+        EH3["🔄 Fallback Strategy<br/>خطة بديلة"]
+        EH4["📝 Logging<br/>تسجيل مفصل"]
+        EH5["📊 Metrics<br/>إحصائيات الأخطاء"]
+    end
+
+    %% ================== التحسينات الأساسية ==================
+    subgraph CoreOptimizations["⚡ التحسينات الأساسية"]
+        subgraph LuaOptimization["📜 Lua Scripts محسنة"]
+            LO1["تقسيم السكريبتات الكبيرة"]
+            LO2["استخدام EVALSHA"]
+            LO3["تقليل عمليات I/O"]
+            LO4["معالجة دفعية"]
+        end
+        
+        subgraph DataOptimization["💾 تحسين البيانات"]
+            DO1["ضغط MessagePack"]
+            DO2["فهرسة انتقائية"]
+            DO3["تنظيف دوري"]
+            DO4["Lazy Loading"]
+        end
+        
+        subgraph QueryOptimization["🔍 تحسين الاستعلامات"]
+            QO1["Query Planning"]
+            QO2["Index Hints"]
+            QO3["Parallel Execution"]
+            QO4["Result Streaming"]
+        end
+    end
+
+    %% ================== أفضل الممارسات ==================
+    subgraph BestPractices["✅ أفضل الممارسات المطبقة"]
+        BP1["🔒 Connection Pooling<br/>إدارة الاتصالات"]
+        BP2["📦 Batch Operations<br/>عمليات دفعية"]
+        BP3["⏱️ Timeout Management<br/>إدارة المهلات"]
+        BP4["🔄 Async/Await<br/>معالجة غير متزامنة"]
+        BP5["💾 Memory Management<br/>إدارة الذاكرة"]
+        BP6["🔐 Security<br/>تأمين البيانات"]
+    end
+
+    %% ================== الربط والتدفق ==================
+    ReturnCached --> Success([🎉 النجاح])
+    ReturnResponse --> Success
+    
+    %% معالجة الأخطاء
+    Start -.->|"خطأ"| EH1
+    EH1 --> EH2
+    EH2 --> EH3
+    EH3 -.->|"فشل نهائي"| Failure([❌ فشل])
+
+    %% ================== مؤشرات الأداء ==================
+    subgraph PerformanceMetrics["📊 مؤشرات الأداء المستهدفة"]
+        PM1["⚡ زمن الاستجابة<br/>&lt; 100ms للبحث البسيط<br/>&lt; 300ms للبحث المعقد"]
+        PM2["💾 معدل الكاش<br/>&gt; 80% Hit Rate"]
+        PM3["🔄 الإنتاجية<br/>&gt; 1000 req/sec"]
+        PM4["📈 التوفر<br/>&gt; 99.9% Uptime"]
+    end
+
+%% ================== التصميم والألوان ==================
+classDef primary fill:#1e40af,stroke:#3b82f6,stroke-width:3px,color:#fff,font-weight:bold
+classDef secondary fill:#7c3aed,stroke:#8b5cf6,stroke-width:2px,color:#fff
+classDef success fill:#059669,stroke:#10b981,stroke-width:2px,color:#fff
+classDef warning fill:#d97706,stroke:#f59e0b,stroke-width:2px,color:#fff
+classDef error fill:#dc2626,stroke:#ef4444,stroke-width:2px,color:#fff
+classDef info fill:#0891b2,stroke:#06b6d4,stroke-width:2px,color:#fff
+
+class Start,CacheCheck,DetermineStrategy primary
+class AnalyzeRequest,MergeResults,EnrichData secondary
+class ReturnResponse,Success success
+class EH1,EH2,EH3,EH4,EH5 warning
+class Failure error
+class MS1,MS2,MS3,MS4,MS5 info

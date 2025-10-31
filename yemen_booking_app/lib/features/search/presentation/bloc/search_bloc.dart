@@ -10,6 +10,7 @@ import '../../domain/usecases/search_properties_usecase.dart';
 import '../../domain/repositories/search_repository.dart';
 import '../../../../services/data_sync_service.dart';
 import '../../../../services/filter_storage_service.dart';
+import 'package:yemen_booking_app/features/home/data/models/unit_type_model.dart';
 import 'search_event.dart';
 import 'search_state.dart';
 
@@ -97,6 +98,47 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
       ));
     }
 
+    // Determine if selected unit type supports guests (adults/children)
+    int? effectiveGuestsCount = event.guestsCount;
+    int? effectiveAdults = event.adults;
+    int? effectiveChildren = event.children;
+    try {
+      if (event.propertyTypeId != null && event.unitTypeId != null) {
+        final List<UnitTypeModel> unitTypes = await dataSyncService.getUnitTypes(
+          propertyTypeId: event.propertyTypeId!,
+        );
+        final UnitTypeModel selectedUnit = unitTypes.firstWhere(
+          (u) => u.id == event.unitTypeId,
+          orElse: () => UnitTypeModel(
+            id: '',
+            propertyTypeId: '',
+            name: '',
+            description: '',
+            maxCapacity: 0,
+            icon: '',
+            isHasAdults: false,
+            isHasChildren: false,
+            isMultiDays: false,
+            isRequiredToDetermineTheHour: false,
+          ),
+        );
+        final bool supportsGuests = (selectedUnit.id.isNotEmpty) && (selectedUnit.isHasAdults || selectedUnit.isHasChildren);
+        // Derive guestsCount from adults+children when provided
+        if (effectiveGuestsCount == null && (effectiveAdults != null || effectiveChildren != null)) {
+          effectiveGuestsCount = (effectiveAdults ?? 0) + (effectiveChildren ?? 0);
+        }
+        if (!supportsGuests) {
+          effectiveGuestsCount = null;
+          effectiveAdults = null;
+          effectiveChildren = null;
+        }
+      }
+    } catch (_) {
+      // Ignore lookup errors; fallback to provided guestsCount
+    }
+
+    final String preferredCurrency = sharedPreferences.getString('selected_currency') ?? 'YER';
+
     final params = SearchPropertiesParams(
       searchTerm: event.searchTerm,
       city: event.city,
@@ -110,11 +152,13 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
       dynamicFieldFilters: event.dynamicFieldFilters,
       checkIn: event.checkIn,
       checkOut: event.checkOut,
-      guestsCount: event.guestsCount,
+      adults: effectiveAdults,
+      children: effectiveChildren,
+      guestsCount: effectiveGuestsCount,
       latitude: event.latitude,
       longitude: event.longitude,
       radiusKm: event.radiusKm,
-      preferredCurrency: sharedPreferences.getString('selected_currency') ?? 'YER',
+      preferredCurrency: preferredCurrency,
       sortBy: event.sortBy,
       pageNumber: event.pageNumber,
       pageSize: event.pageSize,
@@ -132,9 +176,25 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
         if (event.isNewSearch) {
           _currentSearchResults = paginatedResult;
           _currentFilters = _buildFiltersMap(event);
+          // Sanitize guests fields for non-guest unit types
+          if (effectiveGuestsCount == null) {
+            _currentFilters.remove('guestsCount');
+          } else {
+            _currentFilters['guestsCount'] = effectiveGuestsCount;
+          }
+          if (effectiveAdults == null) {
+            _currentFilters.remove('adults');
+          } else {
+            _currentFilters['adults'] = effectiveAdults;
+          }
+          if (effectiveChildren == null) {
+            _currentFilters.remove('children');
+          } else {
+            _currentFilters['children'] = effectiveChildren;
+          }
           // Ensure default city/currency are propagated for subsequent loads
           _currentFilters['city'] = _currentFilters['city'] ?? (sharedPreferences.getString('selected_city') ?? '');
-          _currentFilters['preferredCurrency'] = sharedPreferences.getString('selected_currency') ?? 'YER';
+          _currentFilters['preferredCurrency'] = preferredCurrency;
           // Persist current filters
           filterStorageService.saveCurrentFilters(_currentFilters);
         } else {
@@ -195,6 +255,8 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
           dynamicFieldFilters: _currentFilters['dynamicFieldFilters'] as Map<String, dynamic>?,
           checkIn: _currentFilters['checkIn'] as DateTime?,
           checkOut: _currentFilters['checkOut'] as DateTime?,
+          adults: _currentFilters['adults'] as int?,
+          children: _currentFilters['children'] as int?,
           guestsCount: _currentFilters['guestsCount'] as int?,
           latitude: _currentFilters['latitude'] as double?,
           longitude: _currentFilters['longitude'] as double?,
@@ -560,6 +622,8 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
       if (event.dynamicFieldFilters != null) filters['dynamicFieldFilters'] = event.dynamicFieldFilters;
       if (event.checkIn != null) filters['checkIn'] = event.checkIn;
       if (event.checkOut != null) filters['checkOut'] = event.checkOut;
+      if (event.adults != null) filters['adults'] = event.adults;
+      if (event.children != null) filters['children'] = event.children;
       if (event.guestsCount != null) filters['guestsCount'] = event.guestsCount;
       if (event.latitude != null) filters['latitude'] = event.latitude;
       if (event.longitude != null) filters['longitude'] = event.longitude;

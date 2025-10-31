@@ -26,6 +26,8 @@ class SearchPropertiesUseCase implements UseCase<PaginatedResult<SearchResult>, 
       dynamicFieldFilters: params.dynamicFieldFilters,
       checkIn: params.checkIn,
       checkOut: params.checkOut,
+      adults: params.adults,
+      children: params.children,
       guestsCount: params.guestsCount,
       latitude: params.latitude,
       longitude: params.longitude,
@@ -51,6 +53,8 @@ class SearchPropertiesParams extends Equatable {
   final Map<String, dynamic>? dynamicFieldFilters;
   final DateTime? checkIn;
   final DateTime? checkOut;
+  final int? adults;
+  final int? children;
   final int? guestsCount;
   final double? latitude;
   final double? longitude;
@@ -73,6 +77,8 @@ class SearchPropertiesParams extends Equatable {
     this.dynamicFieldFilters,
     this.checkIn,
     this.checkOut,
+    this.adults,
+    this.children,
     this.guestsCount,
     this.latitude,
     this.longitude,
@@ -97,6 +103,8 @@ class SearchPropertiesParams extends Equatable {
         dynamicFieldFilters,
         checkIn,
         checkOut,
+        adults,
+        children,
         guestsCount,
         latitude,
         longitude,

@@ -207,6 +207,8 @@ class _SearchPageState extends State<SearchPage>
           'searchTerm': params.searchTerm,
           'checkIn': params.checkIn,
           'checkOut': params.checkOut,
+          'adults': params.adults,
+          'children': params.children,
           'guestsCount': params.guestsCount,
         }..removeWhere((key, value) => value == null);
 
@@ -1421,6 +1423,8 @@ class _SearchPageState extends State<SearchPage>
         dynamicFieldFilters: filters['dynamicFieldFilters'],
         checkIn: filters['checkIn'],
         checkOut: filters['checkOut'],
+        adults: filters['adults'],
+        children: filters['children'],
         guestsCount: filters['guestsCount'],
         latitude: filters['latitude'],
         longitude: filters['longitude'],

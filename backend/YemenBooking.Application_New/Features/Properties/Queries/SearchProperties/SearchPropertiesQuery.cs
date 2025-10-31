@@ -34,7 +34,17 @@ public class SearchPropertiesQuery : IRequest<ResultDto<SearchPropertiesResponse
     public DateTime? CheckOut { get; set; }
     
     /// <summary>
-    /// عدد الضيوف
+    /// عدد البالغين
+    /// </summary>
+    public int? Adults { get; set; }
+
+    /// <summary>
+    /// عدد الأطفال
+    /// </summary>
+    public int? Children { get; set; }
+
+    /// <summary>
+    /// العدد الإجمالي للضيوف (متوافق للخلفية)
     /// </summary>
     public int? GuestsCount { get; set; }
     

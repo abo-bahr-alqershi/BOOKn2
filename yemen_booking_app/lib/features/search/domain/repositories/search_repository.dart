@@ -17,6 +17,8 @@ abstract class SearchRepository {
     Map<String, dynamic>? dynamicFieldFilters,
     DateTime? checkIn,
     DateTime? checkOut,
+    int? adults,
+    int? children,
     int? guestsCount,
     double? latitude,
     double? longitude,

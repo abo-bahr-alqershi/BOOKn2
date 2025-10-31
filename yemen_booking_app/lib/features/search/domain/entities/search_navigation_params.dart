@@ -8,6 +8,8 @@ class SearchNavigationParams extends Equatable {
 	final String? searchTerm;
 	final DateTime? checkIn;
 	final DateTime? checkOut;
+	final int? adults;
+	final int? children;
 	final int? guestsCount;
 
 	const SearchNavigationParams({
@@ -18,6 +20,8 @@ class SearchNavigationParams extends Equatable {
 		this.searchTerm,
 		this.checkIn,
 		this.checkOut,
+		this.adults,
+		this.children,
 		this.guestsCount,
 	});
 
@@ -29,6 +33,8 @@ class SearchNavigationParams extends Equatable {
 		String? searchTerm,
 		DateTime? checkIn,
 		DateTime? checkOut,
+		int? adults,
+		int? children,
 		int? guestsCount,
 	}) {
 		return SearchNavigationParams(
@@ -39,6 +45,8 @@ class SearchNavigationParams extends Equatable {
 			searchTerm: searchTerm ?? this.searchTerm,
 			checkIn: checkIn ?? this.checkIn,
 			checkOut: checkOut ?? this.checkOut,
+			adults: adults ?? this.adults,
+			children: children ?? this.children,
 			guestsCount: guestsCount ?? this.guestsCount,
 		);
 	}
@@ -51,6 +59,8 @@ class SearchNavigationParams extends Equatable {
 		'searchTerm': searchTerm,
 		'checkIn': checkIn?.toIso8601String(),
 		'checkOut': checkOut?.toIso8601String(),
+		'adults': adults,
+		'children': children,
 		'guestsCount': guestsCount,
 	};
 
@@ -63,6 +73,8 @@ class SearchNavigationParams extends Equatable {
 			searchTerm: map['searchTerm'] as String?,
 			checkIn: map['checkIn'] != null ? DateTime.tryParse(map['checkIn'] as String) : null,
 			checkOut: map['checkOut'] != null ? DateTime.tryParse(map['checkOut'] as String) : null,
+			adults: map['adults'] is int ? map['adults'] as int : int.tryParse(map['adults']?.toString() ?? ''),
+			children: map['children'] is int ? map['children'] as int : int.tryParse(map['children']?.toString() ?? ''),
 			guestsCount: map['guestsCount'] as int?,
 		);
 	}
@@ -76,6 +88,8 @@ class SearchNavigationParams extends Equatable {
 		searchTerm,
 		checkIn,
 		checkOut,
+		adults,
+		children,
 		guestsCount,
 	];
 }

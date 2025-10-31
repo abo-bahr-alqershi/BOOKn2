@@ -5,19 +5,19 @@ class ApiConstants {
   static const String baseUrl = String.fromEnvironment(
     'BASE_URL',
     // defaultValue: 'http://ameenalqershi-001-site1.mtempurl.com/',
-    defaultValue: 'http://192.168.0.210:5000/',
+    defaultValue: 'http://192.168.0.30:5000/',
   );
 
   static const String imageBaseUrl = String.fromEnvironment(
     'IMAGE_BASE_URL',
     // defaultValue: 'http://ameenalqershi-001-site1.mtempurl.com',
-    defaultValue: 'http://192.168.0.210:5000',
+    defaultValue: 'http://192.168.0.30:5000',
   );
 
   static const String socketUrl = String.fromEnvironment(
     'SOCKET_URL',
     // defaultValue: 'wss://ws.ameenalqershi-001-site1.mtempurl.com',
-    defaultValue: 'wss://http://192.168.0.210:5000',
+    defaultValue: 'ws://192.168.0.30:5000',
   );
 
   // Timeouts
@@ -40,3 +40,4 @@ class ApiConstants {
   static const int defaultPageSize = 20;
   static const int maxPageSize = 100;
 }
+

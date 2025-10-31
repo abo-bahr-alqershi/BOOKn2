@@ -59,6 +59,7 @@ namespace YemenBooking.Infrastructure.Services
                     new("id", unitId.ToString()),
                     new("property_id", propertyId.ToString()),
                     new("name", unit.Name),
+                    new("unit_type_id", unit.UnitTypeId.ToString()),
                     new("max_capacity", unit.MaxCapacity),
                     new("base_price", unit.BasePrice.Amount.ToString(CultureInfo.InvariantCulture)),
                     new("currency", unit.BasePrice.Currency)
@@ -103,6 +104,7 @@ namespace YemenBooking.Infrastructure.Services
                 var unitData = new HashEntry[]
                 {
                     new("name", unit.Name),
+                    new("unit_type_id", unit.UnitTypeId.ToString()),
                     new("max_capacity", unit.MaxCapacity),
                     new("base_price", unit.BasePrice.Amount.ToString(CultureInfo.InvariantCulture)),
                     new("currency", unit.BasePrice.Currency),

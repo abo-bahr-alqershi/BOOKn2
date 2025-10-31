@@ -98,7 +98,6 @@ namespace YemenBooking.Infrastructure.Services
             _unitIndexingService = unitIndexingService;
             _priceCacheService = priceCacheService;
 
-            InitializeRedisIndexes();
         }
 
         
@@ -128,6 +127,8 @@ namespace YemenBooking.Infrastructure.Services
                 if (cmdInfo.IsNull)
                 {
                     _logger.LogDebug("CreateSearchIndexes: FT.CREATE command not available");
+                    // علّم أن RediSearch غير متاح لتجنّب FT.INFO لاحقاً
+                    _db.StringSet("search:module:available", "0");
                     return;
                 }
 
@@ -138,6 +139,7 @@ namespace YemenBooking.Infrastructure.Services
                     if (!info.IsNull)
                     {
                         _logger.LogInformation("فهرس RediSearch موجود مسبقاً: idx:properties");
+                        _db.StringSet("search:module:available", "1");
                         return;
                     }
                 }
@@ -172,10 +174,12 @@ namespace YemenBooking.Infrastructure.Services
                 );
                 
                 _logger.LogInformation("تم إنشاء فهرس RediSearch بنجاح: idx:properties");
+                _db.StringSet("search:module:available", "1");
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "فشل إنشاء فهرس RediSearch - سيتم استخدام البحث اليدوي");
+                try { _db.StringSet("search:module:available", "0"); } catch {}
             }
         }
 

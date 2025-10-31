@@ -21,6 +21,8 @@ class SearchPropertiesEvent extends SearchEvent {
   final Map<String, dynamic>? dynamicFieldFilters;
   final DateTime? checkIn;
   final DateTime? checkOut;
+  final int? adults;
+  final int? children;
   final int? guestsCount;
   final double? latitude;
   final double? longitude;
@@ -42,6 +44,8 @@ class SearchPropertiesEvent extends SearchEvent {
     this.dynamicFieldFilters,
     this.checkIn,
     this.checkOut,
+    this.adults,
+    this.children,
     this.guestsCount,
     this.latitude,
     this.longitude,
@@ -67,6 +71,8 @@ class SearchPropertiesEvent extends SearchEvent {
         dynamicFieldFilters,
         checkIn,
         checkOut,
+        adults,
+        children,
         guestsCount,
         latitude,
         longitude,
