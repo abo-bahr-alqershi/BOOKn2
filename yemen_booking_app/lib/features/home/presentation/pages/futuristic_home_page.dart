@@ -901,7 +901,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                   };
                   if (checkIn != null) params['checkIn'] = checkIn.toIso8601String();
                   if (checkOut != null) params['checkOut'] = checkOut.toIso8601String();
-                  if (guestsCount > 0) params['guestsCount'] = guestsCount;
+                  // لا تمرر guestsCount لأنواع الوحدات التي لا تدعم بالغين/أطفال
+                  final bool supportsGuests = selectedUnit != null && (selectedUnit.isHasAdults || selectedUnit.isHasChildren);
+                  if (supportsGuests && guestsCount > 0) {
+                    params['guestsCount'] = guestsCount;
+                  }
                   context.push('/search', extra: params);
                 }
               : null,

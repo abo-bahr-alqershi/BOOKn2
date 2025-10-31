@@ -40,6 +40,7 @@ namespace YemenBooking.Infrastructure.Services
         private readonly SemaphoreSlim _searchLimiter = new(50, 50);
         private readonly IMemoryCache _memoryCache;
         private readonly IDatabase _db;
+        private readonly IPropertySearchService _searchService;
 
         // Redis Keys Prefixes
         private const string PROPERTY_KEY = "property:";
@@ -70,7 +71,8 @@ namespace YemenBooking.Infrastructure.Services
             IUnitFieldValueRepository unitFieldValueRepository,
             IUnitTypeFieldRepository unitTypeFieldRepository,
             ILogger<RedisIndexingService> logger,
-            IMemoryCache memoryCache)
+            IMemoryCache memoryCache,
+            IPropertySearchService searchService)
         {
             _redisManager = redisManager;
             _propertyRepository = propertyRepository;
@@ -83,6 +85,7 @@ namespace YemenBooking.Infrastructure.Services
             _logger = logger;
             _memoryCache = memoryCache;
             _db = _redisManager.GetDatabase();
+            _searchService = searchService;
 
             InitializeRedisIndexes();
         }
@@ -1027,17 +1030,9 @@ namespace YemenBooking.Infrastructure.Services
             CancellationToken cancellationToken)
         {
             var stopwatch = Stopwatch.StartNew();
-
             try
             {
-                // محاولة استخدام RediSearch إن وجد
-                if (await IsRediSearchAvailable())
-                {
-                    return await SearchWithRediSearchAsync(request, cancellationToken);
-                }
-
-                // البحث اليدوي باستخدام Redis structures
-                return await ManualRedisSearchAsync(request, cancellationToken);
+                return await _searchService.SearchAsync(request, cancellationToken);
             }
             finally
             {

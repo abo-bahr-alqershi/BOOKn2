@@ -297,6 +297,7 @@ builder.Services.AddHostedService<ScheduledNotificationsDispatcher>();
 builder.Services.AddSingleton<IRedisConnectionManager, RedisConnectionManager>();
 
 builder.Services.AddScoped<IIndexingService, RedisIndexingService>();
+builder.Services.AddScoped<IPropertySearchService, RedisSearchService>();
 builder.Services.AddHostedService<RedisMaintenanceService>();
 
 // IMPORTANT: IIndexingService depends on scoped repositories/services, so register it as Scoped

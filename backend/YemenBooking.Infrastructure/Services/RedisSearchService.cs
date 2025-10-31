@@ -11,9 +11,11 @@ using YemenBooking.Core.Indexing.Models;
 using YemenBooking.Infrastructure.Indexing.Models;
 using YemenBooking.Application.Infrastructure.Services;
 
+using YemenBooking.Application.Features.SearchAndFilters.Services;
+
 namespace YemenBooking.Infrastructure.Services
 {
-    public class RedisSearchService
+    public class RedisSearchService : IPropertySearchService
     {
         private readonly IRedisConnectionManager _redisManager;
         private readonly ILogger<RedisSearchService> _logger;

@@ -151,29 +151,6 @@ class _SearchFiltersPageState extends State<SearchFiltersPage>
       _requiredFieldsStatus.clear();
       _isValidFilter = true;
     });
-    // 1. التحقق من نوع العقار
-    if (_filters['propertyTypeId'] == null) {
-      setState(() {
-        _isValidFilter = false;
-        _validationError = 'يجب اختيار نوع العقار';
-        _requiredFieldsStatus['propertyTypeId'] = false;
-      });
-      return false;
-    }
-    _requiredFieldsStatus['propertyTypeId'] = true;
-
-    // 2. التحقق من نوع الوحدة
-    if (_filters['unitTypeId'] == null) {
-      setState(() {
-        _isValidFilter = false;
-        _validationError = 'يجب اختيار نوع الوحدة';
-        _requiredFieldsStatus['unitTypeId'] = false;
-      });
-      return false;
-    }
-    _requiredFieldsStatus['unitTypeId'] = true;
-
-    // 3. التحقق من الحقول الديناميكية المطلوبة
     if (_dynamicFields.isNotEmpty) {
       final dynamicValues = _filters['dynamicFieldFilters'] as Map<String, dynamic>? ?? {};
       
@@ -199,25 +176,6 @@ class _SearchFiltersPageState extends State<SearchFiltersPage>
         }
       }
     }
-    // 4. التحقق من تاريخ الوصول
-    if (_filters['checkIn'] == null) {
-      setState(() {
-        _isValidFilter = false;
-        _validationError = 'يجب اختيار تاريخ الوصول';
-        _requiredFieldsStatus['checkIn'] = false;
-      });
-      return false;
-    }
-    // 5. التحقق من تاريخ المغادرة
-    if (_filters['checkOut'] == null) {
-      setState(() {
-        _isValidFilter = false;
-        _validationError = 'يجب اختيار تاريخ المغادرة';
-        _requiredFieldsStatus['checkOut'] = false;
-      });
-      return false;
-    }
-
 
     setState(() {
       _isValidFilter = true;
@@ -273,6 +231,8 @@ class _SearchFiltersPageState extends State<SearchFiltersPage>
                 name: m.name,
                 unitsCount: 0,
                 propertyTypeId: m.propertyTypeId,
+                isHasAdults: m.isHasAdults,
+                isHasChildren: m.isHasChildren,
               ))
           .toList();
       setState(() {
@@ -562,14 +522,6 @@ class _SearchFiltersPageState extends State<SearchFiltersPage>
                           const SizedBox(height: 8),
                           _buildQuickFilters(),
                           const SizedBox(height: 16),
-                          _buildDateSection(),
-                          const SizedBox(height: 12),
-                          _buildGuestsSection(),
-                          const SizedBox(height: 12),
-                          _buildFuturisticPropertyTypesSection(filters),
-                          const SizedBox(height: 12),
-                          _buildFuturisticUnitTypesSection(filters),
-                          const SizedBox(height: 12),
                           _buildDynamicUnitFieldsSection(filters),
                           const SizedBox(height: 12),
                           _buildPriceSection(),
@@ -1470,7 +1422,22 @@ class _SearchFiltersPageState extends State<SearchFiltersPage>
                     child: GestureDetector(
                       onTap: _isValidFilter ? () {
                         HapticFeedback.mediumImpact();
-                        Navigator.pop(context, _filters);
+                        final sanitized = Map<String, dynamic>.from(_filters);
+                        final unitTypeId = sanitized['unitTypeId'] as String?;
+                        if (unitTypeId != null) {
+                          try {
+                            final matching = _unitTypes.where((u) => u.id == unitTypeId);
+                            if (matching.isNotEmpty) {
+                              final ut = matching.first;
+                              final bool hasAdults = (ut.isHasAdults == true);
+                              final bool hasChildren = (ut.isHasChildren == true);
+                              if (!hasAdults && !hasChildren) {
+                                sanitized.remove('guestsCount');
+                              }
+                            }
+                          } catch (_) {}
+                        }
+                        Navigator.pop(context, sanitized);
                       } : () {
                         HapticFeedback.heavyImpact();
                         _showValidationError();
