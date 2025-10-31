@@ -298,6 +298,9 @@ builder.Services.AddSingleton<IRedisConnectionManager, RedisConnectionManager>()
 
 builder.Services.AddScoped<IIndexingService, RedisIndexingService>();
 builder.Services.AddScoped<IPropertySearchService, RedisSearchService>();
+builder.Services.AddScoped<IPropertyIndexingService, PropertyIndexingService>();
+builder.Services.AddScoped<IUnitIndexingService, UnitIndexingService>();
+builder.Services.AddScoped<IPriceCacheService, PriceCacheService>();
 builder.Services.AddHostedService<RedisMaintenanceService>();
 
 // IMPORTANT: IIndexingService depends on scoped repositories/services, so register it as Scoped

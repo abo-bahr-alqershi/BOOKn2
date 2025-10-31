@@ -39,6 +39,7 @@ public class PropertyConfiguration : IEntityTypeConfiguration<Property>
         builder.Property(p => p.CreatedAt).HasColumnType("timestamp with time zone").IsRequired();
         builder.Property(p => p.BookingCount).HasDefaultValue(0);
         builder.Property(p => p.AverageRating).HasColumnType("decimal(5,2)").HasDefaultValue(0);
+        builder.Property(p => p.IsIndexed).HasDefaultValue(false);
         
         // تكوين العلاقات
         builder.HasOne(p => p.Owner)

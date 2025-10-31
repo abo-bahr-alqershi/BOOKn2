@@ -71,18 +71,19 @@ namespace YemenBooking.Infrastructure.Services
         {
             var query = BuildRediSearchQuery(request);
             var offset = (request.PageNumber - 1) * request.PageSize;
-            
-            var searchCommand = $@"
-                FT.SEARCH idx:properties 
-                ""{query}""
-                LIMIT {offset} {request.PageSize}
-                {GetSortByClause(request.SortBy)}
-            ";
 
-            var result = await _db.ExecuteAsync(searchCommand);
-            
-            // تحليل النتائج وإرجاعها
-            return ParseRediSearchResults(result, request);
+            var args = new List<object> { "idx:properties", query };
+            var sortBy = request.SortBy?.ToLower();
+            if (sortBy == "price_asc") { args.AddRange(new object[] { "SORTBY", "min_price", "ASC" }); }
+            else if (sortBy == "price_desc") { args.AddRange(new object[] { "SORTBY", "min_price", "DESC" }); }
+            else if (sortBy == "rating") { args.AddRange(new object[] { "SORTBY", "average_rating", "DESC" }); }
+            else if (sortBy == "newest") { args.AddRange(new object[] { "SORTBY", "created_at", "DESC" }); }
+            else if (sortBy == "popularity") { args.AddRange(new object[] { "SORTBY", "booking_count", "DESC" }); }
+
+            args.AddRange(new object[] { "LIMIT", offset.ToString(), request.PageSize.ToString() });
+
+            var result = await _db.ExecuteAsync("FT.SEARCH", args.ToArray());
+            return await ParseRediSearchResultsAsync(result, request, cancellationToken);
         }
 
         private async Task<PropertySearchResult> ManualSearchAsync(
@@ -363,17 +364,20 @@ namespace YemenBooking.Infrastructure.Services
 
             if (!string.IsNullOrWhiteSpace(request.SearchText))
             {
-                queryParts.Add($"(@name:{request.SearchText}* | @description:{request.SearchText}*)");
+                var q = Sanitize(request.SearchText);
+                queryParts.Add($"(@name:{q}* | @description:{q}*)");
             }
 
             if (!string.IsNullOrWhiteSpace(request.City))
             {
-                queryParts.Add($"@city:{{{request.City}}}");
+                var c = Sanitize(request.City);
+                queryParts.Add($"@city:{{{c}}}");
             }
 
             if (!string.IsNullOrWhiteSpace(request.PropertyType))
             {
-                queryParts.Add($"@property_type:{{{request.PropertyType}}}");
+                var t = Sanitize(request.PropertyType);
+                queryParts.Add($"@property_type:{{{t}}}");
             }
 
             if (request.MinPrice.HasValue || request.MaxPrice.HasValue)
@@ -398,6 +402,14 @@ namespace YemenBooking.Infrastructure.Services
             return queryParts.Any() ? string.Join(" ", queryParts) : "*";
         }
 
+        private static string Sanitize(string input)
+        {
+            var s = input.Trim();
+            var chars = new[] { '"', '\'', ';', '\\', '|', '(', ')', '[', ']', '{', '}', '@', ':' };
+            foreach (var c in chars) s = s.Replace(c.ToString(), " ");
+            return s;
+        }
+
         private string GetSortByClause(string? sortBy)
         {
             return sortBy?.ToLower() switch
@@ -411,21 +423,74 @@ namespace YemenBooking.Infrastructure.Services
             };
         }
 
-        private PropertySearchResult ParseRediSearchResults(RedisResult result, PropertySearchRequest request)
+        private async Task<PropertySearchResult> ParseRediSearchResultsAsync(
+            RedisResult result,
+            PropertySearchRequest request,
+            CancellationToken cancellationToken)
         {
-            // تحليل نتائج RediSearch
-            // هذا يعتمد على تنسيق الإخراج الفعلي لـ RediSearch
             var properties = new List<PropertySearchItem>();
-            
-            // كود تحليل النتائج هنا...
-            
+            var ids = new List<string>();
+            var total = 0;
+
+            try
+            {
+                var arr = (RedisResult[])result;
+                if (arr != null && arr.Length > 0)
+                {
+                    // First element is total count
+                    if (int.TryParse(arr[0].ToString(), out var t)) total = t; else total = 0;
+                    // Remaining are pairs: key, fields
+                    for (int i = 1; i < arr.Length; i += 2)
+                    {
+                        var key = arr[i].ToString();
+                        if (string.IsNullOrWhiteSpace(key)) continue;
+                        if (key.StartsWith("property:")) key = key.Substring("property:".Length);
+                        ids.Add(key);
+                    }
+                }
+            }
+            catch
+            {
+                // fallback: return empty
+            }
+
+            if (ids.Count > 0)
+            {
+                var tasks = ids.Select(async id =>
+                {
+                    var model = await GetPropertyDetails(id);
+                    if (model == null) return null;
+                    return new PropertySearchItem
+                    {
+                        Id = model.Id,
+                        Name = model.Name,
+                        City = model.City,
+                        PropertyType = model.PropertyType,
+                        MinPrice = model.MinPrice,
+                        Currency = model.Currency,
+                        AverageRating = model.AverageRating,
+                        StarRating = model.StarRating,
+                        ImageUrls = model.ImageUrls,
+                        MaxCapacity = model.MaxCapacity,
+                        UnitsCount = model.UnitsCount,
+                        DynamicFields = model.DynamicFields,
+                        Latitude = model.Latitude,
+                        Longitude = model.Longitude
+                    };
+                });
+
+                var results = await Task.WhenAll(tasks);
+                properties = results.Where(x => x != null).ToList();
+            }
+
+            var totalCount = total == 0 ? properties.Count : total;
             return new PropertySearchResult
             {
                 Properties = properties,
-                TotalCount = properties.Count,
+                TotalCount = totalCount,
                 PageNumber = request.PageNumber,
                 PageSize = request.PageSize,
-                TotalPages = (int)Math.Ceiling((double)properties.Count / request.PageSize)
+                TotalPages = (int)Math.Ceiling((double)totalCount / request.PageSize)
             };
         }
     }

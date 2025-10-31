@@ -91,6 +91,13 @@ public class Property : BaseEntity<Guid>
     public bool IsApproved { get; set; } = true;
     
     /// <summary>
+    /// هل هذا العقار مفهرس في Redis
+    /// Indicates whether this property has been indexed into Redis
+    /// </summary>
+    [Display(Name = "مفهرس في ريديس")]
+    public bool IsIndexed { get; set; } = false;
+    
+    /// <summary>
     /// تاريخ إنشاء الكيان
     /// Property creation date
     /// </summary>

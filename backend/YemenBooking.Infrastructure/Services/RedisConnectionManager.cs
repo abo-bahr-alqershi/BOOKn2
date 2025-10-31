@@ -92,7 +92,17 @@ namespace YemenBooking.Infrastructure.Services
 
                 _connection.ErrorMessage += (sender, args) =>
                 {
-                    _logger.LogError("خطأ Redis: {Message}", args.Message);
+                    var msg = args.Message ?? string.Empty;
+                    if (msg.Contains("Another child process is active", StringComparison.OrdinalIgnoreCase)
+                        || msg.Contains("can't BGSAVE right now", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // هذه رسالة متوقعة عند جدولة الحفظ أثناء عمليات AOF/حفظ أخرى
+                        _logger.LogDebug("Redis notice: {Message}", args.Message);
+                    }
+                    else
+                    {
+                        _logger.LogError("خطأ Redis: {Message}", args.Message);
+                    }
                 };
 
                 _logger.LogInformation("تم تأسيس اتصال Redis بنجاح");
