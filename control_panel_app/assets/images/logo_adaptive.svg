@@ -1,0 +1,149 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Safe Zone Group: تصغير العناصر إلى 72% مع توسيطها -->
+  <g transform="translate(72, 72) scale(0.72, 0.72)">
+    <defs>
+      <!-- Enterprise Gradient - Professional & Trustworthy -->
+      <linearGradient id="enterpriseGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" style="stop-color:#0F172A;stop-opacity:1" />
+        <stop offset="25%" style="stop-color:#1E40AF;stop-opacity:1" />
+        <stop offset="50%" style="stop-color:#3B82F6;stop-opacity:1" />
+        <stop offset="75%" style="stop-color:#10B981;stop-opacity:1" />
+        <stop offset="100%" style="stop-color:#FCD34D;stop-opacity:1" />
+      </linearGradient>
+      
+      <!-- Royal Blue Gradient -->
+      <linearGradient id="royalGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" style="stop-color:#1E3A8A;stop-opacity:1" />
+        <stop offset="50%" style="stop-color:#2563EB;stop-opacity:1" />
+        <stop offset="100%" style="stop-color:#60A5FA;stop-opacity:1" />
+      </linearGradient>
+      
+      <!-- Luxury Gold Accent -->
+      <linearGradient id="goldAccent" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" style="stop-color:#FEF3C7;stop-opacity:1" />
+        <stop offset="50%" style="stop-color:#FCD34D;stop-opacity:1" />
+        <stop offset="100%" style="stop-color:#F59E0B;stop-opacity:1" />
+      </linearGradient>
+      
+      <!-- Premium B Letter -->
+      <linearGradient id="premiumB" x1="0%" y1="0%" x2="0%" y2="100%">
+        <stop offset="0%" style="stop-color:#FFFFFF;stop-opacity:1" />
+        <stop offset="50%" style="stop-color:#F9FAFB;stop-opacity:1" />
+        <stop offset="100%" style="stop-color:#E5E7EB;stop-opacity:1" />
+      </linearGradient>
+      
+      <!-- Background Mesh -->
+      <radialGradient id="meshGradient">
+        <stop offset="0%" style="stop-color:#2563EB;stop-opacity:0.08" />
+        <stop offset="40%" style="stop-color:#1E40AF;stop-opacity:0.05" />
+        <stop offset="100%" style="stop-color:#0F172A;stop-opacity:0.02" />
+      </radialGradient>
+      
+      <!-- Professional Shadow -->
+      <filter id="proShadow" x="-50%" y="-50%" width="200%" height="200%">
+        <feGaussianBlur in="SourceAlpha" stdDeviation="8"/>
+        <feOffset dx="0" dy="10" result="offsetblur"/>
+        <feFlood flood-color="#0F172A" flood-opacity="0.25"/>
+        <feComposite in2="offsetblur" operator="in"/>
+        <feMerge>
+          <feMergeNode/>
+          <feMergeNode in="SourceGraphic"/>
+        </feMerge>
+      </filter>
+      
+      <!-- Metallic Gradient -->
+      <linearGradient id="metallic" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" style="stop-color:#F9FAFB;stop-opacity:1" />
+        <stop offset="25%" style="stop-color:#E5E7EB;stop-opacity:1" />
+        <stop offset="50%" style="stop-color:#F9FAFB;stop-opacity:1" />
+        <stop offset="75%" style="stop-color:#D1D5DB;stop-opacity:1" />
+        <stop offset="100%" style="stop-color:#F3F4F6;stop-opacity:1" />
+      </linearGradient>
+    </defs>
+    
+    <!-- Main Circle with Premium Effect -->
+    <g filter="url(#proShadow)">
+      <!-- Base Circle -->
+      <circle cx="256" cy="256" r="175" fill="url(#royalGradient)"/>
+      
+      <!-- Glass Layer -->
+      <circle cx="256" cy="256" r="175" fill="url(#royalGradient)" opacity="0.9"/>
+      
+      <!-- Top Shine -->
+      <ellipse cx="256" cy="190" rx="130" ry="70" fill="url(#metallic)" opacity="0.2"/>
+      
+      <!-- Gold Ring Accent -->
+      <circle cx="256" cy="256" r="175" fill="none" stroke="url(#goldAccent)" stroke-width="2" opacity="0.6"/>
+    </g>
+    
+    <!-- Professional B Logo -->
+    <g transform="translate(256, 256)">
+      <!-- Shadow Layer -->
+      <path d="
+        M -60 -95
+        L -60 95
+        L 30 95
+        Q 85 95, 85 50
+        Q 85 25, 60 12
+        Q 80 0, 80 -35
+        Q 80 -95, 25 -95
+        L -60 -95
+        Z
+      " 
+      fill="#000000" 
+      opacity="0.2"
+      transform="translate(3, 3)"/>
+      
+      <!-- Main B with Metallic Effect -->
+      <path d="
+        M -60 -95
+        L -60 95
+        L 30 95
+        Q 85 95, 85 50
+        Q 85 25, 60 12
+        Q 80 0, 80 -35
+        Q 80 -95, 25 -95
+        L -60 -95
+        Z
+        
+        M -20 -65
+        L 20 -65
+        Q 45 -65, 45 -40
+        Q 45 -15, 20 -15
+        L -20 -15
+        Z
+        
+        M -20 15
+        L 25 15
+        Q 50 15, 50 50
+        Q 50 65, 25 65
+        L -20 65
+        Z
+      " 
+      fill="url(#metallic)" 
+      stroke="url(#goldAccent)" 
+      stroke-width="1"
+      stroke-linejoin="round"/>
+      
+      <!-- Inner B Highlight -->
+      <path d="
+        M -60 -95
+        L -60 -85
+        L 25 -85
+        Q 70 -85, 70 -35
+        Q 70 -25, 65 -20
+      " 
+      fill="none" 
+      stroke="rgba(255,255,255,0.5)" 
+      stroke-width="2"
+      stroke-linecap="round"/>
+      
+      <!-- Premium Badge -->
+      <g transform="translate(45, -50)">
+        <circle cx="0" cy="0" r="18" fill="url(#goldAccent)" opacity="0.9"/>
+        <circle cx="0" cy="0" r="18" fill="none" stroke="#FFFFFF" stroke-width="1" opacity="0.8"/>
+        <text x="0" y="5" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#0F172A" text-anchor="middle">★</text>
+      </g>
+    </g>
+  </g>
+</svg>

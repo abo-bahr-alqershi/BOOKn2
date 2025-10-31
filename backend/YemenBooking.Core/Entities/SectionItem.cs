@@ -1,0 +1,1 @@
+// Removed legacy SectionItem entity as per plan - use PropertyInSection and UnitInSection only

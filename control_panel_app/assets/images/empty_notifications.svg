@@ -1,0 +1,207 @@
+<!-- assets/images/empty_notifications.svg -->
+<svg width="400" height="400" viewBox="0 0 400 400" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background Gradient Circle -->
+  <defs>
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4FACFE;stop-opacity:0.08" />
+      <stop offset="100%" style="stop-color:#667EEA;stop-opacity:0.05" />
+    </linearGradient>
+    
+    <linearGradient id="bellGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4FACFE;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#00D4FF;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#667EEA;stop-opacity:1" />
+    </linearGradient>
+    
+    <linearGradient id="glowGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00D4FF;stop-opacity:0.4" />
+      <stop offset="100%" style="stop-color:#9D50FF;stop-opacity:0.2" />
+    </linearGradient>
+    
+    <!-- Blur Filter -->
+    <filter id="blur" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="4" />
+    </filter>
+    
+    <!-- Glow Filter -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="6" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    
+    <!-- Shadow Filter -->
+    <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000000" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+  
+  <!-- Animated Background Circles -->
+  <g opacity="0.6">
+    <circle cx="200" cy="180" r="160" fill="url(#bgGradient)">
+      <animate attributeName="r" values="160;170;160" dur="4s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0.6;0.4;0.6" dur="4s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="200" cy="180" r="130" fill="none" stroke="url(#bellGradient)" stroke-width="1" opacity="0.15">
+      <animate attributeName="r" values="130;140;130" dur="5s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="200" cy="180" r="90" fill="none" stroke="url(#bellGradient)" stroke-width="0.5" opacity="0.1">
+      <animate attributeName="r" values="90;95;90" dur="3s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+  
+  <!-- Glass Morphism Card Behind Bell -->
+  <rect x="100" y="100" width="200" height="160" rx="30" fill="white" fill-opacity="0.02" filter="url(#blur)"/>
+  <rect x="100" y="100" width="200" height="160" rx="30" fill="none" stroke="url(#bellGradient)" stroke-width="1" stroke-opacity="0.1"/>
+  
+  <!-- Main Bell Icon - MUCH LARGER -->
+  <g transform="translate(200, 160)" filter="url(#shadow)">
+    <!-- Bell Body - Increased Size -->
+    <path d="M-50 -20 C-50 -50, -30 -70, 0 -70 C30 -70, 50 -50, 50 -20 L50 20 C50 30, 46 40, 40 40 L-40 40 C-46 40, -50 30, -50 20 Z" 
+          fill="url(#bellGradient)" 
+          opacity="0.85"
+          filter="url(#glow)">
+      <animateTransform attributeName="transform" type="rotate" values="-3;3;-3" dur="3s" repeatCount="indefinite"/>
+    </path>
+    
+    <!-- Bell Inner Highlight -->
+    <path d="M-35 -15 C-35 -40, -22 -55, 0 -55 C22 -55, 35 -40, 35 -15 L35 15 C35 22, 33 28, 30 28 L-30 28 C-33 28, -35 22, -35 15 Z" 
+          fill="white" 
+          opacity="0.08"/>
+    
+    <!-- Bell Top -->
+    <circle cx="0" cy="-75" r="8" fill="url(#bellGradient)"/>
+    <rect x="-4" y="-85" width="8" height="10" rx="4" fill="url(#bellGradient)"/>
+    
+    <!-- Bell Clapper -->
+    <circle cx="0" cy="40" r="6" fill="url(#bellGradient)" opacity="0.9">
+      <animate attributeName="cy" values="40;45;40" dur="3s" repeatCount="indefinite"/>
+    </circle>
+    
+    <!-- Notification Badge (Empty/Muted) -->
+    <g transform="translate(35, -40)">
+      <circle r="18" fill="#FF3366" opacity="0.15"/>
+      <circle r="18" fill="none" stroke="#FF3366" stroke-width="2" opacity="0.25" stroke-dasharray="4,4">
+        <animateTransform attributeName="transform" type="rotate" values="0;360" dur="15s" repeatCount="indefinite"/>
+      </circle>
+      <!-- Mute Icon Inside Badge -->
+      <line x1="-8" y1="0" x2="8" y2="0" stroke="#FF3366" stroke-width="2" opacity="0.4" stroke-linecap="round">
+        <animate attributeName="opacity" values="0.4;0.6;0.4" dur="2s" repeatCount="indefinite"/>
+      </line>
+    </g>
+  </g>
+  
+  <!-- Silent Mode Indicator (Z's for sleeping) - LARGER -->
+  <g transform="translate(270, 120)" opacity="0.5">
+    <text font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="url(#bellGradient)">
+      Z
+      <animate attributeName="opacity" values="0;0.7;0" dur="2.5s" repeatCount="indefinite"/>
+      <animateTransform attributeName="transform" type="translate" values="0,0; 3,-8; 6,-16" dur="2.5s" repeatCount="indefinite"/>
+    </text>
+  </g>
+  <g transform="translate(285, 100)" opacity="0.4">
+    <text font-family="Arial, sans-serif" font-size="30" font-weight="bold" fill="url(#bellGradient)">
+      Z
+      <animate attributeName="opacity" values="0;0.6;0" dur="2.5s" begin="0.5s" repeatCount="indefinite"/>
+      <animateTransform attributeName="transform" type="translate" values="0,0; 3,-8; 6,-16" dur="2.5s" begin="0.5s" repeatCount="indefinite"/>
+    </text>
+  </g>
+  <g transform="translate(303, 78)" opacity="0.3">
+    <text font-family="Arial, sans-serif" font-size="36" font-weight="bold" fill="url(#bellGradient)">
+      Z
+      <animate attributeName="opacity" values="0;0.5;0" dur="2.5s" begin="1s" repeatCount="indefinite"/>
+      <animateTransform attributeName="transform" type="translate" values="0,0; 3,-8; 6,-16" dur="2.5s" begin="1s" repeatCount="indefinite"/>
+    </text>
+  </g>
+  
+  <!-- Decorative Elements - LARGER -->
+  <g opacity="0.4">
+    <!-- Left Stars -->
+    <g transform="translate(80, 100)">
+      <path d="M0,-8 L2.4,-2.4 L8,0 L2.4,2.4 L0,8 L-2.4,2.4 L-8,0 L-2.4,-2.4 Z" fill="url(#bellGradient)">
+        <animate attributeName="opacity" values="0.4;0.9;0.4" dur="3s" repeatCount="indefinite"/>
+        <animateTransform attributeName="transform" type="rotate" values="0;360" dur="8s" repeatCount="indefinite"/>
+      </path>
+    </g>
+    
+    <!-- Right Stars -->
+    <g transform="translate(320, 160)">
+      <path d="M0,-6 L2,-2 L6,0 L2,2 L0,6 L-2,2 L-6,0 L-2,-2 Z" fill="url(#bellGradient)">
+        <animate attributeName="opacity" values="0.3;0.7;0.3" dur="2.5s" repeatCount="indefinite"/>
+        <animateTransform attributeName="transform" type="rotate" values="0;-360" dur="6s" repeatCount="indefinite"/>
+      </path>
+    </g>
+    
+    <!-- Bottom Star -->
+    <g transform="translate(200, 270)">
+      <path d="M0,-7 L2.1,-2.1 L7,0 L2.1,2.1 L0,7 L-2.1,2.1 L-7,0 L-2.1,-2.1 Z" fill="url(#bellGradient)">
+        <animate attributeName="opacity" values="0.3;0.6;0.3" dur="4s" repeatCount="indefinite"/>
+        <animateTransform attributeName="transform" type="rotate" values="0;360" dur="10s" repeatCount="indefinite"/>
+      </path>
+    </g>
+  </g>
+  
+  <!-- Floating Particles - LARGER -->
+  <g opacity="0.3">
+    <circle cx="100" cy="200" r="4" fill="url(#bellGradient)">
+      <animate attributeName="cy" values="200;185;200" dur="3s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0.3;0.6;0.3" dur="3s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="300" cy="220" r="3" fill="url(#bellGradient)">
+      <animate attributeName="cy" values="220;205;220" dur="2.5s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0.3;0.5;0.3" dur="2.5s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="120" cy="250" r="2.5" fill="url(#bellGradient)">
+      <animate attributeName="cy" values="250;240;250" dur="2s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0.2;0.4;0.2" dur="2s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="280" cy="180" r="3.5" fill="url(#bellGradient)">
+      <animate attributeName="cy" values="180;170;180" dur="3.5s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0.25;0.45;0.25" dur="3.5s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+  
+  <!-- Wave Lines Around Bell -->
+  <g transform="translate(200, 160)" opacity="0.2">
+    <circle cx="0" cy="0" r="80" fill="none" stroke="url(#bellGradient)" stroke-width="0.5">
+      <animate attributeName="r" values="80;100;80" dur="3s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0.2;0;0.2" dur="3s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="0" cy="0" r="90" fill="none" stroke="url(#bellGradient)" stroke-width="0.3">
+      <animate attributeName="r" values="90;110;90" dur="3s" begin="0.5s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0.15;0;0.15" dur="3s" begin="0.5s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+  
+  <!-- Text Message - LARGER FONT -->
+  <g transform="translate(200, 320)">
+    <text font-family="SF Pro Display, -apple-system, BlinkMacSystemFont, Arial" 
+          font-size="22" 
+          font-weight="600" 
+          text-anchor="middle" 
+          fill="#B8C4E6" 
+          opacity="0.9">
+      لا توجد إشعارات جديدة
+    </text>
+    <text font-family="SF Pro Display, -apple-system, BlinkMacSystemFont, Arial" 
+          font-size="16" 
+          font-weight="400" 
+          text-anchor="middle" 
+          fill="#8B95B7" 
+          opacity="0.7"
+          y="28">
+      ستظهر الإشعارات هنا عند وصولها
+    </text>
+  </g>
+  
+  <!-- Subtle Grid Pattern -->
+  <defs>
+    <pattern id="grid" x="0" y="0" width="50" height="50" patternUnits="userSpaceOnUse">
+      <line x1="0" y1="0" x2="0" y2="50" stroke="#4FACFE" stroke-width="0.2" opacity="0.05"/>
+      <line x1="0" y1="0" x2="50" y2="0" stroke="#4FACFE" stroke-width="0.2" opacity="0.05"/>
+    </pattern>
+  </defs>
+  <rect width="400" height="400" fill="url(#grid)" opacity="0.5"/>
+</svg>

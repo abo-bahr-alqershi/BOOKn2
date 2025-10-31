@@ -1,0 +1,4872 @@
+namespace YemenBooking.Core.Entities;
+
+using System;
+using System.ComponentModel.DataAnnotations;
+using YemenBooking.Core.Enums;
+
+/// <summary>
+/// كيان إجراء الإدارة
+/// Admin Action entity
+/// </summary>
+[Display(Name = "كيان إجراء الإدارة")]
+public class AdminAction : BaseEntity<Guid>
+{
+    /// <summary>
+    /// معرف المدير
+    /// Admin identifier
+    /// </summary>
+    [Display(Name = "معرف المدير")]
+    public Guid AdminId { get; set; }
+    
+    /// <summary>
+    /// معرف الهدف
+    /// Target identifier
+    /// </summary>
+    [Display(Name = "معرف الهدف")]
+    public Guid TargetId { get; set; }
+    
+    /// <summary>
+    /// نوع الهدف (property, user, booking)
+    /// Target type (property, user, booking)
+    /// </summary>
+    [Display(Name = "نوع الهدف")]
+    public TargetType TargetType { get; set; }
+    
+    /// <summary>
+    /// نوع الإجراء (create, update, delete, approve)
+    /// Action type (create, update, delete, approve)
+    /// </summary>
+    [Display(Name = "نوع الإجراء")]
+    public ActionType ActionType { get; set; }
+    
+    /// <summary>
+    /// الطابع الزمني للإجراء
+    /// Action timestamp
+    /// </summary>
+    [Display(Name = "الطابع الزمني للإجراء")]
+    public DateTime Timestamp { get; set; }
+    
+    /// <summary>
+    /// التغييرات (JSON)
+    /// Changes (JSON)
+    /// </summary>
+    [Display(Name = "التغييرات")]
+    public string Changes { get; set; }
+    
+    /// <summary>
+    /// المدير المرتبط بالإجراء
+    /// Admin associated with the action
+    /// </summary>
+    [Display(Name = "المدير المرتبط بالإجراء")]
+    public virtual User Admin { get; set; }
+} namespace YemenBooking.Core.Entities;
+
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+
+/// <summary>
+/// كيان المرفق
+/// Amenity entity
+/// </summary>
+[Display(Name = "كيان المرفق")]
+public class Amenity : BaseEntity<Guid>
+{
+    /// <summary>
+    /// اسم المرفق
+    /// Amenity name (Wi-Fi, Pool, Gym, Breakfast)
+    /// </summary>
+    [Display(Name = "اسم المرفق")]
+    public string Name { get; set; }
+    
+    /// <summary>
+    /// وصف المرفق
+    /// Amenity description
+    /// </summary>
+    [Display(Name = "وصف المرفق")]
+    public string Description { get; set; }
+    
+    /// <summary>
+    /// أيقونة المرفق
+    /// Amenity icon
+    /// </summary>
+    public string Icon { get; set; } = string.Empty;
+
+    /// <summary>
+    /// أنواع الكيانات المرتبطة بهذا المرفق
+    /// Property types associated with this amenity
+    /// </summary>
+    [Display(Name = "أنواع الكيانات المرتبطة بهذا المرفق")]
+    public virtual ICollection<PropertyTypeAmenity> PropertyTypeAmenities { get; set; } = new List<PropertyTypeAmenity>();
+} using System.ComponentModel.DataAnnotations;
+
+namespace YemenBooking.Core.Entities;
+
+/// <summary>
+/// كيان سجل التدقيق
+/// Audit log entity
+/// </summary>
+[Display(Name = "كيان سجل التدقيق")]
+public class AuditLog : BaseEntity<Guid>
+{
+    /// <summary>
+    /// نوع الكيان
+    /// Entity type
+    /// </summary>
+    [Display(Name = "نوع الكيان")]
+    public string EntityType { get; set; } = null!;
+
+    /// <summary>
+    /// معرف الكيان
+    /// Entity ID
+    /// </summary>
+    [Display(Name = "معرف الكيان")]
+    public Guid? EntityId { get; set; }
+
+    /// <summary>
+    /// الإجراء المتخذ
+    /// Action performed
+    /// </summary>
+    [Display(Name = "الإجراء المتخذ")]
+    public AuditAction Action { get; set; }
+
+    /// <summary>
+    /// القيم السابقة (JSON)
+    /// Previous values (JSON)
+    /// </summary>
+    [Display(Name = "القيم السابقة")]
+    public string? OldValues { get; set; }
+
+    /// <summary>
+    /// القيم الجديدة (JSON)
+    /// New values (JSON)
+    /// </summary>
+    [Display(Name = "القيم الجديدة")]
+    public string? NewValues { get; set; }
+
+    /// <summary>
+    /// معرف المستخدم الذي قام بالعملية
+    /// User who performed the action
+    /// </summary>
+    [Display(Name = "معرف المستخدم الذي قام بالعملية")]
+    public Guid? PerformedBy { get; set; }
+
+    /// <summary>
+    /// اسم المستخدم
+    /// Username
+    /// </summary>
+    [Display(Name = "اسم المستخدم")]
+    public string? Username { get; set; }
+
+    /// <summary>
+    /// عنوان IP
+    /// IP Address
+    /// </summary>
+    [Display(Name = "عنوان IP")]
+    public string? IpAddress { get; set; }
+
+    /// <summary>
+    /// وكيل المستخدم
+    /// User agent
+    /// </summary>
+    [Display(Name = "وكيل المستخدم")]
+    public string? UserAgent { get; set; }
+
+    /// <summary>
+    /// ملاحظات إضافية
+    /// Additional notes
+    /// </summary>
+    [Display(Name = "ملاحظات إضافية")]
+    public string? Notes { get; set; }
+
+    /// <summary>
+    /// معلومات إضافية (JSON)
+    /// Additional metadata (JSON)
+    /// </summary>
+    [Display(Name = "معلومات إضافية")]
+    public string? Metadata { get; set; }
+
+    /// <summary>
+    /// حالة العملية
+    /// Operation status
+    /// </summary>
+    [Display(Name = "حالة العملية")]
+    public bool IsSuccessful { get; set; } = true;
+
+    /// <summary>
+    /// رسالة الخطأ في حالة الفشل
+    /// Error message if failed
+    /// </summary>
+    [Display(Name = "رسالة الخطأ في حالة الفشل")]
+    public string? ErrorMessage { get; set; }
+
+    /// <summary>
+    /// مدة العملية بالمللي ثانية
+    /// Operation duration in milliseconds
+    /// </summary>
+    [Display(Name = "مدة العملية بالمللي ثانية")]
+    public long? DurationMs { get; set; }
+
+    /// <summary>
+    /// معرف الجلسة
+    /// Session ID
+    /// </summary>
+    [Display(Name = "معرف الجلسة")]
+    public string? SessionId { get; set; }
+
+    /// <summary>
+    /// معرف الطلب
+    /// Request ID
+    /// </summary>
+    [Display(Name = "معرف الطلب")]
+    public string? RequestId { get; set; }
+
+    /// <summary>
+    /// المصدر
+    /// Source
+    /// </summary>
+    [Display(Name = "المصدر")]
+    public string? Source { get; set; }
+
+    /// <summary>
+    /// المستخدم الذي قام بالعملية
+    /// User who performed the action
+    /// </summary>
+    [Display(Name = "المستخدم الذي قام بالعملية")]
+    public virtual User? PerformedByUser { get; set; }
+
+    // Helper Methods
+
+    /// <summary>
+    /// إضافة معلومات إضافية
+    /// Add metadata
+    /// </summary>
+    public void AddMetadata(string key, object value)
+    {
+        var metadata = string.IsNullOrEmpty(Metadata) 
+            ? new Dictionary<string, object>() 
+            : System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(Metadata) ?? new Dictionary<string, object>();
+        
+        metadata[key] = value;
+        Metadata = System.Text.Json.JsonSerializer.Serialize(metadata);
+        UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// الحصول على المعلومات الإضافية
+    /// Get metadata
+    /// </summary>
+    public Dictionary<string, object>? GetMetadata()
+    {
+        if (string.IsNullOrEmpty(Metadata))
+            return null;
+
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(Metadata);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// الحصول على القيم السابقة
+    /// Get previous values
+    /// </summary>
+    public Dictionary<string, object>? GetOldValues()
+    {
+        if (string.IsNullOrEmpty(OldValues))
+            return null;
+
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(OldValues);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// الحصول على القيم الجديدة
+    /// Get new values
+    /// </summary>
+    public Dictionary<string, object>? GetNewValues()
+    {
+        if (string.IsNullOrEmpty(NewValues))
+            return null;
+
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(NewValues);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// هل العملية فاشلة
+    /// Is operation failed
+    /// </summary>
+    public bool IsFailed => !IsSuccessful;
+
+    /// <summary>
+    /// هل العملية استغرقت وقتاً طويلاً
+    /// Is operation slow
+    /// </summary>
+    public bool IsSlowOperation => DurationMs.HasValue && DurationMs.Value > 5000; // أكثر من 5 ثوان
+}
+
+
+/// <summary>
+/// إجراء التدقيق
+/// Audit action
+/// </summary>
+public enum AuditAction
+{
+    /// <summary>
+    /// إنشاء
+    /// Create
+    /// </summary>
+    [Display(Name = "إنشاء")]
+    CREATE,
+    
+    /// <summary>
+    /// تحديث
+    /// Update
+    /// </summary>
+    [Display(Name = "تحديث")]
+    UPDATE,
+    
+    /// <summary>
+    /// حذف
+    /// Delete
+    /// </summary>
+    [Display(Name = "حذف")]
+    DELETE,
+    
+    /// <summary>
+    /// حذف ناعم
+    /// Soft delete
+    /// </summary>
+    [Display(Name = "حذف ناعم")]
+    SOFT_DELETE,
+    
+    /// <summary>
+    /// عرض
+    /// View
+    /// </summary>
+    [Display(Name = "عرض")]
+    VIEW,
+    
+    /// <summary>
+    /// تسجيل دخول
+    /// Login
+    /// </summary>
+    LOGIN,
+    
+    /// <summary>
+    /// تسجيل خروج
+    /// Logout
+    /// </summary>
+    LOGOUT,
+    
+    /// <summary>
+    /// تغيير كلمة المرور
+    /// Password change
+    /// </summary>
+    PASSWORD_CHANGE,
+    
+    /// <summary>
+    /// إعادة تعيين كلمة المرور
+    /// Password reset
+    /// </summary>
+    PASSWORD_RESET,
+    
+    /// <summary>
+    /// تفعيل
+    /// Activate
+    /// </summary>
+    ACTIVATE,
+    
+    /// <summary>
+    /// إلغاء التفعيل
+    /// Deactivate
+    /// </summary>
+    DEACTIVATE,
+    
+    /// <summary>
+    /// موافقة
+    /// Approve
+    /// </summary>
+    APPROVE,
+    
+    /// <summary>
+    /// رفض
+    /// Reject
+    /// </summary>
+    REJECT,
+    
+    /// <summary>
+    /// تعليق
+    /// Suspend
+    /// </summary>
+    SUSPEND,
+    
+    /// <summary>
+    /// استيراد
+    /// Import
+    /// </summary>
+    IMPORT,
+    
+    /// <summary>
+    /// تصدير
+    /// Export
+    /// </summary>
+    EXPORT
+}using YemenBooking.Core.Interfaces;
+using System.ComponentModel.DataAnnotations;
+
+namespace YemenBooking.Core.Entities;
+
+/// <summary>
+/// الكيان الأساسي الذي ترث منه جميع الكيانات في النظام
+/// Base entity class that all entities inherit from
+/// </summary>
+[Display(Name = "الكيان الأساسي لجميع الكيانات")]
+public abstract class BaseEntity<TId> : IBaseEntity<TId>
+    where TId : struct
+{
+    /// <summary>
+    /// المعرف الفريد للكيان
+    /// Unique identifier for the entity
+    /// </summary>
+    [Display(Name = "المعرف الفريد للكيان")]
+    public TId Id { get; set; } = default!;
+
+    /// <summary>
+    /// المستخدم اللذي إنشاء الكيان
+    /// User who created the entity
+    /// </summary>
+    [Display(Name = "المستخدم الذي أنشأ الكيان")]
+    public TId? CreatedBy { get; set; }
+
+    /// <summary>
+    /// تاريخ إنشاء الكيان
+    /// Creation date of the entity
+    /// </summary>
+    [Display(Name = "تاريخ إنشاء الكيان")]
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    
+    /// <summary>
+    /// المستخدم اللذي حدث الكيان
+    /// User who updated the entity
+    /// </summary>
+    [Display(Name = "المستخدم الذي حدث الكيان")]
+    public TId? UpdatedBy { get; set; }
+
+    /// <summary>
+    /// تاريخ آخر تحديث (اختياري)
+    /// Date of last update (optional)
+    /// </summary>
+    [Display(Name = "تاريخ آخر تحديث")]
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+    
+    /// <summary>
+    /// حالة نشاط الكيان
+    /// Activity status of the entity
+    /// </summary>
+    [Display(Name = "حالة نشاط الكيان")]
+    public bool IsActive { get; set; } = true;
+
+    /// <summary>
+    /// Indicates if the entity is soft-deleted.
+    /// </summary>
+    [Display(Name = "حذف كاذب للكيان")]
+    public bool IsDeleted { get; set; } = false;
+
+    /// <summary>
+    /// المستخدم اللذي حذف الكيان
+    /// User who soft-deleted the entity
+    /// </summary>
+    [Display(Name = "المستخدم الذي حذف الكيان")]
+    public TId? DeletedBy { get; set; }
+
+    /// <summary>
+    /// Date when the entity is soft-deleted.
+    /// </summary>
+    [Display(Name = "تاريخ حذف الكيان")]
+    public DateTime? DeletedAt { get; set; }
+}namespace YemenBooking.Core.Entities;
+
+using System;
+using YemenBooking.Core.ValueObjects;
+using System.Collections.Generic;
+using YemenBooking.Core.Enums;
+using System.ComponentModel.DataAnnotations;
+
+/// <summary>
+/// كيان الحجز
+/// Booking entity
+/// </summary>
+[Display(Name = "كيان الحجز")]
+public class Booking : BaseEntity<Guid>
+{
+    /// <summary>
+    /// معرف المستخدم
+    /// User identifier
+    /// </summary>
+    [Display(Name = "معرف المستخدم")]
+    public Guid UserId { get; set; }
+    
+    /// <summary>
+    /// معرف الوحدة
+    /// Unit identifier
+    /// </summary>
+    [Display(Name = "معرف الوحدة")]
+    public Guid UnitId { get; set; }
+    
+    /// <summary>
+    /// تاريخ الوصول
+    /// Check-in date
+    /// </summary>
+    [Display(Name = "تاريخ الوصول")]
+    public DateTime CheckIn { get; set; }
+    
+    /// <summary>
+    /// تاريخ المغادرة
+    /// Check-out date
+    /// </summary>
+    [Display(Name = "تاريخ المغادرة")]
+    public DateTime CheckOut { get; set; }
+    
+    /// <summary>
+    /// عدد الضيوف
+    /// Number of guests
+    /// </summary>
+    [Display(Name = "عدد الضيوف")]
+    public int GuestsCount { get; set; }
+    
+    /// <summary>
+    /// السعر الإجمالي للحجز
+    /// Total price of the booking
+    /// </summary>
+    [Display(Name = "السعر الإجمالي للحجز")]
+    public Money TotalPrice { get; set; }
+    
+    /// <summary>
+    /// حالة الحجز (مؤكّد، معلّق، ملغى)
+    /// Booking status (Confirmed, Pending, Cancelled)
+    /// </summary>
+    [Display(Name = "حالة الحجز")]
+    public BookingStatus Status { get; set; }
+    
+    /// <summary>
+    /// تاريخ الحجز
+    /// Booking date
+    /// </summary>
+    [Display(Name = "تاريخ الحجز")]
+    public DateTime BookedAt { get; set; }
+
+    /// <summary>
+    /// مصدر الحجز (ويب، موبايل، حجز مباشر)
+    /// Booking source (WebApp, MobileApp, WalkIn)
+    /// </summary>
+    [Display(Name = "مصدر الحجز")]
+    public string? BookingSource { get; set; }
+
+    /// <summary>
+    /// سبب الإلغاء
+    /// Cancellation reason
+    /// </summary>
+    [Display(Name = "سبب الإلغاء")]
+    public string? CancellationReason { get; set; }
+
+    /// <summary>
+    /// هل الحجز مباشر (Walk-in)
+    /// Is walk-in booking
+    /// </summary>
+    [Display(Name = "هل الحجز مباشر")]
+    public bool IsWalkIn { get; set; } = false;
+    
+    /// <summary>
+    /// المستخدم المرتبط بالحجز
+    /// User associated with the booking
+    /// </summary>
+    [Display(Name = "المستخدم المرتبط بالحجز")]
+    public virtual User User { get; set; }
+    
+    /// <summary>
+    /// الوحدة المرتبطة بالحجز
+    /// Unit associated with the booking
+    /// </summary>
+    [Display(Name = "الوحدة المرتبطة بالحجز")]
+    public virtual Unit Unit { get; set; }
+    
+    /// <summary>
+    /// المدفوعات المرتبطة بالحجز
+    /// Payments associated with the booking
+    /// </summary>
+    [Display(Name = "المدفوعات المرتبطة بالحجز")]
+    public virtual ICollection<Payment> Payments { get; set; } = new List<Payment>();
+    
+    /// <summary>
+    /// الخدمات المرتبطة بالحجز
+    /// Services associated with the booking
+    /// </summary>
+    [Display(Name = "الخدمات المرتبطة بالحجز")]
+    public virtual ICollection<BookingService> BookingServices { get; set; } = new List<BookingService>();
+    
+    /// <summary>
+    /// المراجعات المرتبطة بالحجز
+    /// Reviews associated with the booking
+    /// </summary>
+    [Display(Name = "المراجعات المرتبطة بالحجز")]
+    public virtual ICollection<Review> Reviews { get; set; } = new List<Review>();
+
+    /// <summary>
+    /// التجاوزات المتعلقة بالحجز
+    /// Availability blocks related to this booking
+    /// </summary>
+    public virtual ICollection<UnitAvailability> Availabilities { get; set; } = new List<UnitAvailability>();
+
+    /// <summary>
+    /// مبلغ عمولة المنصة
+    /// Platform commission amount
+    /// </summary>
+    [Display(Name = "مبلغ عمولة المنصة")]
+    public decimal PlatformCommissionAmount { get; set; }
+
+    /// <summary>
+    /// تاريخ تسجيل الوصول الفعلي
+    /// Actual check-in date
+    /// </summary>
+    [Display(Name = "تاريخ تسجيل الوصول الفعلي")]
+    public DateTime? ActualCheckInDate { get; set; }
+
+    /// <summary>
+    /// تاريخ المغادرة الفعلي
+    /// Actual check-out date
+    /// </summary>
+    [Display(Name = "تاريخ المغادرة الفعلي")]
+    public DateTime? ActualCheckOutDate { get; set; }
+
+    /// <summary>
+    /// المبلغ النهائي المدفوع
+    /// Final amount
+    /// </summary>
+    [Display(Name = "المبلغ النهائي المدفوع")]
+    public decimal FinalAmount { get; set; }
+
+    /// <summary>
+    /// تقييم العميل
+    /// Customer rating
+    /// </summary>
+    [Display(Name = "تقييم العميل")]
+    public decimal? CustomerRating { get; set; }
+
+    /// <summary>
+    /// ملاحظات إكمال الحجز
+    /// Completion notes
+    /// </summary>
+    [Display(Name = "ملاحظات إكمال الحجز")]
+    public string? CompletionNotes { get; set; }
+} namespace YemenBooking.Core.Entities;
+
+using System;
+using System.ComponentModel.DataAnnotations;
+using YemenBooking.Core.ValueObjects;
+
+/// <summary>
+/// كيان خدمة الحجز
+/// Booking Service entity
+/// </summary>
+[Display(Name = "كيان خدمة الحجز")]
+public class BookingService : BaseEntity<Guid>
+{
+    /// <summary>
+    /// معرف الحجز
+    /// Booking identifier
+    /// </summary>
+    [Display(Name = "معرف الحجز")]
+    public Guid BookingId { get; set; }
+    
+    /// <summary>
+    /// معرف الخدمة
+    /// Service identifier
+    /// </summary>
+    [Display(Name = "معرف الخدمة")]
+    public Guid ServiceId { get; set; }
+    
+    /// <summary>
+    /// الكمية
+    /// Quantity
+    /// </summary>
+    [Display(Name = "الكمية")]
+    public int Quantity { get; set; }
+    
+    /// <summary>
+    /// السعر الإجمالي للخدمة
+    /// Total price of the service
+    /// </summary>
+    [Display(Name = "السعر الإجمالي للخدمة")]
+    public Money TotalPrice { get; set; }
+    
+    /// <summary>
+    /// الحجز المرتبط بخدمة الحجز
+    /// Booking associated with the booking service
+    /// </summary>
+    [Display(Name = "الحجز المرتبط بخدمة الحجز")]
+    public virtual Booking Booking { get; set; }
+    
+    /// <summary>
+    /// الخدمة المرتبطة بخدمة الحجز
+    /// Service associated with the booking service
+    /// </summary>
+    [Display(Name = "الخدمة المرتبطة بخدمة الحجز")]
+    public virtual PropertyService Service { get; set; }
+} namespace YemenBooking.Core.Entities
+{
+    using System;
+    using System.ComponentModel.DataAnnotations;
+
+    /// <summary>
+    /// ملف تعريف مرفق داخل محادثة
+    /// Entity representing a chat attachment
+    /// </summary>
+    [Display(Name = "مرفق المحادثة")]
+    public class ChatAttachment : BaseEntity<Guid>
+    {
+        /// <summary>
+        /// معرف المحادثة المرتبط بالمرفق
+        /// ID of the conversation this attachment belongs to
+        /// </summary>
+        [Display(Name = "معرف المحادثة")]
+        public Guid ConversationId { get; set; }
+
+        /// <summary>
+        /// اسم الملف الأصلي
+        /// Original file name
+        /// </summary>
+        [Display(Name = "اسم الملف الأصلي")]
+        public string FileName { get; set; } = string.Empty;
+
+        /// <summary>
+        /// نوع المحتوى (MIME type)
+        /// Content type of the file
+        /// </summary>
+        [Display(Name = "نوع المحتوى")]
+        public string ContentType { get; set; } = string.Empty;
+
+        /// <summary>
+        /// حجم الملف بالبايت
+        /// Size of the file in bytes
+        /// </summary>
+        [Display(Name = "حجم الملف (بايت)")]
+        public long FileSize { get; set; }
+
+        /// <summary>
+        /// المسار على الخادم حيث يخزن الملف
+        /// File path on server
+        /// </summary>
+        [Display(Name = "مسار الملف على الخادم")]
+        public string FilePath { get; set; } = string.Empty;
+        /// <summary>
+        /// URL of the thumbnail image (optional)
+        /// </summary>
+        public string? ThumbnailUrl { get; set; }
+        /// <summary>
+        /// Additional metadata as JSON string (optional)
+        /// </summary>
+        public string? Metadata { get; set; }
+
+        /// <summary>
+        /// مدة المرفق بالثواني (للصوت/الفيديو)
+        /// Attachment duration in seconds (audio/video)
+        /// </summary>
+        public int? DurationSeconds { get; set; }
+
+        /// <summary>
+        /// المستخدم الذي رفع الملف
+        /// User who uploaded the file
+        /// </summary>
+        [Display(Name = "رفعه بواسطة")]
+        public Guid UploadedBy { get; set; }
+
+        /// <summary>
+        /// تاريخ رفع الملف
+        /// Date when the file was uploaded
+        /// </summary>
+        [Display(Name = "تاريخ الرفع")]
+        public new DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    }
+}namespace YemenBooking.Core.Entities
+{
+    using System;
+    using System.Collections.Generic;
+    using System.ComponentModel.DataAnnotations;
+
+    /// <summary>
+    /// كيان المحادثة بين المستخدمين
+    /// Represents a chat conversation between participants
+    /// </summary>
+    [Display(Name = "المحادثة")]
+    public class ChatConversation : BaseEntity<Guid>
+    {
+        /// <summary>
+        /// نوع المحادثة (direct أو group)
+        /// Conversation type: direct or group
+        /// </summary>
+        [Display(Name = "نوع المحادثة")]
+        public string ConversationType { get; set; } = string.Empty;
+
+        /// <summary>
+        /// عنوان المحادثة (للمجموعات)
+        /// Title of conversation (for group chats)
+        /// </summary>
+        [Display(Name = "عنوان المحادثة")]
+        public string? Title { get; set; }
+
+        /// <summary>
+        /// وصف المحادثة (اختياري)
+        /// Description of conversation (optional)
+        /// </summary>
+        [Display(Name = "وصف المحادثة")]
+        public string? Description { get; set; }
+
+        /// <summary>
+        /// مسار الصورة الرمزية للمحادثة (اختياري)
+        /// Avatar path for conversation (optional)
+        /// </summary>
+        [Display(Name = "الصورة الرمزية")]
+        public string? Avatar { get; set; }
+
+        /// <summary>
+        /// هل المحادثة مؤرشفة
+        /// Indicates if the conversation is archived
+        /// </summary>
+        [Display(Name = "مؤرشفة")]
+        public bool IsArchived { get; set; } = false;
+
+        /// <summary>
+        /// هل المحادثة صامتة
+        /// Indicates if notifications are muted for this conversation
+        /// </summary>
+        [Display(Name = "صامتة")]
+        public bool IsMuted { get; set; } = false;
+
+        /// <summary>
+        /// المرافق أو الفندق المرتبط بالمحادثة
+        /// The property or hotel associated with the conversation
+        /// </summary>
+        [Display(Name = "معرف الفندق")]
+        public Guid? PropertyId { get; set; }
+
+        /// <summary>
+        /// الفندق المرتبط بالمحادثة
+        /// Related hotel property entity
+        /// </summary>
+        public virtual Property? Property { get; set; }
+
+        /// <summary>
+        /// المرفقات الخاصة بهذه المحادثة
+        /// Attachments in this conversation
+        /// </summary>
+        public virtual ICollection<ChatAttachment> Attachments { get; set; } = new List<ChatAttachment>();
+
+        /// <summary>
+        /// الرسائل المرتبطة بهذه المحادثة
+        /// Messages in this conversation
+        /// </summary>
+        public virtual ICollection<ChatMessage> Messages { get; set; } = new List<ChatMessage>();
+
+        /// <summary>
+        /// المشاركون في المحادثة
+        /// Participants in conversation
+        /// </summary>
+        public virtual ICollection<User> Participants { get; set; } = new List<User>();
+    }
+} namespace YemenBooking.Core.Entities
+{
+    using System;
+    using System.Collections.Generic;
+    using System.ComponentModel.DataAnnotations;
+    using System.ComponentModel.DataAnnotations.Schema;
+
+    /// <summary>
+    /// كيان رسالة داخل محادثة
+    /// Represents a message in a chat conversation
+    /// </summary>
+    [Display(Name = "رسالة المحادثة")]
+    public class ChatMessage : BaseEntity<Guid>
+    {
+        /// <summary>
+        /// المحادثة التي تنتمي إليها الرسالة
+        /// The conversation ID this message belongs to
+        /// </summary>
+        [Display(Name = "معرف المحادثة")]
+        public Guid ConversationId { get; set; }
+
+        /// <summary>
+        /// المستخدم المرسل للرسالة
+        /// ID of the user who sent the message
+        /// </summary>
+        [Display(Name = "مرسل الرسالة")]
+        public Guid SenderId { get; set; }
+
+        /// <summary>
+        /// Navigation property للمستخدم المرسل
+        /// Navigation property for the sender user
+        /// </summary>
+        [ForeignKey(nameof(SenderId))]
+        public virtual User? Sender { get; set; }
+
+        /// <summary>
+        /// Navigation property للمحادثة
+        /// Navigation property for the conversation
+        /// </summary>
+        [ForeignKey(nameof(ConversationId))]
+        public virtual ChatConversation? Conversation { get; set; }
+
+        /// <summary>
+        /// نوع الرسالة (text, image, etc.)
+        /// Type of message
+        /// </summary>
+        [Display(Name = "نوع الرسالة")]
+        public string MessageType { get; set; } = string.Empty;
+
+        /// <summary>
+        /// محتوى الرسالة (للنصوص)
+        /// Content of the message for text type
+        /// </summary>
+        [Display(Name = "محتوى الرسالة")]
+        public string? Content { get; set; }
+
+        /// <summary>
+        /// بيانات الموقع إذا كانت رسالة موقع
+        /// Location data if message type is location
+        /// </summary>
+        public string? LocationJson { get; set; }
+
+        /// <summary>
+        /// الرد على رسالة أخرى (MessageId)
+        /// ReplyTo message ID if this is a reply
+        /// </summary>
+        [Display(Name = "معرّف الرسالة المرد عليها")]
+        public Guid? ReplyToMessageId { get; set; }
+
+        /// <summary>
+        /// Navigation property للرسالة المرد عليها
+        /// Navigation property for the replied message
+        /// </summary>
+        [ForeignKey(nameof(ReplyToMessageId))]
+        public virtual ChatMessage? ReplyToMessage { get; set; }
+
+        /// <summary>
+        /// حالة الرسالة (SENT, DELIVERED, READ, FAILED)
+        /// Status of the chat message
+        /// </summary>
+        public string Status { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Indicates if the message was edited
+        /// هل تم تعديل الرسالة
+        /// </summary>
+        public bool IsEdited { get; set; }
+
+        /// <summary>
+        /// Time when the message was edited
+        /// وقت تعديل الرسالة
+        /// </summary>
+        public DateTime? EditedAt { get; set; }
+
+        /// <summary>
+        /// Time when the message was delivered
+        /// وقت تسليم الرسالة
+        /// </summary>
+        public DateTime? DeliveredAt { get; set; }
+
+        /// <summary>
+        /// Time when the message was read
+        /// وقت قراءة الرسالة
+        /// </summary>
+        public DateTime? ReadAt { get; set; }
+
+        /// <summary>
+        /// التفاعلات مع هذه الرسالة
+        /// Reactions to this message
+        /// </summary>
+        public virtual ICollection<MessageReaction> Reactions { get; set; } = new List<MessageReaction>();
+
+        /// <summary>
+        /// المرفقات المرتبطة بهذه الرسالة
+        /// Attachments for this message
+        /// </summary>
+        public virtual ICollection<ChatAttachment> Attachments { get; set; } = new List<ChatAttachment>();
+    }
+}namespace YemenBooking.Core.Entities
+{
+    using System;
+    using System.ComponentModel.DataAnnotations;
+
+    /// <summary>
+    /// إعدادات الشات الخاصة بالمستخدم
+    /// Entity for user chat settings
+    /// </summary>
+    [Display(Name = "إعدادات الشات")]
+    public class ChatSettings : BaseEntity<Guid>
+    {
+        [Display(Name = "معرف المستخدم")]
+        public Guid UserId { get; set; }
+
+        [Display(Name = "تنبيهات مفعلة")]
+        public bool NotificationsEnabled { get; set; } = true;
+
+        [Display(Name = "صوت مفعّل")]
+        public bool SoundEnabled { get; set; } = true;
+
+        [Display(Name = "عرض إيصالات القراءة")]
+        public bool ShowReadReceipts { get; set; } = true;
+
+        [Display(Name = "عرض مؤشر الكتابة")]
+        public bool ShowTypingIndicator { get; set; } = true;
+
+        [Display(Name = "المظهر")]
+        public string Theme { get; set; } = "light";
+
+        [Display(Name = "حجم الخط")]
+        public string FontSize { get; set; } = "medium";
+
+        [Display(Name = "التحميل التلقائي للوسائط")]
+        public bool AutoDownloadMedia { get; set; } = false;
+
+        [Display(Name = "نسخ احتياطي للرسائل")]
+        public bool BackupMessages { get; set; } = false;
+    }
+} namespace YemenBooking.Core.Entities;
+
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+
+/// <summary>
+/// كيان المدينة
+/// City entity
+/// </summary>
+[Display(Name = "كيان المدينة")]
+public class City
+{
+    /// <summary>
+    /// الاسم الفريد للمدينة (مفتاح أساسي نصي)
+    /// City name (string primary key)
+    /// </summary>
+    [Key]
+    public string Name { get; set; }
+
+    /// <summary>
+    /// الدولة
+    /// Country name
+    /// </summary>
+    public string Country { get; set; }
+
+    /// <summary>
+    /// روابط الصور كـ JSON مخزن
+    /// Image URLs as JSON string for simplicity
+    /// </summary>
+    public string ImagesJson { get; set; } = "[]";
+
+    /// <summary>
+    /// العقارات داخل هذه المدينة (ملاحة عكسية)
+    /// Properties located in this city (reverse navigation)
+    /// </summary>
+    public virtual ICollection<Property> Properties { get; set; } = new List<Property>();
+}
+
+namespace YemenBooking.Core.Entities;
+
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+
+/// <summary>
+/// كيان العملة
+/// Currency entity with string primary key (Code)
+/// </summary>
+[Display(Name = "كيان العملة")]
+public class Currency
+{
+    /// <summary>
+    /// رمز العملة (المعرف الأساسي)
+    /// Currency code (primary key)
+    /// </summary>
+    [Key]
+    [Display(Name = "رمز العملة")]
+    public string Code { get; set; }
+
+    /// <summary>
+    /// الرمز باللغة العربية
+    /// Arabic currency code
+    /// </summary>
+    public string ArabicCode { get; set; }
+
+    /// <summary>
+    /// اسم العملة
+    /// Currency name
+    /// </summary>
+    public string Name { get; set; }
+
+    /// <summary>
+    /// اسم العملة بالعربية
+    /// Arabic currency name
+    /// </summary>
+    public string ArabicName { get; set; }
+
+    /// <summary>
+    /// هل هي العملة الافتراضية
+    /// Whether this is the default currency
+    /// </summary>
+    public bool IsDefault { get; set; }
+
+    /// <summary>
+    /// سعر الصرف بالنسبة للعملة الافتراضية
+    /// Exchange rate relative to default currency; null for default
+    /// </summary>
+    public decimal? ExchangeRate { get; set; }
+
+    /// <summary>
+    /// تاريخ آخر تحديث لسعر الصرف
+    /// Last update timestamp for the exchange rate
+    /// </summary>
+    public DateTime? LastUpdated { get; set; }
+
+    /// <summary>
+    /// عقارات تستخدم هذه العملة (ملاحة عكسية)
+    /// Properties that use this currency (reverse navigation via Property.Currency)
+    /// </summary>
+    public virtual ICollection<Property> Properties { get; set; } = new List<Property>();
+}
+
+using System.ComponentModel.DataAnnotations;
+
+namespace YemenBooking.Core.Entities;
+
+/// <summary>
+/// كيان الأسئلة الشائعة
+/// FAQ entity
+/// </summary>
+public class FAQ
+{
+    /// <summary>
+    /// معرف السؤال
+    /// FAQ ID
+    /// </summary>
+    [Key]
+    public Guid Id { get; set; }
+
+    /// <summary>
+    /// السؤال
+    /// Question
+    /// </summary>
+    [Required]
+    [MaxLength(500)]
+    public string Question { get; set; } = string.Empty;
+
+    /// <summary>
+    /// الإجابة
+    /// Answer
+    /// </summary>
+    [Required]
+    public string Answer { get; set; } = string.Empty;
+
+    /// <summary>
+    /// فئة السؤال
+    /// Question category
+    /// </summary>
+    [MaxLength(100)]
+    public string? Category { get; set; }
+
+    /// <summary>
+    /// اللغة
+    /// Language
+    /// </summary>
+    [Required]
+    [MaxLength(10)]
+    public string Language { get; set; } = "ar";
+
+    /// <summary>
+    /// ترتيب العرض
+    /// Display order
+    /// </summary>
+    public int DisplayOrder { get; set; }
+
+    /// <summary>
+    /// هل السؤال نشط
+    /// Is FAQ active
+    /// </summary>
+    public bool IsActive { get; set; } = true;
+
+    /// <summary>
+    /// عدد المشاهدات
+    /// View count
+    /// </summary>
+    public int ViewCount { get; set; } = 0;
+
+    /// <summary>
+    /// تاريخ الإنشاء
+    /// Creation date
+    /// </summary>
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// تاريخ آخر تحديث
+    /// Last update date
+    /// </summary>
+    public DateTime? UpdatedAt { get; set; }
+
+    /// <summary>
+    /// معرف المستخدم المنشئ
+    /// Creator user ID
+    /// </summary>
+    public Guid? CreatedBy { get; set; }
+
+    /// <summary>
+    /// معرف المستخدم المحدث
+    /// Updater user ID
+    /// </summary>
+    public Guid? UpdatedBy { get; set; }
+}
+using System.ComponentModel.DataAnnotations;
+
+namespace YemenBooking.Core.Entities;
+
+/// <summary>
+/// كيان المفضلة
+/// Favorite entity
+/// </summary>
+[Display(Name = "المفضلة")]
+public class Favorite : BaseEntity<Guid>
+{
+    /// <summary>
+    /// معرف المستخدم
+    /// User ID
+    /// </summary>
+    [Display(Name = "معرف المستخدم")]
+    public Guid UserId { get; set; }
+
+    /// <summary>
+    /// معرف العقار
+    /// Property ID
+    /// </summary>
+    [Display(Name = "معرف العقار")]
+    public Guid PropertyId { get; set; }
+
+    /// <summary>
+    /// تاريخ الإضافة للمفضلة
+    /// Date added to favorites
+    /// </summary>
+    [Display(Name = "تاريخ الإضافة")]
+    public DateTime DateAdded { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// ملاحظات المستخدم (اختيارية)
+    /// User notes (optional)
+    /// </summary>
+    [Display(Name = "الملاحظات")]
+    [MaxLength(500)]
+    public string? Notes { get; set; }
+
+    /// <summary>
+    /// أولوية المفضلة (1-5)
+    /// Favorite priority (1-5)
+    /// </summary>
+    [Display(Name = "الأولوية")]
+    [Range(1, 5)]
+    public int Priority { get; set; } = 3;
+
+    /// <summary>
+    /// المستخدم المرتبط
+    /// Related user
+    /// </summary>
+    public virtual User? User { get; set; }
+
+    /// <summary>
+    /// العقار المرتبط
+    /// Related property
+    /// </summary>
+    public virtual Property? Property { get; set; }
+}
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+
+namespace YemenBooking.Core.Entities;
+
+/// <summary>
+/// كيان مجموعات الحقول
+/// FieldGroup entity representing grouping of fields per property type
+/// </summary>
+[Display(Name = "كيان مجموعات الحقول")]
+public class FieldGroup : BaseEntity<Guid>
+{
+    /// <summary>
+    /// معرف نوع الكيان
+    /// Property type identifier
+    /// </summary>
+    [Display(Name = "معرف نوع الو​​​​حدة")]
+    public Guid UnitTypeId { get; set; }
+
+    /// <summary>
+    /// اسم المجموعة
+    /// Group name
+    /// </summary>
+    [Display(Name = "اسم المجموعة")]
+    public string GroupName { get; set; }
+
+    /// <summary>
+    /// الاسم المعروض للمجموعة
+    /// Display name of the group
+    /// </summary>
+    [Display(Name = "الاسم المعروض للمجموعة")]
+    public string DisplayName { get; set; }
+
+    /// <summary>
+    /// وصف المجموعة
+    /// Description of the group
+    /// </summary>
+    [Display(Name = "وصف المجموعة")]
+    public string Description { get; set; }
+
+    /// <summary>
+    /// ترتيب العرض
+    /// Sort order of the group
+    /// </summary>
+    [Display(Name = "ترتيب العرض")]
+    public int SortOrder { get; set; }
+
+    /// <summary>
+    /// هل يمكن طي المجموعة
+    /// Is collapsible
+    /// </summary>
+    [Display(Name = "هل يمكن طي المجموعة")]
+    public bool IsCollapsible { get; set; }
+
+    /// <summary>
+    /// هل تكون المجموعة موسعة افتراضياً
+    /// Is expanded by default
+    /// </summary>
+    [Display(Name = "هل تكون المجموعة موسعة افتراضيًا")]
+    public bool IsExpandedByDefault { get; set; }
+
+    /// <summary>
+    /// نوع الوحدة المرتبطة
+    /// Unit type associated
+    /// </summary>
+    [Display(Name = "نوع الوحدة المرتبطة")]
+    public virtual UnitType UnitType { get; set; }
+
+    /// <summary>
+    /// روابط الحقول ضمن هذه المجموعة
+    /// Field group links
+    /// </summary>
+    [Display(Name = "روابط الحقول ضمن هذه المجموعة")]
+    public virtual ICollection<FieldGroupField> FieldGroupFields { get; set; } = new List<FieldGroupField>();
+} using System;
+using System.ComponentModel.DataAnnotations;
+
+namespace YemenBooking.Core.Entities;
+
+/// <summary>
+/// كيان ربط الحقول والمجموعات
+/// FieldGroupField entity representing link between fields and groups
+/// </summary>
+[Display(Name = "كيان ربط الحقول والمجموعات")]
+public class FieldGroupField : BaseEntity<Guid>
+{
+    /// <summary>
+    /// معرف الحقل
+    /// Field identifier
+    /// </summary>
+    [Display(Name = "معرف الحقل")]
+    public Guid FieldId { get; set; }
+
+    /// <summary>
+    /// معرف المجموعة
+    /// Group identifier
+    /// </summary>
+    [Display(Name = "معرف المجموعة")]
+    public Guid GroupId { get; set; }
+
+    /// <summary>
+    /// ترتيب الحقل داخل المجموعة
+    /// Sort order within the group
+    /// </summary>
+    [Display(Name = "ترتيب الحقل داخل المجموعة")]
+    public int SortOrder { get; set; }
+
+    /// <summary>
+    /// العلاقة مع الحقل
+    /// Property type field associated
+    /// </summary>
+    [Display(Name = "العلاقة مع الحقل")]
+    public virtual UnitTypeField UnitTypeField { get; set; }
+
+    /// <summary>
+    /// العلاقة مع المجموعة
+    /// Field group associated
+    /// </summary>
+    [Display(Name = "العلاقة مع المجموعة")]
+    public virtual FieldGroup FieldGroup { get; set; }
+} using System;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+
+namespace YemenBooking.Core.Entities
+{
+    /// <summary>
+    /// كيان بيانات تعريف الفهارس
+    /// يحتفظ بمعلومات آخر تحديث وحالة كل فهرس للتحديث التدريجي
+    /// Index metadata entity for incremental indexing tracking
+    /// </summary>
+    [Table("IndexMetadata")]
+    public class IndexMetadata
+    {
+        /// <summary>
+        /// نوع الفهرس (مفتاح أساسي)
+        /// Index type - primary key (price, city, amenities, dynamic-field-{fieldId}, etc.)
+        /// </summary>
+        [Key]
+        [Required]
+        [MaxLength(100)]
+        public string IndexType { get; set; } = string.Empty;
+
+        /// <summary>
+        /// آخر وقت تحديث للفهرس
+        /// Last time this index was updated
+        /// </summary>
+        [Required]
+        public DateTime LastUpdateTime { get; set; } = DateTime.UtcNow;
+
+        /// <summary>
+        /// عدد السجلات في الفهرس
+        /// Total number of records in the index
+        /// </summary>
+        [Required]
+        public int TotalRecords { get; set; } = 0;
+
+        /// <summary>
+        /// آخر معرف تم معالجته (للتحديث التدريجي)
+        /// Last processed entity ID for incremental updates
+        /// </summary>
+        public Guid? LastProcessedId { get; set; }
+
+        /// <summary>
+        /// حالة الفهرس
+        /// Index status (Active, Building, Error, Disabled)
+        /// </summary>
+        [Required]
+        [MaxLength(50)]
+        public string Status { get; set; } = "Active";
+
+        /// <summary>
+        /// رقم الإصدار للتأكد من التزامن
+        /// Version number for concurrency control
+        /// </summary>
+        [Required]
+        public long Version { get; set; } = 1;
+
+        /// <summary>
+        /// حجم الفهرس بالبايت
+        /// Index file size in bytes
+        /// </summary>
+        public long FileSizeBytes { get; set; } = 0;
+
+        /// <summary>
+        /// عدد العمليات منذ آخر تحسين
+        /// Number of operations since last optimization
+        /// </summary>
+        public int OperationsSinceOptimization { get; set; } = 0;
+
+        /// <summary>
+        /// آخر وقت تحسين للفهرس
+        /// Last time the index was optimized
+        /// </summary>
+        public DateTime? LastOptimizationTime { get; set; }
+
+        /// <summary>
+        /// معلومات إضافية بصيغة JSON
+        /// Additional metadata in JSON format
+        /// </summary>
+        [MaxLength(2000)]
+        public string? Metadata { get; set; }
+
+        /// <summary>
+        /// رسالة الخطأ الأخيرة (إن وجدت)
+        /// Last error message if any
+        /// </summary>
+        [MaxLength(1000)]
+        public string? LastErrorMessage { get; set; }
+
+        /// <summary>
+        /// عدد محاولات إعادة البناء
+        /// Number of rebuild attempts
+        /// </summary>
+        public int RebuildAttempts { get; set; } = 0;
+
+        /// <summary>
+        /// تاريخ الإنشاء
+        /// Creation timestamp
+        /// </summary>
+        [Required]
+        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+        /// <summary>
+        /// تاريخ آخر تعديل
+        /// Last update timestamp
+        /// </summary>
+        [Required]
+        public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+        /// <summary>
+        /// تحديث طابع زمني التعديل
+        /// Update the UpdatedAt timestamp
+        /// </summary>
+        public void MarkAsUpdated()
+        {
+            UpdatedAt = DateTime.UtcNow;
+            Version++;
+        }
+
+        /// <summary>
+        /// تحديد حالة الفهرس كنشط
+        /// Mark index as active
+        /// </summary>
+        public void MarkAsActive(int recordCount, long fileSize)
+        {
+            Status = "Active";
+            TotalRecords = recordCount;
+            FileSizeBytes = fileSize;
+            LastErrorMessage = null;
+            MarkAsUpdated();
+        }
+
+        /// <summary>
+        /// تحديد حالة الفهرس كخطأ
+        /// Mark index as error
+        /// </summary>
+        public void MarkAsError(string errorMessage)
+        {
+            Status = "Error";
+            LastErrorMessage = errorMessage;
+            RebuildAttempts++;
+            MarkAsUpdated();
+        }
+
+        /// <summary>
+        /// تحديد حالة الفهرس كقيد البناء
+        /// Mark index as building
+        /// </summary>
+        public void MarkAsBuilding()
+        {
+            Status = "Building";
+            LastErrorMessage = null;
+            MarkAsUpdated();
+        }
+    }
+}using System.ComponentModel.DataAnnotations;
+using YemenBooking.Core.Enums;
+
+namespace YemenBooking.Core.Entities;
+
+/// <summary>
+/// كيان المستند القانوني
+/// Legal document entity
+/// </summary>
+public class LegalDocument
+{
+    /// <summary>
+    /// معرف المستند
+    /// Document ID
+    /// </summary>
+    [Key]
+    public Guid Id { get; set; }
+
+    /// <summary>
+    /// نوع المستند القانوني
+    /// Legal document type
+    /// </summary>
+    [Required]
+    public LegalDocumentType Type { get; set; }
+
+    /// <summary>
+    /// اللغة
+    /// Language
+    /// </summary>
+    [Required]
+    [MaxLength(10)]
+    public string Language { get; set; } = "ar";
+
+    /// <summary>
+    /// عنوان المستند
+    /// Document title
+    /// </summary>
+    [Required]
+    [MaxLength(200)]
+    public string Title { get; set; } = string.Empty;
+
+    /// <summary>
+    /// محتوى المستند
+    /// Document content
+    /// </summary>
+    [Required]
+    public string Content { get; set; } = string.Empty;
+
+    /// <summary>
+    /// إصدار المستند
+    /// Document version
+    /// </summary>
+    [Required]
+    [MaxLength(20)]
+    public string Version { get; set; } = "1.0";
+
+    /// <summary>
+    /// تاريخ النفاذ
+    /// Effective date
+    /// </summary>
+    public DateTime EffectiveDate { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// هل المستند نشط
+    /// Is document active
+    /// </summary>
+    public bool IsActive { get; set; } = true;
+
+    /// <summary>
+    /// تاريخ الإنشاء
+    /// Creation date
+    /// </summary>
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// تاريخ آخر تحديث
+    /// Last update date
+    /// </summary>
+    public DateTime? UpdatedAt { get; set; }
+
+    /// <summary>
+    /// معرف المستخدم المنشئ
+    /// Creator user ID
+    /// </summary>
+    public Guid? CreatedBy { get; set; }
+
+    /// <summary>
+    /// معرف المستخدم المحدث
+    /// Updater user ID
+    /// </summary>
+    public Guid? UpdatedBy { get; set; }
+}
+namespace YemenBooking.Core.Entities
+{
+    using System;
+    using System.ComponentModel.DataAnnotations;
+
+    /// <summary>
+    /// كيان تفاعل على رسالة
+    /// Represents a reaction to a chat message
+    /// </summary>
+    [Display(Name = "تفاعل الرسالة")]
+    public class MessageReaction : BaseEntity<Guid>
+    {
+        /// <summary>
+        /// الرسالة التي ينتمي إليها التفاعل
+        /// Message ID this reaction belongs to
+        /// </summary>
+        [Display(Name = "معرف الرسالة")]
+        public Guid MessageId { get; set; }
+
+        /// <summary>
+        /// المستخدم الذي قام بالتفاعل
+        /// User who reacted
+        /// </summary>
+        [Display(Name = "معرف المستخدم")]
+        public Guid UserId { get; set; }
+
+        /// <summary>
+        /// نوع التفاعل (like, love, ...)
+        /// Reaction type
+        /// </summary>
+        [Display(Name = "نوع التفاعل")]
+        public string ReactionType { get; set; } = string.Empty;
+    }
+} using System.ComponentModel.DataAnnotations;
+
+namespace YemenBooking.Core.Entities;
+
+/// <summary>
+/// كيان الإشعار في النظام
+/// Notification entity in the system
+/// </summary>
+[Display(Name = "كيان الإشعار في النظام")]
+public class Notification : BaseEntity<Guid>
+{
+    /// <summary>
+    /// نوع الإشعار
+    /// Notification type
+    /// </summary>
+    [Display(Name = "نوع الإشعار")]
+    public string Type { get; set; } = null!;
+    
+    /// <summary>
+    /// عنوان الإشعار
+    /// Notification title
+    /// </summary>
+    [Display(Name = "عنوان الإشعار")]
+    public string Title { get; set; } = null!;
+    
+    /// <summary>
+    /// محتوى الإشعار
+    /// Notification message
+    /// </summary>
+    [Display(Name = "محتوى الإشعار")]
+    public string Message { get; set; } = null!;
+    
+    /// <summary>
+    /// عنوان الإشعار بالعربية
+    /// Notification title in Arabic
+    /// </summary>
+    [Display(Name = "عنوان الإشعار بالعربية")]
+    public string? TitleAr { get; set; }
+    
+    /// <summary>
+    /// محتوى الإشعار بالعربية
+    /// Notification message in Arabic
+    /// </summary>
+    [Display(Name = "محتوى الإشعار بالعربية")]
+    public string? MessageAr { get; set; }
+    
+    /// <summary>
+    /// أولوية الإشعار
+    /// Notification priority
+    /// </summary>
+    [Display(Name = "أولوية الإشعار")]
+    public string Priority { get; set; } = "MEDIUM"; // LOW, MEDIUM, HIGH, URGENT
+    
+    /// <summary>
+    /// حالة الإشعار
+    /// Notification status
+    /// </summary>
+    [Display(Name = "حالة الإشعار")]
+    public string Status { get; set; } = "PENDING"; // PENDING, SENT, DELIVERED, READ, FAILED
+    
+    /// <summary>
+    /// معرف المستلم
+    /// Recipient ID
+    /// </summary>
+    [Display(Name = "معرف المستلم")]
+    public Guid RecipientId { get; set; }
+    
+    /// <summary>
+    /// معرف المرسل (اختياري)
+    /// Sender ID (optional)
+    /// </summary>
+    [Display(Name = "معرف المرسل")]
+    public Guid? SenderId { get; set; }
+    
+    /// <summary>
+    /// بيانات إضافية (JSON)
+    /// Additional data (JSON)
+    /// </summary>
+    [Display(Name = "بيانات إضافية")]
+    public string? Data { get; set; }
+    
+    /// <summary>
+    /// قنوات الإرسال
+    /// Delivery channels
+    /// </summary>
+    [Display(Name = "قنوات الإرسال")]
+    public List<string> Channels { get; set; } = new() { "IN_APP" }; // IN_APP, EMAIL, SMS, PUSH
+    
+    /// <summary>
+    /// القنوات التي تم الإرسال إليها
+    /// Channels that were sent to
+    /// </summary>
+    [Display(Name = "القنوات التي تم الإرسال إليها")]
+    public List<string> SentChannels { get; set; } = new();
+    
+    /// <summary>
+    /// هل تم قراءة الإشعار
+    /// Is notification read
+    /// </summary>
+    [Display(Name = "هل تم قراءة الإشعار")]
+    public bool IsRead { get; set; } = false;
+    
+    /// <summary>
+    /// هل تم إخفاء الإشعار
+    /// Is notification dismissed
+    /// </summary>
+    [Display(Name = "هل تم إخفاء الإشعار")]
+    public bool IsDismissed { get; set; } = false;
+    
+    /// <summary>
+    /// هل الإشعار يتطلب إجراء
+    /// Does notification require action
+    /// </summary>
+    [Display(Name = "هل الإشعار يتطلب إجراء")]
+    public bool RequiresAction { get; set; } = false;
+    
+    /// <summary>
+    /// هل يمكن إخفاء الإشعار
+    /// Can notification be dismissed
+    /// </summary>
+    [Display(Name = "هل يمكن إخفاء الإشعار")]
+    public bool CanDismiss { get; set; } = true;
+    
+    /// <summary>
+    /// تاريخ القراءة
+    /// Read date
+    /// </summary>
+    [Display(Name = "تاريخ القراءة")]
+    public DateTime? ReadAt { get; set; }
+    
+    /// <summary>
+    /// تاريخ الإخفاء
+    /// Dismiss date
+    /// </summary>
+    [Display(Name = "تاريخ الإخفاء")]
+    public DateTime? DismissedAt { get; set; }
+    
+    /// <summary>
+    /// موعد الإرسال المجدول
+    /// Scheduled delivery time
+    /// </summary>
+    [Display(Name = "موعد الإرسال المجدول")]
+    public DateTime? ScheduledFor { get; set; }
+    
+    /// <summary>
+    /// تاريخ انتهاء الصلاحية
+    /// Expiration date
+    /// </summary>
+    [Display(Name = "تاريخ انتهاء الصلاحية")]
+    public DateTime? ExpiresAt { get; set; }
+    
+    /// <summary>
+    /// تاريخ التسليم
+    /// Delivery date
+    /// </summary>
+    [Display(Name = "تاريخ التسليم")]
+    public DateTime? DeliveredAt { get; set; }
+    
+    /// <summary>
+    /// معرف المجموعة (لتجميع الإشعارات المترابطة)
+    /// Group ID (for grouping related notifications)
+    /// </summary>
+    [Display(Name = "معرف المجموعة")]
+    public string? GroupId { get; set; }
+    
+    /// <summary>
+    /// معرف الدفعة (للإشعارات المرسلة في دفعة واحدة)
+    /// Batch ID (for notifications sent in a batch)
+    /// </summary>
+    [Display(Name = "معرف الدفعة")]
+    public string? BatchId { get; set; }
+    
+    /// <summary>
+    /// أيقونة الإشعار
+    /// Notification icon
+    /// </summary>
+    [Display(Name = "أيقونة الإشعار")]
+    public string? Icon { get; set; }
+    
+    /// <summary>
+    /// لون الإشعار
+    /// Notification color
+    /// </summary>
+    [Display(Name = "لون الإشعار")]
+    public string? Color { get; set; }
+    
+    /// <summary>
+    /// رابط الإجراء
+    /// Action URL
+    /// </summary>
+    [Display(Name = "رابط الإجراء")]
+    public string? ActionUrl { get; set; }
+    
+    /// <summary>
+    /// نص زر الإجراء
+    /// Action button text
+    /// </summary>
+    [Display(Name = "نص زر الإجراء")]
+    public string? ActionText { get; set; }
+    
+    // Navigation Properties
+    
+    /// <summary>
+    /// المستلم
+    /// Recipient
+    /// </summary>
+    [Display(Name = "المستلم")]
+    public virtual User Recipient { get; set; } = null!;
+    
+    /// <summary>
+    /// المرسل
+    /// Sender
+    /// </summary>
+    [Display(Name = "المرسل")]
+    public virtual User? Sender { get; set; }
+    
+    // Helper Properties
+    
+    /// <summary>
+    /// هل الإشعار منتهي الصلاحية
+    /// Is notification expired
+    /// </summary>
+    [Display(Name = "هل الإشعار منتهي الصلاحية")]
+    public bool IsExpired => ExpiresAt.HasValue && ExpiresAt < DateTime.UtcNow;
+    
+    /// <summary>
+    /// هل الإشعار جاهز للإرسال
+    /// Is notification ready to send
+    /// </summary>
+    [Display(Name = "هل الإشعار جاهز للإرسال")]
+    public bool IsReadyToSend => Status == "PENDING" && 
+                                (!ScheduledFor.HasValue || ScheduledFor <= DateTime.UtcNow) &&
+                                !IsExpired;
+    
+    /// <summary>
+    /// هل الإشعار تم تسليمه
+    /// Is notification delivered
+    /// </summary>
+    [Display(Name = "هل الإشعار تم تسليمه")]
+    public bool IsDelivered => Status == "DELIVERED" || Status == "READ";
+    
+    /// <summary>
+    /// النص المناسب حسب اللغة
+    /// Appropriate text based on language
+    /// </summary>
+    public string GetTitle(string language = "ar") => 
+        language == "ar" && !string.IsNullOrEmpty(TitleAr) ? TitleAr : Title;
+    
+    /// <summary>
+    /// المحتوى المناسب حسب اللغة
+    /// Appropriate content based on language
+    /// </summary>
+    public string GetMessage(string language = "ar") => 
+        language == "ar" && !string.IsNullOrEmpty(MessageAr) ? MessageAr : Message;
+    
+    // Helper Methods
+    
+    /// <summary>
+    /// تحديد الإشعار كمقروء
+    /// Mark notification as read
+    /// </summary>
+    public void MarkAsRead()
+    {
+        if (!IsRead)
+        {
+            IsRead = true;
+            ReadAt = DateTime.UtcNow;
+            Status = "READ";
+            UpdatedAt = DateTime.UtcNow;
+        }
+    }
+    
+    /// <summary>
+    /// إخفاء الإشعار
+    /// Dismiss notification
+    /// </summary>
+    public void Dismiss()
+    {
+        if (CanDismiss && !IsDismissed)
+        {
+            IsDismissed = true;
+            DismissedAt = DateTime.UtcNow;
+            UpdatedAt = DateTime.UtcNow;
+        }
+    }
+    
+    /// <summary>
+    /// تحديد الإشعار كمرسل
+    /// Mark notification as sent
+    /// </summary>
+    public void MarkAsSent(string channel)
+    {
+        if (!SentChannels.Contains(channel))
+        {
+            SentChannels.Add(channel);
+        }
+        
+        Status = "SENT";
+        UpdatedAt = DateTime.UtcNow;
+    }
+    
+    /// <summary>
+    /// تحديد الإشعار كمسلم
+    /// Mark notification as delivered
+    /// </summary>
+    public void MarkAsDelivered()
+    {
+        Status = "DELIVERED";
+        DeliveredAt = DateTime.UtcNow;
+        UpdatedAt = DateTime.UtcNow;
+    }
+    
+    /// <summary>
+    /// تحديد الإشعار كفاشل
+    /// Mark notification as failed
+    /// </summary>
+    public void MarkAsFailed(string reason = "")
+    {
+        Status = "FAILED";
+        if (!string.IsNullOrEmpty(reason))
+        {
+            Data = reason;
+        }
+        UpdatedAt = DateTime.UtcNow;
+    }
+    
+    /// <summary>
+    /// إضافة قناة إرسال
+    /// Add delivery channel
+    /// </summary>
+    public void AddChannel(string channel)
+    {
+        if (!Channels.Contains(channel))
+        {
+            Channels.Add(channel);
+            UpdatedAt = DateTime.UtcNow;
+        }
+    }
+    
+    /// <summary>
+    /// إزالة قناة إرسال
+    /// Remove delivery channel
+    /// </summary>
+    public void RemoveChannel(string channel)
+    {
+        if (Channels.Remove(channel))
+        {
+            UpdatedAt = DateTime.UtcNow;
+        }
+    }
+    
+    // Static Factory Methods
+    
+    /// <summary>
+    /// إنشاء إشعار حجز جديد
+    /// Create booking notification
+    /// </summary>
+    public static Notification CreateBookingNotification(
+        Guid recipientId, 
+        string bookingNumber, 
+        string type = "BOOKING_CREATED",
+        string priority = "MEDIUM")
+    {
+        return new Notification
+        {
+            RecipientId = recipientId,
+            Type = type,
+            Title = "حجز جديد",
+            Message = $"تم إنشاء حجز جديد برقم {bookingNumber}",
+            TitleAr = "حجز جديد",
+            MessageAr = $"تم إنشاء حجز جديد برقم {bookingNumber}",
+            Priority = priority,
+            Data = $"{{\"bookingNumber\": \"{bookingNumber}\"}}"
+        };
+    }
+    
+    /// <summary>
+    /// إنشاء إشعار دفع
+    /// Create payment notification
+    /// </summary>
+    public static Notification CreatePaymentNotification(
+        Guid recipientId, 
+        string amount, 
+        string status,
+        string priority = "HIGH")
+    {
+        return new Notification
+        {
+            RecipientId = recipientId,
+            Type = "PAYMENT_UPDATE",
+            Title = "تحديث الدفع",
+            Message = $"تم {status} دفعة بمبلغ {amount}",
+            Priority = priority,
+            RequiresAction = status == "فشل"
+        };
+    }
+}namespace YemenBooking.Core.Entities;
+
+using System;
+using System.ComponentModel.DataAnnotations;
+using YemenBooking.Core.ValueObjects;
+using YemenBooking.Core.Enums;
+
+/// <summary>
+/// كيان الدفع
+/// Payment entity
+/// </summary>
+[Display(Name = "كيان الدفع")]
+public class Payment : BaseEntity<Guid>
+{
+    /// <summary>
+    /// معرف الحجز
+    /// Booking identifier
+    /// </summary>
+    [Display(Name = "معرف الحجز")]
+    public Guid BookingId { get; set; }
+    
+    /// <summary>
+    /// المبلغ المدفوع
+    /// Paid amount
+    /// </summary>
+    [Display(Name = "المبلغ المدفوع")]
+    public Money Amount { get; set; }
+
+    [Display(Name = "معرف طريقة الدفع")]
+    public Guid MethodId { get; set; }
+
+    /// <summary>
+    /// طريقة الدفع (بطاقة، نقدي، محفظة)
+    /// Payment method (Card, Cash, Wallet)
+    /// </summary>
+    [Display(Name = "طريقة الدفع")]
+    public PaymentMethod Method { get; set; }
+    
+    /// <summary>
+    /// معرف المعاملة
+    /// Transaction identifier
+    /// </summary>
+    [Display(Name = "معرف المعاملة")]
+    public string TransactionId { get; set; }
+    
+    /// <summary>
+    /// حالة الدفع (ناجح، فاشل، معلّق)
+    /// Payment status (Successful, Failed, Pending)
+    /// </summary>
+    [Display(Name = "حالة الدفع")]
+    public PaymentStatus Status { get; set; }
+    
+    /// <summary>
+    /// تاريخ الدفع
+    /// Payment date
+    /// </summary>
+    [Display(Name = "تاريخ الدفع")]
+    public DateTime PaymentDate { get; set; }
+    
+    /// <summary>
+    /// معرف المعاملة في بوابة الدفع
+    /// Gateway transaction identifier
+    /// </summary>
+    [Display(Name = "معرف المعاملة في بوابة الدفع")]
+    public string GatewayTransactionId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// معرف المستخدم الذي قام بمعالجة الدفع
+    /// User ID who processed the payment
+    /// </summary>
+    [Display(Name = "معرف المستخدم الذي قام بمعالجة الدفع")]
+    public Guid ProcessedBy { get; set; }
+
+    /// <summary>
+    /// تاريخ معالجة الدفع (توافق نقاط نهاية الموبايل)
+    /// Payment processed date
+    /// </summary>
+    public DateTime? ProcessedAt { get; set; }
+    
+    /// <summary>
+    /// الحجز المرتبط بالدفع
+    /// Booking associated with the payment
+    /// </summary>
+    [Display(Name = "الحجز المرتبط بالدفع")]
+    public virtual Booking Booking { get; set; }
+} using System.ComponentModel.DataAnnotations;
+using YemenBooking.Core.Enums;
+
+namespace YemenBooking.Core.Entities;
+
+/// <summary>
+/// كيان طريقة الدفع
+/// Payment method entity
+/// </summary>
+public class PaymentMethod
+{
+    /// <summary>
+    /// معرف طريقة الدفع
+    /// Payment method ID
+    /// </summary>
+    [Key]
+    public Guid Id { get; set; }
+
+    /// <summary>
+    /// اسم طريقة الدفع
+    /// Payment method name
+    /// </summary>
+    [Required]
+    [MaxLength(100)]
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>
+    /// اسم طريقة الدفع باللغة الإنجليزية
+    /// Payment method name in English
+    /// </summary>
+    [Required]
+    [MaxLength(100)]
+    public string NameEn { get; set; } = string.Empty;
+
+    /// <summary>
+    /// وصف طريقة الدفع
+    /// Payment method description
+    /// </summary>
+    [MaxLength(500)]
+    public string? Description { get; set; }
+
+    /// <summary>
+    /// نوع طريقة الدفع
+    /// Payment method type
+    /// </summary>
+    [Required]
+    public PaymentMethodEnum Type { get; set; }
+
+    /// <summary>
+    /// رمز طريقة الدفع
+    /// Payment method code
+    /// </summary>
+    [Required]
+    [MaxLength(50)]
+    public string Code { get; set; } = string.Empty;
+
+    /// <summary>
+    /// رابط أيقونة طريقة الدفع
+    /// Payment method icon URL
+    /// </summary>
+    [MaxLength(500)]
+    public string? IconUrl { get; set; }
+
+    /// <summary>
+    /// هل طريقة الدفع نشطة
+    /// Is payment method active
+    /// </summary>
+    public bool IsActive { get; set; } = true;
+
+    /// <summary>
+    /// هل متاحة للعملاء
+    /// Is available for clients
+    /// </summary>
+    public bool IsAvailableForClients { get; set; } = true;
+
+    /// <summary>
+    /// هل تتطلب تحقق إضافي من الهوية
+    /// Indicates if this payment method requires extra identity verification
+    /// </summary>
+    public bool RequiresVerification { get; set; } = false;
+
+    /// <summary>
+    /// العملات المدعومة (JSON)
+    /// Supported currencies (JSON)
+    /// </summary>
+    [MaxLength(1000)]
+    public string? SupportedCurrencies { get; set; }
+
+    /// <summary>
+    /// البلدان المدعومة (JSON)
+    /// Supported countries (JSON)
+    /// </summary>
+    [MaxLength(2000)]
+    public string? SupportedCountries { get; set; }
+
+    /// <summary>
+    /// الحد الأدنى للمبلغ
+    /// Minimum amount
+    /// </summary>
+    public decimal? MinAmount { get; set; }
+
+    /// <summary>
+    /// الحد الأقصى للمبلغ
+    /// Maximum amount
+    /// </summary>
+    public decimal? MaxAmount { get; set; }
+
+    /// <summary>
+    /// رسوم المعاملة (نسبة مئوية)
+    /// Transaction fee (percentage)
+    /// </summary>
+    public decimal? FeePercentage { get; set; }
+
+    /// <summary>
+    /// رسوم ثابتة للمعاملة
+    /// Fixed transaction fee
+    /// </summary>
+    public decimal? FixedFee { get; set; }
+
+    /// <summary>
+    /// ترتيب العرض
+    /// Display order
+    /// </summary>
+    public int DisplayOrder { get; set; }
+
+    /// <summary>
+    /// تاريخ الإنشاء
+    /// Creation date
+    /// </summary>
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// تاريخ آخر تحديث
+    /// Last update date
+    /// </summary>
+    public DateTime? UpdatedAt { get; set; }
+
+    /// <summary>
+    /// معرف المستخدم المنشئ
+    /// Creator user ID
+    /// </summary>
+    public Guid? CreatedBy { get; set; }
+
+    /// <summary>
+    /// معرف المستخدم المحدث
+    /// Updater user ID
+    /// </summary>
+    public Guid? UpdatedBy { get; set; }
+}
+namespace YemenBooking.Core.Entities;
+
+using System;
+using System.ComponentModel.DataAnnotations;
+
+/// <summary>
+/// كيان قواعد التسعير
+/// Pricing rule entity
+/// </summary>
+[Display(Name = "كيان قواعد التسعير")]
+public class PricingRule : BaseEntity<Guid>
+{
+    /// <summary>
+    /// معرف الوحدة
+    /// Unit identifier
+    /// </summary>
+    [Display(Name = "معرف الوحدة")]
+    public Guid UnitId { get; set; }
+    public virtual Unit Unit { get; set; }
+
+    /// <summary>
+    /// نوع السعر
+    /// Price type
+    /// </summary>
+    [Display(Name = "نوع السعر")]
+    public string PriceType { get; set; } = null!;
+
+    /// <summary>
+    /// تاريخ بداية السعر
+    /// Start date
+    /// </summary>
+    [Display(Name = "تاريخ بداية السعر")]
+    public DateTime StartDate { get; set; }
+
+    /// <summary>
+    /// تاريخ نهاية السعر
+    /// End date
+    /// </summary>
+    [Display(Name = "تاريخ نهاية السعر")]
+    public DateTime EndDate { get; set; }
+    /// <summary>
+    /// وقت بداية السعر
+    /// </summary>
+    [Display(Name = "وقت بداية السعر")]
+    public TimeSpan? StartTime { get; set; }
+    /// <summary>
+    /// وقت نهاية السعر
+    /// </summary>
+    [Display(Name = "وقت نهاية السعر")]
+    public TimeSpan? EndTime { get; set; }
+
+    /// <summary>
+    /// مبلغ السعر
+    /// Price amount
+    /// </summary>
+    [Display(Name = "مبلغ السعر")]
+    public decimal PriceAmount { get; set; }
+
+    /// <summary>
+    /// فئة التسعير
+    /// Pricing tier
+    /// </summary>
+    [Display(Name = "فئة التسعير")]
+    public string PricingTier { get; set; } = null!;
+
+    /// <summary>
+    /// الزيادة أو الخصم بالنسبة المئوية
+    /// Percentage change
+    /// </summary>
+    [Display(Name = "الزيادة أو الخصم بالنسبة المئوية")]
+    public decimal? PercentageChange { get; set; }
+
+    /// <summary>
+    /// السعر الأدنى
+    /// Minimum price
+    /// </summary>
+    [Display(Name = "السعر الأدنى")]
+    public decimal? MinPrice { get; set; }
+
+    /// <summary>
+    /// السعر الأقصى
+    /// Maximum price
+    /// </summary>
+    [Display(Name = "السعر الأقصى")]
+    public decimal? MaxPrice { get; set; }
+
+    /// <summary>
+    /// الوصف
+    /// Description
+    /// </summary>
+    [Display(Name = "الوصف")]
+    public string? Description { get; set; }
+    /// <summary>
+    /// عملة السعر
+    /// Currency of the price
+    /// </summary>
+    public string Currency { get; set; } = null!;
+
+    /// <summary>
+    /// الملاحة إلى كيان العملة
+    /// Navigation to Currency entity
+    /// </summary>
+    public virtual Currency? CurrencyRef { get; set; }
+} namespace YemenBooking.Core.Entities;
+
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+
+/// <summary>
+/// كيان الكيان
+/// Property entity
+/// </summary>
+[Display(Name = "كيان الكيان")]
+public class Property : BaseEntity<Guid>
+{
+    /// <summary>
+    /// معرف المالك
+    /// Owner identifier
+    /// </summary>
+    [Display(Name = "معرف المالك")]
+    public Guid OwnerId { get; set; }
+    
+    /// <summary>
+    /// معرف نوع الكيان
+    /// Property type identifier
+    /// </summary>
+    [Display(Name = "معرف نوع الكيان")]
+    public Guid TypeId { get; set; }
+    
+    /// <summary>
+    /// اسم الكيان
+    /// Property name
+    /// </summary>
+    [Display(Name = "اسم الكيان")]
+    public string Name { get; set; }
+    
+    /// <summary>
+    /// وصف قصير للكيان
+    /// Short description of the property
+    /// </summary>
+    [Display(Name = "وصف قصير للكيان")]
+    public string? ShortDescription { get; set; }
+    
+    /// <summary>
+    /// السعر الأساسي لليلة الواحدة
+    /// Base price per night
+    /// </summary>
+    [Display(Name = "السعر الأساسي لليلة الواحدة")]
+    public decimal BasePricePerNight { get; set; }
+    
+    /// <summary>
+    /// عنوان الكيان
+    /// Property address
+    /// </summary>
+    [Display(Name = "عنوان الكيان")]
+    public string Address { get; set; }
+    
+    /// <summary>
+    /// المدينة
+    /// City
+    /// </summary>
+    [Display(Name = "المدينة")]
+    public string City { get; set; }
+    
+    /// <summary>
+    /// خط العرض
+    /// Latitude
+    /// </summary>
+    [Display(Name = "خط العرض")]
+    public decimal Latitude { get; set; }
+    
+    /// <summary>
+    /// خط الطول
+    /// Longitude
+    /// </summary>
+    [Display(Name = "خط الطول")]
+    public decimal Longitude { get; set; }
+    
+    /// <summary>
+    /// تصنيف النجوم
+    /// Star rating
+    /// </summary>
+    [Display(Name = "تصنيف النجوم")]
+    public int StarRating { get; set; }
+    
+    /// <summary>
+    /// وصف الكيان
+    /// Property description
+    /// </summary>
+    [Display(Name = "وصف الكيان")]
+    public string Description { get; set; }
+    
+    /// <summary>
+    /// حالة الموافقة على الكيان
+    /// Property approval status
+    /// </summary>
+    [Display(Name = "حالة الموافقة على الكيان")]
+    public bool IsApproved { get; set; } = true;
+    
+    /// <summary>
+    /// تاريخ إنشاء الكيان
+    /// Property creation date
+    /// </summary>
+    [Display(Name = "تاريخ إنشاء الكيان")]
+    public DateTime CreatedAt { get; set; }
+
+    /// <summary>
+    /// عدد مرات المشاهدة
+    /// View count
+    /// </summary>
+    [Display(Name = "عدد مرات المشاهدة")]
+    public int ViewCount { get; set; } = 0;
+
+    /// <summary>
+    /// عدد الحجوزات
+    /// Booking count
+    /// </summary>
+    [Display(Name = "عدد الحجوزات")]
+    public int BookingCount { get; set; } = 0;
+    
+    /// <summary>
+    /// متوسط التقييم
+    /// Average rating of the property
+    /// </summary>
+    [Display(Name = "متوسط التقييم")]
+    public decimal AverageRating { get; set; } = 0m;
+
+    /// <summary>
+    /// العملة
+    /// Currency
+    /// </summary>
+    [Display(Name = "العملة")]
+    public string Currency { get; set; }
+    
+    /// <summary>
+    /// هل العقار مميز لعرضه في الواجهة
+    /// Whether property is featured to show in listing
+    /// </summary>
+    public bool IsFeatured { get; set; } = false;
+    
+    /// <summary>
+    /// المالك المرتبط بالكيان
+    /// Owner associated with the property
+    /// </summary>
+    [Display(Name = "المالك المرتبط بالكيان")]
+    public virtual User Owner { get; set; }
+    
+    /// <summary>
+    /// نوع الكيان المرتبط
+    /// Property type associated
+    /// </summary>
+    [Display(Name = "نوع الكيان المرتبط")]
+    public virtual PropertyType PropertyType { get; set; }
+    
+    /// <summary>
+    /// الملاحة إلى كيان المدينة
+    /// Navigation to City entity
+    /// </summary>
+    public virtual City? CityRef { get; set; }
+    
+    /// <summary>
+    /// الوحدات المرتبطة بالكيان
+    /// Units associated with the property
+    /// </summary>
+    [Display(Name = "الوحدات المرتبطة بالكيان")]
+    public virtual ICollection<Unit> Units { get; set; } = new List<Unit>();
+    
+    /// <summary>
+    /// الخدمات المرتبطة بالكيان
+    /// Services associated with the property
+    /// </summary>
+    [Display(Name = "الخدمات المرتبطة بالكيان")]
+    public virtual ICollection<PropertyService> Services { get; set; } = new List<PropertyService>();
+    
+    /// <summary>
+    /// السياسات المرتبطة بالكيان
+    /// Policies associated with the property
+    /// </summary>
+    [Display(Name = "السياسات المرتبطة بالكيان")]
+    public virtual ICollection<PropertyPolicy> Policies { get; set; } = new List<PropertyPolicy>();
+    
+    /// <summary>
+    /// المراجعات المرتبطة بالكيان
+    /// Reviews associated with the property
+    /// </summary>
+    [Display(Name = "المراجعات المرتبطة بالكيان")]
+    public virtual ICollection<Review> Reviews { get; set; } = new List<Review>();
+    
+    /// <summary>
+    /// الموظفون المرتبطون بالكيان
+    /// Staff associated with the property
+    /// </summary>
+    [Display(Name = "الموظفون المرتبطون بالكيان")]
+    public virtual ICollection<Staff> Staff { get; set; } = new List<Staff>();
+    
+    /// <summary>
+    /// الصور المرتبطة بالكيان
+    /// Images associated with the property
+    /// </summary>
+    [Display(Name = "الصور المرتبطة بالكيان")]
+    public virtual ICollection<PropertyImage> Images { get; set; } = new List<PropertyImage>();
+    
+    /// <summary>
+    /// الوسائل المرتبطة بالكيان
+    /// Amenities associated with the property
+    /// </summary>
+    [Display(Name = "الوسائل المرتبطة بالكيان")]
+    public virtual ICollection<PropertyAmenity> Amenities { get; set; } = new List<PropertyAmenity>();
+
+    /// <summary>
+    /// البلاغات المرتبطة بالكيان
+    /// Reports associated with the property
+    /// </summary>
+    [Display(Name = "البلاغات المرتبطة بالكيان")]
+    public virtual ICollection<Report> Reports { get; set; } = new List<Report>();
+
+    /// <summary>
+    /// عناصر الأقسام المرتبطة بالكيان
+    /// Section items associated with the property
+    /// </summary>
+    // Legacy SectionItems removed
+
+} namespace YemenBooking.Core.Entities;
+
+using System;
+using System.ComponentModel.DataAnnotations;
+using YemenBooking.Core.ValueObjects;
+
+/// <summary>
+/// كيان وسيلة الكيان
+/// Property Amenity entity
+/// </summary>
+[Display(Name = "كيان وسيلة الكيان")]
+public class PropertyAmenity : BaseEntity<Guid>
+{
+    /// <summary>
+    /// معرف الكيان
+    /// Property identifier
+    /// </summary>
+    [Display(Name = "معرف الكيان")]
+    public Guid PropertyId { get; set; }
+    
+    /// <summary>
+    /// معرف وسيلة نوع الكيان
+    /// Property type amenity identifier
+    /// </summary>
+    [Display(Name = "معرف وسيلة نوع الكيان")]
+    public Guid PtaId { get; set; }
+    
+    /// <summary>
+    /// هل الوسيلة متاحة
+    /// Is amenity available
+    /// </summary>
+    [Display(Name = "هل الوسيلة متاحة")]
+    public bool IsAvailable { get; set; }
+    
+    /// <summary>
+    /// التكلفة الإضافية للوسيلة
+    /// Extra cost for the amenity
+    /// </summary>
+    [Display(Name = "التكلفة الإضافية للوسيلة")]
+    public Money ExtraCost { get; set; }
+    
+    /// <summary>
+    /// الكيان المرتبط
+    /// Property associated
+    /// </summary>
+    [Display(Name = "الكيان المرتبط")]
+    public virtual Property Property { get; set; }
+    
+    /// <summary>
+    /// وسيلة نوع الكيان المرتبطة
+    /// Property type amenity associated
+    /// </summary>
+    [Display(Name = "وسيلة نوع الكيان المرتبطة")]
+    public virtual PropertyTypeAmenity PropertyTypeAmenity { get; set; }
+} namespace YemenBooking.Core.Entities;
+
+using System;
+using System.ComponentModel.DataAnnotations;
+using YemenBooking.Core.Enums;
+
+/// <summary>
+/// كيان صورة الكيان
+/// Property Image entity
+/// </summary>
+[Display(Name = "كيان صورة الكيان")]
+public class PropertyImage : BaseEntity<Guid>
+{
+    /// <summary>
+    /// معرف الكيان (قابل للتمرير إلى NULL)
+    /// Property identifier (nullable)
+    /// </summary>
+    [Display(Name = "معرف الكيان")]
+    public Guid? PropertyId { get; set; }
+    
+    /// <summary>
+    /// معرف الوحدة (قابل للتمرير إلى NULL)
+    /// Unit identifier (nullable)
+    /// </summary>
+    [Display(Name = "معرف الوحدة")]
+    public Guid? UnitId { get; set; }
+    
+    /// <summary>
+    /// اسم الصورة
+    /// Image name
+    /// </summary>
+    [Display(Name = "اسم الصورة")]
+    public string Name { get; set; }
+    
+    /// <summary>
+    /// رابط الصورة
+    /// Image URL
+    /// </summary>
+    [Display(Name = "رابط الصورة")]
+    public string Url { get; set; }
+    
+    /// <summary>
+    /// حجم الصورة بالبايت
+    /// Image size in bytes
+    /// </summary>
+    [Display(Name = "حجم الصورة بالبايت")]
+    public long SizeBytes { get; set; }
+    
+    /// <summary>
+    /// نوع الصورة
+    /// Image type
+    /// </summary>
+    [Display(Name = "نوع الصورة")]
+    public string Type { get; set; }
+    
+    /// <summary>
+    /// فئة الصورة
+    /// Image category
+    /// </summary>
+    [Display(Name = "فئة الصورة")]
+    public ImageCategory Category { get; set; }
+    
+    /// <summary>
+    /// تسمية توضيحية للصورة
+    /// Image caption
+    /// </summary>
+    [Display(Name = "تسمية توضيحية للصورة")]
+    public string Caption { get; set; }
+    
+    /// <summary>
+    /// نص بديل للصورة
+    /// Image alt text
+    /// </summary>
+    [Display(Name = "نص بديل للصورة")]
+    public string AltText { get; set; }
+    
+    /// <summary>
+    /// وسوم الصورة (JSON)
+    /// Image tags (JSON)
+    /// </summary>
+    [Display(Name = "وسوم الصورة")]
+    public string Tags { get; set; }
+
+    /// <summary>
+    /// أحجام الصورة (JSON)
+    /// Image sizes (JSON) - mapping keys to URLs for different sizes (e.g. thumbnail, medium, large)
+    /// </summary>
+    [Display(Name = "أحجام الصورة")]
+    public string Sizes { get; set; }
+
+    /// <summary>
+    /// هل هي الصورة الرئيسية
+    /// Is main image
+    /// </summary>
+    [Display(Name = "هل هي الصورة الرئيسية")]
+    public bool IsMain { get; set; }
+    
+    /// <summary>
+    /// ترتيب العرض
+    /// Sort order
+    /// </summary>
+    [Display(Name = "ترتيب العرض")]
+    public int SortOrder { get; set; }
+    
+    /// <summary>
+    /// عدد المشاهدات
+    /// Number of views
+    /// </summary>
+    [Display(Name = "عدد المشاهدات")]
+    public int Views { get; set; }
+    
+    /// <summary>
+    /// عدد التنزيلات
+    /// Number of downloads
+    /// </summary>
+    [Display(Name = "عدد التنزيلات")]
+    public int Downloads { get; set; }
+    
+    /// <summary>
+    /// تاريخ الرفع
+    /// Upload date
+    /// </summary>
+    [Display(Name = "تاريخ الرفع")]
+    public DateTime UploadedAt { get; set; }
+    
+    /// <summary>
+    /// ترتيب العرض
+    /// Display order
+    /// </summary>
+    [Display(Name = "ترتيب العرض")]
+    public int DisplayOrder { get; set; }
+    
+    /// <summary>
+    /// حالة الصورة
+    /// Image status
+    /// </summary>
+    [Display(Name = "حالة الصورة")]
+    public ImageStatus Status { get; set; }
+    
+    /// <summary>
+    /// هل هي الصورة الرئيسية
+    /// Is main image
+    /// </summary>
+    [Display(Name = "هل هي الصورة الرئيسية")]
+    public bool IsMainImage { get; set; }
+    
+    /// <summary>
+    /// الكيان المرتبط بالصورة (قابل للتمرير إلى NULL)
+    /// Property associated with the image (nullable)
+    /// </summary>
+    [Display(Name = "الكيان المرتبط بالصورة")]
+    public virtual Property? Property { get; set; }
+    
+    /// <summary>
+    /// الوحدة المرتبطة بالصورة (قابل للتمرير إلى NULL)
+    /// Unit associated with the image (nullable)
+    /// </summary>
+    [Display(Name = "الوحدة المرتبطة بالصورة")]
+    public virtual Unit? Unit { get; set; }
+}namespace YemenBooking.Core.Entities;
+
+using System;
+using System.ComponentModel.DataAnnotations;
+using YemenBooking.Core.Enums;
+
+/// <summary>
+/// كيان سياسة الكيان
+/// Property Policy entity
+/// </summary>
+[Display(Name = "كيان سياسة الكيان")]
+public class PropertyPolicy : BaseEntity<Guid>
+{
+    /// <summary>
+    /// معرف الكيان
+    /// Property identifier
+    /// </summary>
+    [Display(Name = "معرف الكيان")]
+    public Guid PropertyId { get; set; }
+    
+    /// <summary>
+    /// نوع السياسة (إلغاء، تعديل، دخول، أطفال، حيوانات)
+    /// Policy type (Cancellation, Modification, CheckIn, Children, Pets)
+    /// </summary>
+    [Display(Name = "نوع السياسة")]
+    public PolicyType Type { get; set; }
+    
+    /// <summary>
+    /// عدد أيام نافذة الإلغاء قبل تاريخ الوصول
+    /// Number of days before check-in to allow cancellation
+    /// </summary>
+    [Display(Name = "عدد أيام نافذة الإلغاء قبل تاريخ الوصول")]
+    public int CancellationWindowDays { get; set; }
+    
+    /// <summary>
+    /// يتطلب الدفع الكامل قبل التأكيد
+    /// Requires full payment before confirmation
+    /// </summary>
+    [Display(Name = "يتطلب الدفع الكامل قبل التأكيد")]
+    public bool RequireFullPaymentBeforeConfirmation { get; set; }
+    
+    /// <summary>
+    /// الحد الأدنى لنسبة الدفع المقدمة (كنسبة مئوية)
+    /// Minimum deposit percentage (as percentage)
+    /// </summary>
+    [Display(Name = "الحد الأدنى لنسبة الدفع المقدمة")]
+    public decimal MinimumDepositPercentage { get; set; }
+    
+    /// <summary>
+    /// الحد الأدنى للساعات قبل تسجيل الوصول لتعديل الحجز
+    /// Minimum hours before check-in to allow modification
+    /// </summary>
+    [Display(Name = "الحد الأدنى للساعات قبل تسجيل الوصول لتعديل الحجز")]
+    public int MinHoursBeforeCheckIn { get; set; }
+    
+    /// <summary>
+    /// وصف السياسة
+    /// Policy description
+    /// </summary>
+    [Display(Name = "وصف السياسة")]
+    public string Description { get; set; }
+    
+    /// <summary>
+    /// قواعد السياسة (JSON)
+    /// Policy rules (JSON)
+    /// </summary>
+    [Display(Name = "قواعد السياسة")]
+    public string Rules { get; set; }
+    
+    /// <summary>
+    /// الكيان المرتبط بالسياسة
+    /// Property associated with the policy
+    /// </summary>
+    [Display(Name = "الكيان المرتبط بالسياسة")]
+    public virtual Property Property { get; set; }
+}namespace YemenBooking.Core.Entities;
+
+using System;
+using YemenBooking.Core.ValueObjects;
+using System.Collections.Generic;
+using YemenBooking.Core.Enums;
+using System.ComponentModel.DataAnnotations;
+
+/// <summary>
+/// كيان خدمة الكيان
+/// Property Service entity
+/// </summary>
+[Display(Name = "كيان خدمة الكيان")]
+public class PropertyService : BaseEntity<Guid>
+{
+    /// <summary>
+    /// معرف الكيان
+    /// Property identifier
+    /// </summary>
+    [Display(Name = "معرف الكيان")]
+    public Guid PropertyId { get; set; }
+    
+    /// <summary>
+    /// اسم الخدمة (نقل من المطار، سبا، غسيل ملابس)
+    /// Service name (Airport Transfer, Spa, Laundry)
+    /// </summary>
+    [Display(Name = "اسم الخدمة")]
+    public string Name { get; set; }
+    
+    /// <summary>
+    /// سعر الخدمة
+    /// Service price
+    /// </summary>
+    [Display(Name = "سعر الخدمة")]
+    public Money Price { get; set; }
+    
+    /// <summary>
+    /// أيقونة الخدمة
+    /// Service icon
+    /// </summary>
+    public string Icon { get; set; } = string.Empty;
+
+    /// <summary>
+    /// نموذج التسعير (ثابت، للشخص، للليلة)
+    /// Pricing model (Fixed, Per Person, Per Night)
+    /// </summary>
+    [Display(Name = "نموذج التسعير")]
+    public PricingModel PricingModel { get; set; }
+    
+    /// <summary>
+    /// الكيان المرتبط بالخدمة
+    /// Property associated with the service
+    /// </summary>
+    [Display(Name = "الكيان المرتبط بالخدمة")]
+    public virtual Property Property { get; set; }
+    
+    /// <summary>
+    /// الحجوزات المرتبطة بهذه الخدمة
+    /// Bookings associated with this service
+    /// </summary>
+    [Display(Name = "الحجوزات المرتبطة بهذه الخدمة")]
+    public virtual ICollection<BookingService> BookingServices { get; set; } = new List<BookingService>();
+} namespace YemenBooking.Core.Entities;
+
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+
+/// <summary>
+/// كيان نوع الكيان
+/// Property Type entity
+/// </summary>
+[Display(Name = "كيان نوع الكيان")]
+public class PropertyType : BaseEntity<Guid>
+{
+    /// <summary>
+    /// اسم نوع الكيان (فندق، شاليه، استراحة، فيلا، شقة)
+    /// Property type name (Hotel, Chalet, Rest House, Villa, Apartment)
+    /// </summary>
+    [Display(Name = "اسم نوع الكيان")]
+    public string Name { get; set; }
+    
+    /// <summary>
+    /// وصف نوع الكيان
+    /// Property type description
+    /// </summary>
+    [Display(Name = "وصف نوع الكيان")]
+    public string Description { get; set; }
+    
+    /// <summary>
+    /// المرافق الافتراضية لنوع الكيان (JSON)
+    /// Default amenities for the property type (JSON)
+    /// </summary>
+    [Display(Name = "المرافق الافتراضية لنوع الكيان")]
+    public string DefaultAmenities { get; set; }
+
+    /// <summary>
+    /// ايقونة لنوع العقار
+    /// Icon for the property type
+    /// </summary>
+    public string Icon { get; set; } = string.Empty;
+
+    
+    /// <summary>
+    /// الكيانات المرتبطة بهذا النوع
+    /// Properties associated with this type
+    /// </summary>
+    [Display(Name = "الكيانات المرتبطة بهذا النوع")]
+    public virtual ICollection<Property> Properties { get; set; } = new List<Property>();
+    
+    /// <summary>
+    /// أنواع الوحدات المرتبطة بهذا النوع من الكيانات
+    /// Unit types associated with this property type
+    /// </summary>
+    [Display(Name = "أنواع الوحدات المرتبطة بهذا النوع")]
+    public virtual ICollection<UnitType> UnitTypes { get; set; } = new List<UnitType>();
+    
+    /// <summary>
+    /// الوسائل المرتبطة بنوع الكيان
+    /// Amenities associated with this property type
+    /// </summary>
+    [Display(Name = "الوسائل المرتبطة بنوع الكيان")]
+    public virtual ICollection<PropertyTypeAmenity> PropertyTypeAmenities { get; set; } = new List<PropertyTypeAmenity>();
+
+} namespace YemenBooking.Core.Entities;
+
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+
+/// <summary>
+/// كيان وسيلة نوع الكيان
+/// Property Type Amenity entity
+/// </summary>
+[Display(Name = "كيان وسيلة نوع الكيان")]
+public class PropertyTypeAmenity : BaseEntity<Guid>
+{
+    /// <summary>
+    /// معرف نوع الكيان
+    /// Property type identifier
+    /// </summary>
+    [Display(Name = "معرف نوع الكيان")]
+    public Guid PropertyTypeId { get; set; }
+    
+    /// <summary>
+    /// معرف الوسيلة
+    /// Amenity identifier
+    /// </summary>
+    [Display(Name = "معرف الوسيلة")]
+    public Guid AmenityId { get; set; }
+    
+    /// <summary>
+    /// هل هي وسيلة افتراضية
+    /// Is default amenity
+    /// </summary>
+    [Display(Name = "هل هي وسيلة افتراضية")]
+    public bool IsDefault { get; set; }
+    
+    /// <summary>
+    /// نوع الكيان المرتبط
+    /// Property type associated
+    /// </summary>
+    [Display(Name = "نوع الكيان المرتبط")]
+    public virtual PropertyType PropertyType { get; set; }
+    
+    /// <summary>
+    /// الوسيلة المرتبطة
+    /// Amenity associated
+    /// </summary>
+    [Display(Name = "الوسيلة المرتبطة")]
+    public virtual Amenity Amenity { get; set; }
+    
+    /// <summary>
+    /// وسائل الكيان المرتبطة
+    /// Property amenities associated
+    /// </summary>
+    [Display(Name = "وسائل الكيان المرتبطة")]
+    public virtual ICollection<PropertyAmenity> PropertyAmenities { get; set; } = new List<PropertyAmenity>();
+} using System;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+
+namespace YemenBooking.Core.Entities
+{
+/// <summary>
+    /// كيان البلاغات لإدارة بلاغات المستخدمين عن المحتوى والسلوك
+/// </summary>
+[Display(Name = "كيان البلاغات لإدارة بلاغات المستخدمين عن المحتوى والسلوك")]
+public class Report : BaseEntity<Guid>
+{
+    /// <summary>
+    /// معرف المستخدم المبلغ
+    /// </summary>
+    [Display(Name = "معرف المستخدم المبلغ")]
+    public Guid ReporterUserId { get; set; }
+
+        /// <summary>
+        /// المستخدم المبلغ
+        /// </summary>
+        [Display(Name = "المستخدم المبلغ")]
+        [ForeignKey(nameof(ReporterUserId))]
+        public User ReporterUser { get; set; }
+
+    /// <summary>
+    /// معرف المستخدم المبلغ عنه (اختياري)
+    /// </summary>
+    [Display(Name = "معرف المستخدم المبلغ عنه")]
+    public Guid? ReportedUserId { get; set; }
+
+        /// <summary>
+        /// المستخدم المبلغ عنه
+        /// </summary>
+        [Display(Name = "المستخدم المبلغ عنه")]
+        [ForeignKey(nameof(ReportedUserId))]
+        public User ReportedUser { get; set; }
+
+    /// <summary>
+    /// معرف الكيان المبلغ عنه (اختياري)
+    /// </summary>
+    [Display(Name = "معرف الكيان المبلغ عنه")]
+    public Guid? ReportedPropertyId { get; set; }
+
+        /// <summary>
+        /// الكيان المبلغ عنه
+        /// </summary>
+        [Display(Name = "الكيان المبلغ عنه")]
+        [ForeignKey(nameof(ReportedPropertyId))]
+        public Property ReportedProperty { get; set; }
+
+    /// <summary>
+    /// سبب البلاغ
+        /// </summary>
+        [Display(Name = "سبب البلاغ")]
+        [Required]
+        public string Reason { get; set; }
+
+        /// <summary>
+        /// الوصف التفصيلي للبلاغ
+        /// </summary>
+        [Display(Name = "الوصف التفصيلي للبلاغ")]
+        public string Description { get; set; }
+
+        /// <summary>
+        /// حالة البلاغ (pending, reviewed, resolved, dismissed, escalated)
+    /// </summary>
+        [Display(Name = "حالة البلاغ")]
+        [Required]
+        public string Status { get; set; } = "pending";
+
+    /// <summary>
+        /// ملاحظات الإجراء من قبل الإدارة
+    /// </summary>
+        [Display(Name = "ملاحظات الإجراء من قبل الإدارة")]
+        public string ActionNote { get; set; }
+
+    /// <summary>
+        /// معرف مسؤول الإدارة الذي اتخذ الإجراء (اختياري)
+    /// </summary>
+        [Display(Name = "معرف مسؤول الإدارة الذي اتخذ الإجراء")]
+        public Guid? AdminId { get; set; }
+    }
+} namespace YemenBooking.Core.Entities;
+
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+
+/// <summary>
+/// كيان المراجعة
+/// Review entity
+/// </summary>
+[Display(Name = "كيان المراجعة")]
+public class Review : BaseEntity<Guid>
+{
+    /// <summary>
+    /// معرف الحجز
+    /// Booking identifier
+    /// </summary>
+    [Display(Name = "معرف الحجز")]
+    public Guid BookingId { get; set; }
+
+    /// <summary>
+    /// معرف الكيان
+    /// Property identifier
+    /// </summary>
+    [Display(Name = "معرف الكيان")]
+    public Guid PropertyId { get; set; }
+    
+    /// <summary>
+    /// تقييم النظافة
+    /// Cleanliness rating
+    /// </summary>
+    [Display(Name = "تقييم النظافة")]
+    public int Cleanliness { get; set; }
+    
+    /// <summary>
+    /// تقييم الخدمة
+    /// Service rating
+    /// </summary>
+    [Display(Name = "تقييم الخدمة")]
+    public int Service { get; set; }
+    
+    /// <summary>
+    /// تقييم الموقع
+    /// Location rating
+    /// </summary>
+    [Display(Name = "تقييم الموقع")]
+    public int Location { get; set; }
+    
+    /// <summary>
+    /// تقييم القيمة
+    /// Value rating
+    /// </summary>
+    [Display(Name = "تقييم القيمة")]
+    public int Value { get; set; }
+
+    /// <summary>
+    /// متوسط التقييم
+    /// Average rating
+    /// </summary>
+    [Display(Name = "متوسط التقييم")]
+    public decimal AverageRating { get; set; }
+    
+    /// <summary>
+    /// تعليق المراجعة
+    /// Review comment
+    /// </summary>
+    [Display(Name = "تعليق المراجعة")]
+    public string Comment { get; set; }
+    
+    /// <summary>
+    /// تاريخ إنشاء المراجعة
+    /// Review creation date
+    /// </summary>
+    [Display(Name = "تاريخ إنشاء المراجعة")]
+    public DateTime CreatedAt { get; set; }
+
+    /// <summary>
+    /// نص رد المراجعة
+    /// Review response text
+    /// </summary>
+    [Display(Name = "نص رد المراجعة")]
+    public string? ResponseText { get; set; }
+
+    /// <summary>
+    /// تاريخ رد المراجعة
+    /// Review response date
+    /// </summary>
+    [Display(Name = "تاريخ رد المراجعة")]
+    public DateTime? ResponseDate { get; set; }
+
+    /// <summary>
+    /// هل الرد في انتظار الموافقة
+    /// Is pending approval for moderation
+    /// </summary>
+    [Display(Name = "هل الرد في انتظار الموافقة")]
+    public bool IsPendingApproval { get; set; } = true;
+    
+    /// <summary>
+    /// الحجز المرتبط بالمراجعة
+    /// Booking associated with the review
+    /// </summary>
+    [Display(Name = "الحجز المرتبط بالمراجعة")]
+    public virtual Booking Booking { get; set; }
+    
+    /// <summary>
+    /// الكيان المرتبط بالمراجعة
+    /// Property associated with the review
+    /// </summary>
+    [Display(Name = "الكيان المرتبط بالمراجعة")]
+    public virtual Property Property { get; set; }
+
+    /// <summary>
+    /// صور المراجعة المرتبطة
+    /// Review images associated with the review
+    /// </summary>
+    [Display(Name = "صور المراجعة المرتبطة")]
+    public virtual ICollection<ReviewImage> Images { get; set; } = new List<ReviewImage>();
+
+    /// <summary>
+    /// الردود على التقييم
+    /// Responses associated with the review
+    /// </summary>
+    [Display(Name = "ردود التقييم")]
+    public virtual ICollection<ReviewResponse> Responses { get; set; } = new List<ReviewResponse>();
+} namespace YemenBooking.Core.Entities;
+
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using YemenBooking.Core.Enums;
+
+/// <summary>
+/// كيان صورة التقييم
+/// Review Image entity
+/// </summary>
+[Display(Name = "كيان صورة التقييم")]
+public class ReviewImage : BaseEntity<Guid>
+{
+    /// <summary>
+    /// معرف التقييم المرتبط
+    /// Identifier of the related review
+    /// </summary>
+    [Display(Name = "معرف التقييم المرتبط")]
+    public Guid ReviewId { get; set; }
+
+    /// <summary>
+    /// اسم الملف
+    /// File name
+    /// </summary>
+    [Display(Name = "اسم الملف")]
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>
+    /// مسار الصورة
+    /// Image URL or path
+    /// </summary>
+    [Display(Name = "مسار الصورة")]
+    public string Url { get; set; } = string.Empty;
+
+    /// <summary>
+    /// حجم الملف بالبايت
+    /// File size in bytes
+    /// </summary>
+    [Display(Name = "حجم الملف بالبايت")]
+    public long SizeBytes { get; set; }
+
+    /// <summary>
+    /// نوع المحتوى
+    /// Content type or file type
+    /// </summary>
+    [Display(Name = "نوع المحتوى")]
+    public string Type { get; set; } = string.Empty;
+
+    /// <summary>
+    /// فئة الصورة
+    /// Image category
+    /// </summary>
+    [Display(Name = "فئة الصورة")]
+    public ImageCategory Category { get; set; }
+
+    /// <summary>
+    /// تعليق توضيحي للصورة
+    /// Image caption
+    /// </summary>
+    [Display(Name = "تعليق توضيحي للصورة")]
+    public string Caption { get; set; } = string.Empty;
+
+    /// <summary>
+    /// نص بديل للصورة
+    /// Alt text for the image
+    /// </summary>
+    [Display(Name = "نص بديل للصورة")]
+    public string AltText { get; set; } = string.Empty;
+
+    /// <summary>
+    /// وسوم الصورة (JSON)
+    /// Tags of the image in JSON
+    /// </summary>
+    [Display(Name = "وسوم الصورة")]
+    public string Tags { get; set; } = string.Empty;
+
+    /// <summary>
+    /// هل هي الصورة الرئيسية
+    /// Is main image
+    /// </summary>
+    [Display(Name = "هل هي الصورة الرئيسية")]
+    public bool IsMain { get; set; } = false;
+
+    /// <summary>
+    /// ترتيب العرض
+    /// Display order
+    /// </summary>
+    [Display(Name = "ترتيب العرض")]
+    public int DisplayOrder { get; set; } = 0;
+
+    /// <summary>
+    /// تاريخ الرفع
+    /// Upload date
+    /// </summary>
+    [Display(Name = "تاريخ الرفع")]
+    public DateTime UploadedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// حالة الموافقة
+    /// Approval status of the image
+    /// </summary>
+    [Display(Name = "حالة الموافقة")]
+    public ImageStatus Status { get; set; } = ImageStatus.Pending;
+
+    /// <summary>
+    /// الكيان التابع للتقييم
+    /// Navigation property to the review
+    /// </summary>
+    [Display(Name = "الكيان التابع للتقييم")]
+    public virtual Review Review { get; set; }
+} namespace YemenBooking.Core.Entities;
+
+using System;
+using System.ComponentModel.DataAnnotations;
+
+/// <summary>
+/// كيان رد على التقييم
+/// Review response entity
+/// </summary>
+[Display(Name = "رد على التقييم")]
+public class ReviewResponse : BaseEntity<Guid>
+{
+    /// <summary>
+    /// معرف التقييم المرتبط
+    /// Related review identifier
+    /// </summary>
+    [Display(Name = "معرف التقييم")]
+    public Guid ReviewId { get; set; }
+
+    /// <summary>
+    /// نص الرد
+    /// Response text
+    /// </summary>
+    [Display(Name = "نص الرد")]
+    public string Text { get; set; } = string.Empty;
+
+    /// <summary>
+    /// تاريخ الرد
+    /// Response date
+    /// </summary>
+    [Display(Name = "تاريخ الرد")]
+    public DateTime RespondedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// المستخدم الذي قام بالرد
+    /// Responder user identifier
+    /// </summary>
+    [Display(Name = "معرّف المُجيب")]
+    public Guid RespondedBy { get; set; }
+
+    /// <summary>
+    /// اسم المستخدم الذي قام بالرد (نسخ اختياري للتسريع)
+    /// Cached responder name for quick reads
+    /// </summary>
+    [Display(Name = "اسم المُجيب")]
+    public string RespondedByName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// المراجعة المرتبطة
+    /// Navigation to review
+    /// </summary>
+    public virtual Review Review { get; set; } = null!;
+}
+
+namespace YemenBooking.Core.Entities;
+
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+
+/// <summary>
+/// كيان الدور
+/// Role entity
+/// </summary>
+[Display(Name = "كيان الدور")]
+public class Role : BaseEntity<Guid>
+{
+    /// <summary>
+    /// اسم الدور (admin, owner, manager, customer)
+    /// Role name (admin, owner, manager, customer)
+    /// </summary>
+    [Display(Name = "اسم الدور")]
+    public string Name { get; set; }
+    
+    /// <summary>
+    /// المستخدمون المرتبطون بهذا الدور
+    /// Users associated with this role
+    /// </summary>
+    [Display(Name = "المستخدمون المرتبطون بهذا الدور")]
+    public virtual ICollection<UserRole> UserRoles { get; set; } = new List<UserRole>();
+} using System;
+using System.ComponentModel.DataAnnotations;
+
+namespace YemenBooking.Core.Entities;
+
+/// <summary>
+/// كيان فلاتر البحث
+/// SearchFilter entity representing filters for dynamic fields
+/// </summary>
+[Display(Name = "كيان فلاتر البحث")]
+public class SearchFilter : BaseEntity<Guid>
+{
+    /// <summary>
+    /// معرف الحقل المرتبط
+    /// Field identifier
+    /// </summary>
+    [Display(Name = "معرف الحقل المرتبط")]
+    public Guid FieldId { get; set; }
+
+    /// <summary>
+    /// نوع الفلتر (range, exact, contains, boolean, select)
+    /// Filter type
+    /// </summary>
+    [Display(Name = "نوع الفلتر")]
+    public string FilterType { get; set; }
+
+    /// <summary>
+    /// الاسم المعروض للفلتر
+    /// Display name of the filter
+    /// </summary>
+    [Display(Name = "الاسم المعروض للفلتر")]
+    public string DisplayName { get; set; }
+
+    /// <summary>
+    /// خيارات إضافية للفلتر (JSON)
+    /// Filter options
+    /// </summary>
+    [Display(Name = "خيارات إضافية للفلتر")]
+    public string FilterOptions { get; set; }
+
+    /// <summary>
+    /// حالة تفعيل الفلتر
+    /// Is active
+    /// </summary>
+    [Display(Name = "حالة تفعيل الفلتر")]
+    public bool IsActive { get; set; }
+
+    /// <summary>
+    /// ترتيب عرض الفلتر
+    /// Sort order
+    /// </summary>
+    [Display(Name = "ترتيب عرض الفلتر")]
+    public int SortOrder { get; set; }
+
+    /// <summary>
+    /// علاقة الحقل المرتبط
+    /// Property type field associated with this filter
+    /// </summary>
+    [Display(Name = "علاقة الحقل المرتبط")]
+    public virtual UnitTypeField UnitTypeField { get; set; }
+} using System;
+using System.ComponentModel.DataAnnotations;
+
+namespace YemenBooking.Core.Entities
+{
+    /// <summary>
+    /// سجل عمليات البحث من قبل المستخدمين
+    /// Search logs by users
+    /// </summary>
+    [Display(Name = "سجل عمليات البحث من قبل المستخدمين")]
+    public class SearchLog : BaseEntity<Guid>
+    {
+        /// <summary>
+        /// معرف المستخدم الذي قام بالبحث
+        /// User identifier who performed the search
+        /// </summary>
+        [Display(Name = "معرف المستخدم الذي قام بالبحث")]
+        public Guid UserId { get; set; }
+
+        /// <summary>
+        /// نوع البحث (Property أو Unit)
+        /// Search type (Property or Unit)
+        /// </summary>
+        [Display(Name = "نوع البحث")]
+        public string SearchType { get; set; } = string.Empty;
+
+        /// <summary>
+        /// معايير البحث والفلترة بصيغة JSON
+        /// Search and filter criteria in JSON format
+        /// </summary>
+        [Display(Name = "معايير البحث والفلترة")]
+        public string CriteriaJson { get; set; } = "{}";
+
+        /// <summary>
+        /// عدد النتائج المرجعة
+        /// Number of results returned
+        /// </summary>
+        [Display(Name = "عدد النتائج المرجعة")]
+        public int ResultCount { get; set; }
+
+        /// <summary>
+        /// رقم الصفحة
+        /// Page number
+        /// </summary>
+        [Display(Name = "رقم الصفحة")]
+        public int PageNumber { get; set; }
+
+        /// <summary>
+        /// حجم الصفحة
+        /// Page size
+        /// </summary>
+        [Display(Name = "حجم الصفحة")]
+        public int PageSize { get; set; }
+    }
+} namespace YemenBooking.Core.Entities;
+
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using YemenBooking.Core.Enums;
+
+/// <summary>
+/// كيان قسم العرض في الواجهة
+/// Section entity for grouping content on home screens and lists
+/// </summary>
+[Display(Name = "كيان القسم")]
+public class Section : BaseEntity<Guid>
+{
+	/// <summary>
+	/// نوع القسم
+	/// </summary>
+	[Display(Name = "نوع القسم")]
+	public SectionType Type { get; set; }
+
+	/// <summary>
+	/// ترتيب عرض القسم
+	/// </summary>
+	[Display(Name = "ترتيب القسم")]
+	public int DisplayOrder { get; set; }
+
+	/// <summary>
+	/// هل القسم يستهدف الكيانات أم الوحدات
+	/// </summary>
+	[Display(Name = "هدف القسم")] 
+	public SectionTarget Target { get; set; }
+
+	/// <summary>
+	/// عناصر الربط مع الكيانات أو الوحدات
+	/// </summary>
+    // Legacy SectionItem Items removed
+}namespace YemenBooking.Core.Entities;
+
+using System;
+using System.ComponentModel.DataAnnotations;
+
+/// <summary>
+/// عنصر داخل القسم يربط القسم بكيان أو وحدة
+/// Section join entity linking a section to a property or unit
+/// </summary>
+// Legacy SectionItem removed
+	/// <summary>
+	/// معرف القسم
+	/// </summary>
+	[Display(Name = "معرف القسم")]
+	public Guid SectionId { get; set; }
+
+	/// <summary>
+	/// معرف الكيان (اختياري)
+	/// </summary>
+	[Display(Name = "معرف الكيان")]
+	public Guid? PropertyId { get; set; }
+
+	/// <summary>
+	/// معرف الوحدة (اختياري)
+	/// </summary>
+	[Display(Name = "معرف الوحدة")]
+	public Guid? UnitId { get; set; }
+
+	/// <summary>
+	/// ترتيب العنصر داخل القسم
+	/// </summary>
+	[Display(Name = "ترتيب العنصر")]
+	public int SortOrder { get; set; } = 0;
+
+	/// <summary>
+	/// القسم المرتبط
+	/// </summary>
+	[Display(Name = "القسم المرتبط")]
+	public virtual Section Section { get; set; }
+
+	/// <summary>
+	/// الكيان المرتبط (إن وجد)
+	/// </summary>
+	[Display(Name = "الكيان المرتبط")]
+	public virtual Property? Property { get; set; }
+
+	/// <summary>
+	/// الوحدة المرتبطة (إن وجدت)
+	/// </summary>
+	[Display(Name = "الوحدة المرتبطة")]
+	public virtual Unit? Unit { get; set; }
+}using System;
+using System.ComponentModel.DataAnnotations;
+using YemenBooking.Core.Enums;
+
+namespace YemenBooking.Core.Entities
+{
+    /// <summary>
+    /// كيان العروض الخاصة
+    /// Special offers entity
+    /// </summary>
+    public class SpecialOffer : BaseEntity<Guid>
+    {
+        /// <summary>
+        /// عنوان العرض
+        /// Offer title
+        /// </summary>
+        [Required]
+        [MaxLength(200)]
+        public string Title { get; set; } = string.Empty;
+
+        /// <summary>
+        /// وصف العرض
+        /// Offer description
+        /// </summary>
+        [MaxLength(1000)]
+        public string Description { get; set; } = string.Empty;
+
+        /// <summary>
+        /// نوع العرض
+        /// Offer type
+        /// </summary>
+        public OfferType OfferType { get; set; }
+
+        /// <summary>
+        /// قيمة الخصم
+        /// Discount value
+        /// </summary>
+        public decimal DiscountValue { get; set; }
+
+        /// <summary>
+        /// نوع الخصم (نسبة مئوية أم مبلغ ثابت)
+        /// Discount type (percentage or fixed amount)
+        /// </summary>
+        public DiscountType DiscountType { get; set; }
+
+        /// <summary>
+        /// نسبة الخصم المئوية (اختياري)
+        /// Discount percentage (optional)
+        /// </summary>
+        public decimal DiscountPercentage { get; set; }
+
+        /// <summary>
+        /// مبلغ الخصم الثابت (اختياري)
+        /// Discount amount (optional)
+        /// </summary>
+        public decimal DiscountAmount { get; set; }
+
+        /// <summary>
+        /// تاريخ انتهاء العرض (اختياري)
+        /// Offer expiry date (optional)
+        /// </summary>
+        public DateTime? ExpiryDate { get; set; }
+
+        /// <summary>
+        /// لون مميز لعرض شارة في الواجهة
+        /// Highlight color for displaying badge
+        /// </summary>
+        public string? Color { get; set; } = "#FF6B6B";
+
+        /// <summary>
+        /// الحد الأدنى للمبلغ لتطبيق العرض
+        /// Minimum amount to apply offer
+        /// </summary>
+        public decimal? MinimumAmount { get; set; }
+
+        /// <summary>
+        /// الحد الأقصى للخصم
+        /// Maximum discount amount
+        /// </summary>
+        public decimal? MaxDiscountAmount { get; set; }
+
+        /// <summary>
+        /// تاريخ بداية العرض
+        /// Offer start date
+        /// </summary>
+        public DateTime StartDate { get; set; }
+
+        /// <summary>
+        /// تاريخ انتهاء العرض
+        /// Offer end date
+        /// </summary>
+        public DateTime EndDate { get; set; }
+
+        /// <summary>
+        /// العدد الأقصى للاستخدامات
+        /// Maximum usage count
+        /// </summary>
+        public int? MaxUsageCount { get; set; }
+
+        /// <summary>
+        /// العدد الحالي للاستخدامات
+        /// Current usage count
+        /// </summary>
+        public int CurrentUsageCount { get; set; } = 0;
+
+        /// <summary>
+        /// هل العرض نشط
+        /// Whether the offer is active
+        /// </summary>
+        public bool IsActive { get; set; } = true;
+
+        /// <summary>
+        /// كود العرض (اختياري)
+        /// Offer code (optional)
+        /// </summary>
+        [MaxLength(50)]
+        public string? OfferCode { get; set; }
+
+        /// <summary>
+        /// معرف العقار المرتبط بالعرض (اختياري)
+        /// Associated property ID (optional)
+        /// </summary>
+        public Guid? PropertyId { get; set; }
+
+        /// <summary>
+        /// العقار المرتبط بالعرض
+        /// Associated property
+        /// </summary>
+        public virtual Property? Property { get; set; }
+
+        /// <summary>
+        /// صورة العرض
+        /// Offer image URL
+        /// </summary>
+        [MaxLength(500)]
+        public string? ImageUrl { get; set; }
+
+        /// <summary>
+        /// أولوية العرض (للترتيب)
+        /// Offer priority (for ordering)
+        /// </summary>
+        public int Priority { get; set; } = 0;
+
+        /// <summary>
+        /// شروط وأحكام العرض
+        /// Offer terms and conditions
+        /// </summary>
+        [MaxLength(2000)]
+        public string? TermsAndConditions { get; set; }
+    }
+
+    /// <summary>
+    /// نوع العرض
+    /// Offer type enumeration
+    /// </summary>
+    public enum OfferType
+    {
+        /// <summary>
+        /// عرض عام
+        /// General offer
+        /// </summary>
+        General = 1,
+
+        /// <summary>
+        /// عرض للحجز المبكر
+        /// Early booking offer
+        /// </summary>
+        EarlyBooking = 2,
+
+        /// <summary>
+        /// عرض اللحظة الأخيرة
+        /// Last minute offer
+        /// </summary>
+        LastMinute = 3,
+
+        /// <summary>
+        /// عرض الإقامة الطويلة
+        /// Long stay offer
+        /// </summary>
+        LongStay = 4,
+
+        /// <summary>
+        /// عرض موسمي
+        /// Seasonal offer
+        /// </summary>
+        Seasonal = 5,
+
+        /// <summary>
+        /// عرض للعملاء الجدد
+        /// New customer offer
+        /// </summary>
+        NewCustomer = 6,
+
+        /// <summary>
+        /// عرض الولاء
+        /// Loyalty offer
+        /// </summary>
+        Loyalty = 7
+    }
+
+    /// <summary>
+    /// نوع الخصم
+    /// Discount type enumeration
+    /// </summary>
+    public enum DiscountType
+    {
+        /// <summary>
+        /// نسبة مئوية
+        /// Percentage
+        /// </summary>
+        Percentage = 1,
+
+        /// <summary>
+        /// مبلغ ثابت
+        /// Fixed amount
+        /// </summary>
+        FixedAmount = 2
+    }
+}
+namespace YemenBooking.Core.Entities;
+
+using System;
+using System.ComponentModel.DataAnnotations;
+using YemenBooking.Core.Enums;
+
+/// <summary>
+/// كيان الموظف
+/// Staff entity
+/// </summary>
+[Display(Name = "كيان الموظف")]
+public class Staff : BaseEntity<Guid>
+{
+    /// <summary>
+    /// معرف المستخدم
+    /// User identifier
+    /// </summary>
+    [Display(Name = "معرف المستخدم")]
+    public Guid UserId { get; set; }
+    
+    /// <summary>
+    /// معرف الكيان
+    /// Property identifier
+    /// </summary>
+    [Display(Name = "معرف الكيان")]
+    public Guid PropertyId { get; set; }
+    
+    /// <summary>
+    /// منصب الموظف (مدير، موظف استقبال، نظافة)
+    /// Staff position (Manager, Receptionist, Housekeeping)
+    /// </summary>
+    [Display(Name = "منصب الموظف")]
+    public StaffPosition Position { get; set; }
+    
+    /// <summary>
+    /// الصلاحيات (JSON)
+    /// Permissions (JSON)
+    /// </summary>
+    [Display(Name = "الصلاحيات")]
+    public string Permissions { get; set; }
+    
+    /// <summary>
+    /// المستخدم المرتبط بالموظف
+    /// User associated with the staff
+    /// </summary>
+    [Display(Name = "المستخدم المرتبط بالموظف")]
+    public virtual User User { get; set; }
+    
+    /// <summary>
+    /// الكيان المرتبط بالموظف
+    /// Property associated with the staff
+    /// </summary>
+    [Display(Name = "الكيان المرتبط بالموظف")]
+    public virtual Property Property { get; set; }
+}namespace YemenBooking.Core.Entities;
+
+using System;
+using YemenBooking.Core.ValueObjects;
+using System.Collections.Generic;
+using YemenBooking.Core.Enums;
+using System.ComponentModel.DataAnnotations;
+
+/// <summary>
+/// كيان الوحدة
+/// Unit entity
+/// </summary>
+[Display(Name = "كيان الوحدة")]
+public class Unit : BaseEntity<Guid>
+{
+    /// <summary>
+    /// معرف الكيان
+    /// Property identifier
+    /// </summary>
+    [Display(Name = "معرف الكيان")]
+    public Guid PropertyId { get; set; }
+    
+    /// <summary>
+    /// معرف نوع الوحدة
+    /// Unit type identifier
+    /// </summary>
+    [Display(Name = "معرف نوع الوحدة")]
+    public Guid UnitTypeId { get; set; }
+    
+    /// <summary>
+    /// اسم الوحدة (الوحدة A، الجناح الملكي)
+    /// Unit name (Unit A, Royal Suite)
+    /// </summary>
+    [Display(Name = "اسم الوحدة")]
+    public string Name { get; set; }
+    
+    /// <summary>
+    /// السعر الأساسي للوحدة
+    /// Base price of the unit
+    /// </summary>
+    [Display(Name = "السعر الأساسي للوحدة")]
+    public Money BasePrice { get; set; }
+    
+    /// <summary>
+    /// السعة القصوى للوحدة (عدد الضيوف الأقصى)
+    /// Maximum capacity of the unit (max number of guests)
+    /// </summary>
+    [Display(Name = "السعة القصوى للوحدة")]
+    public int MaxCapacity { get; set; }
+    
+    /// <summary>
+    /// نسبة الخصم الافتراضية للوحدة (0-100)
+    /// Default discount percentage for the unit (0-100)
+    /// </summary>
+    public decimal DiscountPercentage { get; set; } = 0;
+    
+    /// <summary>
+    /// الميزات المخصصة للوحدة (JSON)
+    /// Custom features of the unit (JSON)
+    /// </summary>
+    [Display(Name = "الميزات المخصصة للوحدة")]
+    public string CustomFeatures { get; set; }
+    
+    /// <summary>
+    /// حالة توفر الوحدة
+    /// Unit availability status
+    /// </summary>
+    [Display(Name = "حالة توفر الوحدة")]
+    public bool IsAvailable { get; set; } = true;
+
+    /// <summary>
+    /// عدد مرات المشاهدة
+    /// View count
+    /// </summary>
+    [Display(Name = "عدد مرات المشاهدة")]
+    public int ViewCount { get; set; } = 0;
+
+    /// <summary>
+    /// عدد الحجوزات
+    /// Booking count
+    /// </summary>
+    [Display(Name = "عدد الحجوزات")]
+    public int BookingCount { get; set; } = 0;
+    
+    /// <summary>
+    /// سعة البالغين
+    /// Adults capacity
+    /// </summary>
+    [Display(Name = "سعة البالغين")]
+    public int? AdultsCapacity { get; set; }
+
+    /// <summary>
+    /// سعة الأطفال
+    /// Children capacity
+    /// </summary>
+    [Display(Name = "سعة الأطفال")]
+    public int? ChildrenCapacity { get; set; }
+
+    /// <summary>
+    /// الكيان المرتبط بالوحدة
+    /// Property associated with the unit
+    /// </summary>
+    [Display(Name = "الكيان المرتبط بالوحدة")]
+    public virtual Property Property { get; set; }
+    
+    /// <summary>
+    /// نوع الوحدة المرتبط
+    /// Unit type associated
+    /// </summary>
+    [Display(Name = "نوع الوحدة المرتبط")]
+    public virtual UnitType UnitType { get; set; }
+    
+    /// <summary>
+    /// الحجوزات المرتبطة بالوحدة
+    /// Bookings associated with the unit
+    /// </summary>
+    [Display(Name = "الحجوزات المرتبطة بالوحدة")]
+    public virtual ICollection<Booking> Bookings { get; set; } = new List<Booking>();
+    
+    /// <summary>
+    /// الصور المرتبطة بالوحدة
+    /// Images associated with the unit
+    /// </summary>
+    [Display(Name = "الصور المرتبطة بالوحدة")]
+    public virtual ICollection<PropertyImage> Images { get; set; } = new List<PropertyImage>();
+
+    /// <summary>
+    /// توضيح إتاحة الوحدة
+    /// Navigation for unit availabilities
+    /// </summary>
+    public virtual ICollection<UnitAvailability> UnitAvailabilities { get; set; } = new List<UnitAvailability>();
+
+    /// <summary>
+    /// توضيح تسعير الوحدة
+    /// Navigation for unit pricing
+    /// </summary>
+    public virtual ICollection<PricingRule> PricingRules { get; set; } = new List<PricingRule>();
+
+    /// <summary>
+    /// قيم الحقول الخاصة بالوحدة
+    /// Field values associated with this unit
+    /// </summary>
+    [Display(Name = "قيم الحقول الخاصة بالوحدة")]
+    public virtual ICollection<UnitFieldValue> FieldValues { get; set; } = new List<UnitFieldValue>();
+
+    /// <summary>
+    /// طريقة حساب السعر (بالساعة، اليوم، الأسبوع، الشهر)
+    /// Pricing calculation method (Hourly, Daily, Weekly, Monthly)
+    /// </summary>
+    [Display(Name = "طريقة حساب السعر")]
+    public PricingMethod PricingMethod { get; set; }
+
+    /// <summary>
+    /// عناصر الأقسام المرتبطة بالوحدة
+    /// Section items associated with the unit
+    /// </summary>
+    // Legacy SectionItems removed
+
+} namespace YemenBooking.Core.Entities;
+
+using System;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+
+/// <summary>
+/// كيان الإتاحة للوحدة
+/// Unit availability entity
+/// </summary>
+[Display(Name = "كيان إتاحة الوحدة")]
+public class UnitAvailability : BaseEntity<Guid>
+{
+    /// <summary>
+    /// معرف الوحدة
+    /// Unit identifier
+    /// </summary>
+    [Display(Name = "معرف الوحدة")]
+    public Guid UnitId { get; set; }
+    public virtual Unit Unit { get; set; }
+
+    /// <summary>
+    /// تاريخ ووقت البداية
+    /// Start date and time
+    /// </summary>
+    [Display(Name = "تاريخ ووقت البداية")]
+    public DateTime StartDate { get; set; }
+
+    /// <summary>
+    /// تاريخ ووقت النهاية
+    /// End date and time
+    /// </summary>
+    [Display(Name = "تاريخ ووقت النهاية")]
+    public DateTime EndDate { get; set; }
+
+    /// <summary>
+    /// حالة الإتاحة
+    /// Availability status
+    /// </summary>
+    [Display(Name = "حالة الإتاحة")]
+    public string Status { get; set; } = null!;
+
+    /// <summary>
+    /// سبب عدم الإتاحة
+    /// Unavailability reason
+    /// </summary>
+    [Display(Name = "سبب عدم الإتاحة")]
+    public string? Reason { get; set; }
+
+    /// <summary>
+    /// ملاحظات
+    /// Notes
+    /// </summary>
+    [Display(Name = "ملاحظات")]
+    public string? Notes { get; set; }
+
+    /// <summary>
+    /// معرف الحجز المرتبط بالتجاوز (اختياري)
+    /// Booking identifier for related block
+    /// </summary>
+    public Guid? BookingId { get; set; }
+
+    /// <summary>
+    /// الكيان الحجز المرتبط بهذا التجاوز
+    /// Navigation to booking entity
+    /// </summary>
+    public virtual Booking? Booking { get; set; }
+} using System;
+using YemenBooking.Core.Interfaces;
+using System.ComponentModel.DataAnnotations;
+
+namespace YemenBooking.Core.Entities;
+
+/// <summary>
+/// كيان قيم الحقول للوحدات
+/// UnitFieldValue entity representing custom field values on units
+/// </summary>
+[Display(Name = "كيان قيم الحقول للوحدات")]
+public class UnitFieldValue : BaseEntity<Guid>, IFieldValue
+{
+    /// <summary>
+    /// معرف الوحدة
+    /// Unit identifier
+    /// </summary>
+    [Display(Name = "معرف الوحدة")]
+    public Guid UnitId { get; set; }
+
+    /// <summary>
+    /// معرف حقل نوع الوحدة
+    /// Property type field identifier
+    /// </summary>
+    [Display(Name = "معرف حقل نوع الوحدة")]
+    public Guid UnitTypeFieldId { get; set; }
+
+    /// <summary>
+    /// قيمة الحقل
+    /// Field value
+    /// </summary>
+    [Display(Name = "قيمة الحقل")]
+    public string FieldValue { get; set; } = string.Empty;
+
+    /// <summary>
+    /// الوحدة المرتبطة
+    /// Unit associated
+    /// </summary>
+    [Display(Name = "الوحدة المرتبطة")]
+    public virtual Unit? Unit { get; set; }
+
+    /// <summary>
+    /// الحقل المرتبط
+    /// Property type field associated
+    /// </summary>
+    [Display(Name = "الحقل المرتبط")]
+    public virtual UnitTypeField? UnitTypeField { get; set; }
+} namespace YemenBooking.Core.Entities;
+
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+
+/// <summary>
+/// كيان نوع الوحدة
+/// Unit Type entity
+/// </summary>
+[Display(Name = "كيان نوع الوحدة")]
+public class UnitType : BaseEntity<Guid>
+{
+    /// <summary>
+    /// وصف نوع الوحدة
+    /// Description of the unit type
+    /// </summary>
+    [Display(Name = "وصف نوع الوحدة")]
+    public string Description { get; set; }
+
+    /// <summary>
+    /// قواعد التسعير الافتراضية (JSON)
+    /// Default pricing rules (JSON)
+    /// </summary>
+    [Display(Name = "قواعد التسعير الافتراضية")]
+    public string DefaultPricingRules { get; set; }
+
+    /// <summary>
+    /// معرف نوع الكيان
+    /// Property type identifier
+    /// </summary>
+    [Display(Name = "معرف نوع الكيان")]
+    public Guid PropertyTypeId { get; set; }
+
+    /// <summary>
+    /// اسم نوع الوحدة (غرفة مزدوجة، جناح، شاليه كامل، فيلا)
+    /// Unit type name (Double Room, Suite, Full Chalet, Villa)
+    /// </summary>
+    [Display(Name = "اسم نوع الوحدة")]
+    public string Name { get; set; }
+
+    /// <summary>
+    /// الحد الأقصى للسعة
+    /// Maximum capacity
+    /// </summary>
+    [Display(Name = "الحد الأقصى للسعة")]
+    public int MaxCapacity { get; set; }
+
+    /// <summary>
+    /// ايقونة لنوع الوحدة
+    /// Icon for the unit type
+    /// </summary>
+    public string Icon { get; set; } = string.Empty;
+
+    /// <summary>
+    /// هذا النوع يحتوي على بالغين
+    /// This type has adults
+    /// </summary>
+    public bool IsHasAdults { get; set; } = false;
+
+    /// <summary>
+    /// هذا النوع يحتوي على أطفال
+    /// This type has children
+    /// </summary>
+    public bool IsHasChildren { get; set; } = false;
+
+    /// <summary>
+    /// هذا النوع يحتوي على أيام متعددة
+    /// This type has multiple days
+    /// </summary>
+    public bool IsMultiDays { get; set; } = false;
+
+    /// <summary>
+    /// هذا النوع يحتاج لتحديد الساعة
+    /// This type requires determining the hour
+    /// </summary>
+    public bool IsRequiredToDetermineTheHour { get; set; } = false;
+
+    /// <summary>
+    /// نوع الكيان المرتبط
+    /// Property type associated
+    /// </summary>
+    [Display(Name = "نوع الكيان المرتبط")]
+    public virtual PropertyType PropertyType { get; set; }
+
+    /// <summary>
+    /// الوحدات المرتبطة بهذا النوع
+    /// Units associated with this type
+    /// </summary>
+    [Display(Name = "الوحدات المرتبطة بهذا النوع")]
+    public virtual ICollection<Unit> Units { get; set; } = new List<Unit>();
+    
+    /// <summary>
+    /// الحقول الديناميكية لنوع الوحدة
+    /// Dynamic fields associated with this unit type
+    /// </summary>
+    [Display(Name = "الحقول الديناميكية لنوع الوحدة")]
+    public virtual ICollection<UnitTypeField> UnitTypeFields { get; set; } = new List<UnitTypeField>();
+
+    /// <summary>
+    /// مجموعات الحقول لنوع الوحدة
+    /// Field groups associated with this unit type
+    /// </summary>
+    [Display(Name = "مجموعات الحقول لنوع الوحدة")]
+    public virtual ICollection<FieldGroup> FieldGroups { get; set; } = new List<FieldGroup>();
+
+    /// <summary>
+    /// الفلاتر المخصصة لنوع الوحدة
+    /// Search filters associated with this unit type fields
+    /// </summary>
+    [Display(Name = "الفلاتر المخصصة لنوع الوحدة")]
+    public virtual ICollection<SearchFilter> SearchFilters { get; set; } = new List<SearchFilter>();
+
+} using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+
+namespace YemenBooking.Core.Entities;
+
+/// <summary>
+/// كيان حقول نوع الكيان
+/// UnitTypeField entity representing dynamic fields for a property type
+/// </summary>
+[Display(Name = "كيان حقول نوع الكيان")]
+public class UnitTypeField : BaseEntity<Guid>
+{
+    /// <summary>
+    /// معرف نوع الكيان
+    /// Property type identifier
+    /// </summary>
+    [Display(Name = "معرف نوع الكيان")]
+    public Guid UnitTypeId { get; set; }
+
+    /// <summary>
+    /// معرف نوع الحقل
+    /// Field type identifier
+    /// </summary>
+    [Display(Name = "معرف نوع الحقل")]
+    public string FieldTypeId { get; set; }
+
+    /// <summary>
+    /// اسم الحقل
+    /// Field name
+    /// </summary>
+    [Display(Name = "اسم الحقل")]
+    public string FieldName { get; set; }
+
+    /// <summary>
+    /// الاسم المعروض للحقل
+    /// Display name of the field
+    /// </summary>
+    [Display(Name = "الاسم المعروض للحقل")]
+    public string DisplayName { get; set; }
+
+    /// <summary>
+    /// وصف الحقل
+    /// Field description
+    /// </summary>
+    [Display(Name = "وصف الحقل")]
+    public string Description { get; set; }
+
+    /// <summary>
+    /// خيارات الحقل في حالة select أو multi_select (JSON)
+    /// Field options in case of select or multi-select
+    /// </summary>
+    [Display(Name = "خيارات الحقل")]
+    public string FieldOptions { get; set; }
+
+    /// <summary>
+    /// قواعد التحقق المخصصة (JSON)
+    /// Custom validation rules
+    /// </summary>
+    [Display(Name = "قواعد التحقق المخصصة")]
+    public string ValidationRules { get; set; }
+
+    /// <summary>
+    /// هل الحقل إلزامي
+    /// Is required
+    /// </summary>
+    [Display(Name = "هل الحقل إلزامي")]
+    public bool IsRequired { get; set; }
+
+    /// <summary>
+    /// هل يظهر في الفلترة
+    /// Is searchable
+    /// </summary>
+    [Display(Name = "هل يظهر في الفلترة")]
+    public bool IsSearchable { get; set; }
+
+    /// <summary>
+    /// هل يظهر للعملاء
+    /// Is public
+    /// </summary>
+    [Display(Name = "هل يظهر للعملاء")]
+    public bool IsPublic { get; set; }
+
+    /// <summary>
+    /// ترتيب الحقل
+    /// Sort order of the field
+    /// </summary>
+    [Display(Name = "ترتيب الحقل")]
+    public int SortOrder { get; set; }
+
+    /// <summary>
+    /// فئة الحقل (basic, amenities, location, pricing)
+    /// Category of the field
+    /// </summary>
+    [Display(Name = "فئة الحقل")]
+    public string Category { get; set; }
+
+    /// <summary>
+    /// نوع الوحدة المرتبط
+    /// Unit type associated
+    /// </summary>
+    [Display(Name = "نوع الوحدة المرتبط")]
+    public virtual UnitType UnitType { get; set; }
+
+    /// <summary>
+    /// قيم الحقل للوحدات
+    /// Field values for units
+    /// </summary>
+    [Display(Name = "قيم الحقل للوحدات")]
+    public virtual ICollection<UnitFieldValue> UnitFieldValues { get; set; } = new List<UnitFieldValue>();
+
+    /// <summary>
+    /// انضمامات مجموعات الحقول
+    /// Field group links
+    /// </summary>
+    [Display(Name = "انضمامات مجموعات الحقول")]
+    public virtual ICollection<FieldGroupField> FieldGroupFields { get; set; } = new List<FieldGroupField>();
+
+    /// <summary>
+    /// الفلاتر المرتبطة بهذا الحقل
+    /// Search filters associated with this field
+    /// </summary>
+    [Display(Name = "الفلاتر المرتبطة بهذا الحقل")]
+    public virtual ICollection<SearchFilter> SearchFilters { get; set; } = new List<SearchFilter>();
+
+    /// <summary>
+    /// يحدد ما إذا كان الحقل مخصصاً للوحدات
+    /// Indicates if the field applies to units
+    /// </summary>
+    [Display(Name = "مخصص للوحدات")]
+    public bool IsForUnits { get; set; }
+    /// <summary>
+    /// هل يظهر في الكروت؟
+    /// Show in cards
+    /// </summary>
+    [Display(Name = "هل يظهر في الكروت؟")]
+    public bool ShowInCards { get; set; }
+
+    /// <summary>
+    /// هل الحقل فلترة أساسية؟
+    /// Is primary filter
+    /// </summary>
+    [Display(Name = "هل الحقل فلترة أساسية؟")]
+    public bool IsPrimaryFilter { get; set; }
+
+    /// <summary>
+    /// أولوية الترتيب
+    /// Order priority
+    /// </summary>
+    [Display(Name = "أولوية الترتيب")]
+    public int Priority { get; set; }
+} namespace YemenBooking.Core.Entities;
+
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+
+/// <summary>
+/// كيان المستخدم
+/// User entity
+/// </summary>
+[Display(Name = "كيان المستخدم")]
+public class User : BaseEntity<Guid>
+{
+    /// <summary>
+    /// اسم المستخدم
+    /// User name
+    /// </summary>
+    [Display(Name = "اسم المستخدم")]
+    public string Name { get; set; }
+
+    
+    /// <summary>
+    /// البريد الإلكتروني للمستخدم
+    /// User email
+    /// </summary>
+    [Display(Name = "البريد الإلكتروني للمستخدم")]
+    public string Email { get; set; }
+    
+    /// <summary>
+    /// كلمة المرور للمستخدم
+    /// User password
+    /// </summary>
+    [Display(Name = "كلمة المرور للمستخدم")]
+    public string Password { get; set; }
+    
+    /// <summary>
+    /// رقم هاتف المستخدم
+    /// User phone number
+    /// </summary>
+    [Display(Name = "رقم هاتف المستخدم")]
+    public string Phone { get; set; }
+    
+    /// <summary>
+    /// صورة المستخدم
+    /// User name
+    /// </summary>
+    [Display(Name = "صورة المستخدم")]
+    public string ProfileImage { get; set; }
+    
+    /// <summary>
+    /// رابط صورة الملف الشخصي (متوافق مع معالجات الموبايل)
+    /// Profile image URL (alias for ProfileImage)
+    /// </summary>
+    public string ProfileImageUrl
+    {
+        get => ProfileImage;
+        set => ProfileImage = value;
+    }
+
+    /// <summary>
+    /// تاريخ إنشاء حساب المستخدم
+    /// User account creation date
+    /// </summary>
+    [Display(Name = "تاريخ إنشاء حساب المستخدم")]
+    public DateTime CreatedAt { get; set; }
+    
+    /// <summary>
+    /// حالة تفعيل الحساب
+    /// Account activation status
+    /// </summary>
+    [Display(Name = "حالة تفعيل الحساب")]
+    public bool IsActive { get; set; }
+
+    /// <summary>
+    /// تاريخ آخر تسجيل دخول
+    /// Last login date
+    /// </summary>
+    [Display(Name = "تاريخ آخر تسجيل دخول")]
+    public DateTime? LastLoginDate { get; set; }
+
+    /// <summary>
+    /// إجمالي المبلغ المنفق
+    /// Total amount spent
+    /// </summary>
+    [Display(Name = "إجمالي المبلغ المنفق")]
+    public decimal TotalSpent { get; set; } = 0;
+
+    /// <summary>
+    /// فئة الولاء (برونزي، فضي، ذهبي)
+    /// Loyalty tier (Bronze, Silver, Gold)
+    /// </summary>
+    [Display(Name = "فئة الولاء")]
+    public string? LoyaltyTier { get; set; }
+    
+    /// <summary>
+    /// الأدوار المرتبطة بالمستخدم
+    /// Roles associated with the user
+    /// </summary>
+    [Display(Name = "الأدوار المرتبطة بالمستخدم")]
+    public virtual ICollection<UserRole> UserRoles { get; set; } = new List<UserRole>();
+    
+    /// <summary>
+    /// الكيانات المملوكة من قبل المستخدم
+    /// Properties owned by the user
+    /// </summary>
+    [Display(Name = "الكيانات المملوكة من قبل المستخدم")]
+    public virtual ICollection<Property> Properties { get; set; } = new List<Property>();
+    
+    /// <summary>
+    /// الحجوزات التي قام بها المستخدم
+    /// Bookings made by the user
+    /// </summary>
+    [Display(Name = "الحجوزات التي قام بها المستخدم")]
+    public virtual ICollection<Booking> Bookings { get; set; } = new List<Booking>();
+    
+    /// <summary>
+    /// الوظائف التي يشغلها المستخدم كموظف
+    /// Staff positions held by the user
+    /// </summary>
+    [Display(Name = "الوظائف التي يشغلها المستخدم كموظف")]
+    public virtual ICollection<Staff> StaffPositions { get; set; } = new List<Staff>();
+
+    /// <summary>
+    /// هل تم تأكيد البريد الإلكتروني
+    /// Email confirmed status
+    /// </summary>
+    [Display(Name = "هل تم تأكيد البريد الإلكتروني")]
+    public bool EmailConfirmed { get; set; } = false;
+    
+    /// <summary>
+    /// هل تم التحقق من البريد الإلكتروني
+    /// Is email verified
+    /// </summary>
+    [Display(Name = "هل تم التحقق من البريد الإلكتروني")]
+    public bool IsEmailVerified { get; set; } = false;
+    
+    /// <summary>
+    /// تاريخ التحقق من البريد الإلكتروني
+    /// Email verification date
+    /// </summary>
+    [Display(Name = "تاريخ التحقق من البريد الإلكتروني")]
+    public DateTime? EmailVerifiedAt { get; set; }
+
+    /// <summary>
+    /// رمز تأكيد البريد الإلكتروني
+    /// Email confirmation token
+    /// </summary>
+    [Display(Name = "رمز تأكيد البريد الإلكتروني")]
+    public string? EmailConfirmationToken { get; set; }
+
+    /// <summary>
+    /// تاريخ انتهاء صلاحية رمز تأكيد البريد الإلكتروني
+    /// Expiration date of the email confirmation token
+    /// </summary>
+    [Display(Name = "تاريخ انتهاء صلاحية رمز تأكيد البريد الإلكتروني")]
+    public DateTime? EmailConfirmationTokenExpires { get; set; }
+
+    /// <summary>
+    /// رمز إعادة تعيين كلمة المرور
+    /// Password reset token
+    /// </summary>
+    [Display(Name = "رمز إعادة تعيين كلمة المرور")]
+    public string? PasswordResetToken { get; set; }
+
+    /// <summary>
+    /// تاريخ انتهاء صلاحية رمز إعادة تعيين كلمة المرور
+    /// Expiration date of the password reset token
+    /// </summary>
+    [Display(Name = "تاريخ انتهاء صلاحية رمز إعادة تعيين كلمة المرور")]
+    public DateTime? PasswordResetTokenExpires { get; set; }
+
+    /// <summary>
+    /// إعدادات المستخدم بصيغة JSON
+    /// User settings in JSON format
+    /// </summary>
+    [Display(Name = "إعدادات المستخدم بصيغة JSON")]
+    public string SettingsJson { get; set; } = "{}";
+
+    /// <summary>
+    /// قائمة المفضلة للمستخدم بصيغة JSON
+    /// User favorites list in JSON format
+    /// </summary>
+    [Display(Name = "قائمة المفضلة للمستخدم بصيغة JSON")]
+    public string FavoritesJson { get; set; } = "[]";
+
+    /// <summary>
+    /// البلاغات التي قام بها المستخدم
+    /// Reports filed by the user
+    /// </summary>
+    [Display(Name = "البلاغات التي قام بها المستخدم")]
+    public virtual ICollection<Report> ReportsMade { get; set; } = new List<Report>();
+
+    /// <summary>
+    /// البلاغات المقدمة ضد المستخدم
+    /// Reports filed against the user
+    /// </summary>
+    [Display(Name = "البلاغات المقدمة ضد المستخدم")]
+    public virtual ICollection<Report> ReportsAgainstUser { get; set; } = new List<Report>();
+} namespace YemenBooking.Core.Entities;
+
+using System;
+using System.ComponentModel.DataAnnotations;
+
+/// <summary>
+/// كيان دور المستخدم
+/// User Role entity
+/// </summary>
+[Display(Name = "كيان دور المستخدم")]
+public class UserRole : BaseEntity<Guid>
+{
+    /// <summary>
+    /// معرف المستخدم
+    /// User identifier
+    /// </summary>
+    [Display(Name = "معرف المستخدم")]
+    public Guid UserId { get; set; }
+    
+    /// <summary>
+    /// معرف الدور
+    /// Role identifier
+    /// </summary>
+    [Display(Name = "معرف الدور")]
+    public Guid RoleId { get; set; }
+    
+    /// <summary>
+    /// تاريخ التخصيص
+    /// Assignment date
+    /// </summary>
+    [Display(Name = "تاريخ التخصيص")]
+    public DateTime AssignedAt { get; set; }
+    
+    /// <summary>
+    /// المستخدم المرتبط بالدور
+    /// User associated with the role
+    /// </summary>
+    [Display(Name = "المستخدم المرتبط بالدور")]
+    public virtual User User { get; set; }
+    
+    /// <summary>
+    /// الدور المرتبط بالمستخدم
+    /// Role associated with the user
+    /// </summary>
+    [Display(Name = "الدور المرتبط بالمستخدم")]
+    public virtual Role Role { get; set; }
+} using System.ComponentModel.DataAnnotations;
+
+namespace YemenBooking.Core.Entities;
+
+/// <summary>
+/// كيان إعدادات المستخدم
+/// User settings entity
+/// </summary>
+[Display(Name = "إعدادات المستخدم")]
+public class UserSettings : BaseEntity<Guid>
+{
+    /// <summary>
+    /// معرف المستخدم
+    /// User ID
+    /// </summary>
+    [Display(Name = "معرف المستخدم")]
+    public Guid UserId { get; set; }
+
+    /// <summary>
+    /// اللغة المفضلة
+    /// Preferred language
+    /// </summary>
+    [Display(Name = "اللغة المفضلة")]
+    [MaxLength(10)]
+    public string? PreferredLanguage { get; set; } = "ar";
+
+    /// <summary>
+    /// العملة المفضلة
+    /// Preferred currency
+    /// </summary>
+    [Display(Name = "العملة المفضلة")]
+    [MaxLength(3)]
+    public string? PreferredCurrency { get; set; } = "YER";
+
+    /// <summary>
+    /// المنطقة الزمنية
+    /// Time zone
+    /// </summary>
+    [Display(Name = "المنطقة الزمنية")]
+    [MaxLength(50)]
+    public string? TimeZone { get; set; } = "Asia/Aden";
+
+    /// <summary>
+    /// تفعيل الوضع الليلي
+    /// Dark mode enabled
+    /// </summary>
+    [Display(Name = "الوضع الليلي")]
+    public bool DarkMode { get; set; } = false;
+
+    /// <summary>
+    /// تلقي إشعارات الحجوزات
+    /// Booking notifications enabled
+    /// </summary>
+    [Display(Name = "إشعارات الحجوزات")]
+    public bool BookingNotifications { get; set; } = true;
+
+    /// <summary>
+    /// تلقي إشعارات العروض
+    /// Promotional notifications enabled
+    /// </summary>
+    [Display(Name = "إشعارات العروض")]
+    public bool PromotionalNotifications { get; set; } = true;
+
+    /// <summary>
+    /// تلقي إشعارات البريد الإلكتروني
+    /// Email notifications enabled
+    /// </summary>
+    [Display(Name = "إشعارات البريد الإلكتروني")]
+    public bool EmailNotifications { get; set; } = true;
+
+    /// <summary>
+    /// تلقي إشعارات الرسائل النصية
+    /// SMS notifications enabled
+    /// </summary>
+    [Display(Name = "إشعارات الرسائل النصية")]
+    public bool SmsNotifications { get; set; } = false;
+
+    /// <summary>
+    /// تلقي إشعارات دفع
+    /// Push notifications enabled
+    /// </summary>
+    [Display(Name = "إشعارات الدفع")]
+    public bool PushNotifications { get; set; } = true;
+
+    /// <summary>
+    /// إعدادات إضافية (JSON)
+    /// Additional settings (JSON)
+    /// </summary>
+    [Display(Name = "إعدادات إضافية")]
+    public Dictionary<string, object>? AdditionalSettings { get; set; }
+
+    /// <summary>
+    /// المستخدم المرتبط
+    /// Related user
+    /// </summary>
+    public virtual User? User { get; set; }
+}

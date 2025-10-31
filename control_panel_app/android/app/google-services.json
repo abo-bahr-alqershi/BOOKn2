@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "799150074342",
+    "project_id": "bookncp-51a35",
+    "storage_bucket": "bookncp-51a35.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:799150074342:android:a179254dbbfe4a2ce58e27",
+        "android_client_info": {
+          "package_name": "com.bookncp.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDKdpo8snbClcZf33zyGa3Gu1YP4GaxR4k"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "90807496145",
+    "project_id": "yemen-booking-c66e0",
+    "storage_bucket": "yemen-booking-c66e0.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:90807496145:android:04ac391e693b1665b244f0",
+        "android_client_info": {
+          "package_name": "com.yemenbooking.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBvDi3Wq3AkjGuAGiR-V8RLsxV8iuiQMlE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

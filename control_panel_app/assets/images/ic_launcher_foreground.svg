@@ -1,0 +1,119 @@
+<svg width="108" height="108" viewBox="0 0 108 108" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Foreground مع Safe Zone (المحتوى في المركز بنسبة 72% من الحجم الكلي) -->
+  <g transform="translate(15, 15) scale(0.72, 0.72)">
+    <defs>
+      <!-- Royal Blue Gradient -->
+      <linearGradient id="royalGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" style="stop-color:#1E3A8A;stop-opacity:1" />
+        <stop offset="50%" style="stop-color:#2563EB;stop-opacity:1" />
+        <stop offset="100%" style="stop-color:#60A5FA;stop-opacity:1" />
+      </linearGradient>
+      
+      <!-- Luxury Gold Accent -->
+      <linearGradient id="goldAccent" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" style="stop-color:#FEF3C7;stop-opacity:1" />
+        <stop offset="50%" style="stop-color:#FCD34D;stop-opacity:1" />
+        <stop offset="100%" style="stop-color:#F59E0B;stop-opacity:1" />
+      </linearGradient>
+      
+      <!-- Metallic Gradient -->
+      <linearGradient id="metallic" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" style="stop-color:#F9FAFB;stop-opacity:1" />
+        <stop offset="25%" style="stop-color:#E5E7EB;stop-opacity:1" />
+        <stop offset="50%" style="stop-color:#F9FAFB;stop-opacity:1" />
+        <stop offset="75%" style="stop-color:#D1D5DB;stop-opacity:1" />
+        <stop offset="100%" style="stop-color:#F3F4F6;stop-opacity:1" />
+      </linearGradient>
+      
+      <!-- Shadow -->
+      <filter id="shadow">
+        <feGaussianBlur in="SourceAlpha" stdDeviation="2"/>
+        <feOffset dx="0" dy="1" result="offsetblur"/>
+        <feFlood flood-color="#0F172A" flood-opacity="0.2"/>
+        <feComposite in2="offsetblur" operator="in"/>
+        <feMerge>
+          <feMergeNode/>
+          <feMergeNode in="SourceGraphic"/>
+        </feMerge>
+      </filter>
+    </defs>
+    
+    <!-- Main Circle -->
+    <g filter="url(#shadow)">
+      <circle cx="54" cy="54" r="37" fill="url(#royalGradient)"/>
+      <circle cx="54" cy="54" r="37" fill="url(#royalGradient)" opacity="0.9"/>
+      <ellipse cx="54" cy="44" rx="28" ry="15" fill="url(#metallic)" opacity="0.2"/>
+      <circle cx="54" cy="54" r="37" fill="none" stroke="url(#goldAccent)" stroke-width="0.5" opacity="0.6"/>
+    </g>
+    
+    <!-- B Logo -->
+    <g transform="translate(54, 54)">
+      <!-- Shadow -->
+      <path d="
+        M -13 -20
+        L -13 20
+        L 6 20
+        Q 18 20, 18 11
+        Q 18 5, 13 2.5
+        Q 17 0, 17 -7.5
+        Q 17 -20, 5 -20
+        L -13 -20
+        Z
+      " 
+      fill="#000000" 
+      opacity="0.15"
+      transform="translate(1, 1)"/>
+      
+      <!-- Main B -->
+      <path d="
+        M -13 -20
+        L -13 20
+        L 6 20
+        Q 18 20, 18 11
+        Q 18 5, 13 2.5
+        Q 17 0, 17 -7.5
+        Q 17 -20, 5 -20
+        L -13 -20
+        Z
+        
+        M -4 -14
+        L 4 -14
+        Q 9.5 -14, 9.5 -8.5
+        Q 9.5 -3, 4 -3
+        L -4 -3
+        Z
+        
+        M -4 3
+        L 5 3
+        Q 10.5 3, 10.5 11
+        Q 10.5 14, 5 14
+        L -4 14
+        Z
+      " 
+      fill="url(#metallic)" 
+      stroke="url(#goldAccent)" 
+      stroke-width="0.3"
+      stroke-linejoin="round"/>
+      
+      <!-- Highlight -->
+      <path d="
+        M -13 -20
+        L -13 -18
+        L 5 -18
+        Q 15 -18, 15 -7.5
+        Q 15 -5, 14 -4
+      " 
+      fill="none" 
+      stroke="rgba(255,255,255,0.4)" 
+      stroke-width="0.5"
+      stroke-linecap="round"/>
+      
+      <!-- Badge -->
+      <g transform="translate(9, -10)">
+        <circle cx="0" cy="0" r="4" fill="url(#goldAccent)" opacity="0.9"/>
+        <circle cx="0" cy="0" r="4" fill="none" stroke="#FFFFFF" stroke-width="0.2" opacity="0.8"/>
+        <text x="0" y="1.5" font-family="Arial, sans-serif" font-size="4" font-weight="bold" fill="#0F172A" text-anchor="middle">★</text>
+      </g>
+    </g>
+  </g>
+</svg>

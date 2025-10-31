@@ -1,0 +1,65 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Enterprise Gradient -->
+    <linearGradient id="enterpriseGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0F172A;stop-opacity:1" />
+      <stop offset="25%" style="stop-color:#1E40AF;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#3B82F6;stop-opacity:1" />
+      <stop offset="75%" style="stop-color:#10B981;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#FCD34D;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Royal Blue Gradient -->
+    <linearGradient id="royalGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1E3A8A;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#2563EB;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#60A5FA;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Metallic Gradient -->
+    <linearGradient id="metallic" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#F9FAFB;stop-opacity:1" />
+      <stop offset="25%" style="stop-color:#E5E7EB;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#F9FAFB;stop-opacity:1" />
+      <stop offset="75%" style="stop-color:#D1D5DB;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#F3F4F6;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Main Circle -->
+  <circle cx="256" cy="256" r="175" fill="url(#royalGradient)"/>
+  
+  <!-- Letter B -->
+  <path d="
+    M 196 161
+    L 196 351
+    L 286 351
+    Q 341 351, 341 306
+    Q 341 281, 316 268
+    Q 336 256, 336 221
+    Q 336 161, 281 161
+    L 196 161
+    Z
+    
+    M 236 191
+    L 276 191
+    Q 301 191, 301 216
+    Q 301 241, 276 241
+    L 236 241
+    Z
+    
+    M 236 271
+    L 281 271
+    Q 306 271, 306 306
+    Q 306 321, 281 321
+    L 236 321
+    Z
+  " 
+  fill="url(#metallic)" 
+  stroke="rgba(255,255,255,0.8)" 
+  stroke-width="1.5"/>
+  
+  <!-- Gold Badge -->
+  <circle cx="331" cy="181" r="25" fill="#FCD34D" opacity="0.9"/>
+  <text x="331" y="190" font-size="20" fill="#0F172A" text-anchor="middle">★</text>
+</svg>

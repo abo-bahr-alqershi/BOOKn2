@@ -1,0 +1,56 @@
+[
+  {
+    "Code": "YER",
+    "ArabicCode": "\u0631.\u064A",
+    "Name": "Yemeni Riyal",
+    "ArabicName": "\u0631\u064A\u0627\u0644 \u064A\u0645\u0646\u064A",
+    "IsDefault": true,
+    "ExchangeRate": null,
+    "LastUpdated": null
+  },
+  {
+    "Code": "USD",
+    "ArabicCode": "$",
+    "Name": "US Dollar",
+    "ArabicName": "\u062F\u0648\u0644\u0627\u0631 \u0623\u0645\u0631\u064A\u0643\u064A",
+    "IsDefault": false,
+    "ExchangeRate": 250,
+    "LastUpdated": "2025-07-17T00:00:00Z"
+  },
+  {
+    "Code": "EUR",
+    "ArabicCode": "\u20AC",
+    "Name": "Euro",
+    "ArabicName": "\u064A\u0648\u0631\u0648",
+    "IsDefault": false,
+    "ExchangeRate": 280,
+    "LastUpdated": "2025-07-17T00:00:00Z"
+  },
+  {
+    "Code": "AED",
+    "ArabicCode": "\u062F.\u0625",
+    "Name": "United Arab Emirates Dirham",
+    "ArabicName": "\u062F\u0631\u0647\u0645 \u0625\u0645\u0627\u0631\u0627\u062A\u064A",
+    "IsDefault": false,
+    "ExchangeRate": 68,
+    "LastUpdated": "2025-07-17T00:00:00Z"
+  },
+  {
+    "Code": "RSF",
+    "ArabicCode": "sdsfcsc",
+    "Name": "dvrdfv",
+    "ArabicName": "dfv sd",
+    "IsDefault": false,
+    "ExchangeRate": 1200,
+    "LastUpdated": "2025-07-21T14:11:31.9107844Z"
+  },
+  {
+    "Code": "dsd",
+    "ArabicCode": "dsdsd",
+    "Name": "sD",
+    "ArabicName": "",
+    "IsDefault": false,
+    "ExchangeRate": 25,
+    "LastUpdated": "2025-07-21T15:32:05.9324501Z"
+  }
+]

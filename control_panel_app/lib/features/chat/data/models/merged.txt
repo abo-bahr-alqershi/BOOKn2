@@ -1,0 +1,543 @@
+----- FILE: ./attachment_model.dart -----
+import '../../domain/entities/attachment.dart';
+
+class AttachmentModel extends Attachment {
+  const AttachmentModel({
+    required super.id,
+    required super.conversationId,
+    required super.fileName,
+    required super.contentType,
+    required super.fileSize,
+    required super.filePath,
+    required super.fileUrl,
+    required super.url,
+    required super.uploadedBy,
+    required super.createdAt,
+    super.thumbnailUrl,
+    super.metadata,
+    super.duration,
+    super.downloadProgress,
+  });
+
+  factory AttachmentModel.fromJson(Map<String, dynamic> json) {
+    String resolveContentType() {
+      final ct = (json['mime_type'] ?? json['contentType'] ?? '').toString();
+      if (ct.isNotEmpty) return ct;
+      // Infer from file name or url when backend didn't provide it
+      final name = (json['file_name'] ?? json['fileName'] ?? '').toString();
+      final url = (json['file_url'] ?? json['url'] ?? '').toString();
+      String path = name.isNotEmpty ? name : url;
+      path = path.toLowerCase();
+      if (path.endsWith('.m4a') || path.endsWith('.aac')) return 'audio/mp4';
+      if (path.endsWith('.mp3')) return 'audio/mpeg';
+      if (path.endsWith('.wav')) return 'audio/wav';
+      if (path.endsWith('.ogg') || path.endsWith('.opus')) return 'audio/ogg';
+      if (path.endsWith('.mp4') || path.contains('video')) return 'video/mp4';
+      if (path.endsWith('.mov') || path.endsWith('.mkv') || path.endsWith('.webm')) return 'video/mp4';
+      if (path.endsWith('.jpg') || path.endsWith('.jpeg')) return 'image/jpeg';
+      if (path.endsWith('.png')) return 'image/png';
+      if (path.endsWith('.gif')) return 'image/gif';
+      if (path.endsWith('.webp')) return 'image/webp';
+      return 'application/octet-stream';
+    }
+
+    return AttachmentModel(
+      id: json['attachment_id'] ?? json['id'] ?? '',
+      conversationId: json['conversationId'] ?? json['conversation_id'] ?? '',
+      fileName: json['file_name'] ?? json['fileName'] ?? '',
+      contentType: resolveContentType(),
+      fileSize: json['file_size'] ?? json['fileSize'] ?? 0,
+      filePath: json['file_path'] ?? json['filePath'] ?? '',
+      fileUrl: json['file_url'] ??
+          '/api/common/chat/attachments/${json['attachment_id'] ?? json['id']}',
+      url: json['url'] ??
+          json['file_url'] ??
+          '/api/common/chat/attachments/${json['attachment_id'] ?? json['id']}',
+      uploadedBy: json['uploaded_by'] ?? json['uploadedBy'] ?? '',
+      createdAt: DateTime.parse(
+          json['uploaded_at'] ?? json['created_at'] ?? json['createdAt']),
+      thumbnailUrl: json['thumbnail_url'] ?? json['thumbnailUrl'],
+      metadata: json['metadata'],
+      duration: _parseDurationSeconds(
+          json['duration'] ?? json['video_duration'] ?? json['audio_duration']),
+      downloadProgress: json['downloadProgress']?.toDouble(),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'attachment_id': id,
+      'conversation_id': conversationId,
+      'file_name': fileName,
+      'mime_type': contentType,
+      'file_size': fileSize,
+      'file_path': filePath,
+      'file_url': fileUrl,
+      'url': url,
+      'uploaded_by': uploadedBy,
+      'uploaded_at': createdAt.toIso8601String(),
+      if (thumbnailUrl != null) 'thumbnail_url': thumbnailUrl,
+      if (metadata != null) 'metadata': metadata,
+      if (duration != null) 'duration': duration,
+      if (downloadProgress != null) 'downloadProgress': downloadProgress,
+    };
+  }
+
+  factory AttachmentModel.fromEntity(Attachment attachment) {
+    return AttachmentModel(
+      id: attachment.id,
+      conversationId: attachment.conversationId,
+      fileName: attachment.fileName,
+      contentType: attachment.contentType,
+      fileSize: attachment.fileSize,
+      filePath: attachment.filePath,
+      fileUrl: attachment.fileUrl,
+      url: attachment.url,
+      uploadedBy: attachment.uploadedBy,
+      createdAt: attachment.createdAt,
+      thumbnailUrl: attachment.thumbnailUrl,
+      metadata: attachment.metadata,
+      duration: attachment.duration,
+      downloadProgress: attachment.downloadProgress,
+    );
+  }
+}
+
+int? _parseDurationSeconds(dynamic value) {
+  if (value == null) return null;
+  if (value is int) return value;
+  if (value is String) {
+    // Try to parse ISO8601 duration or HH:mm:ss or seconds string
+    final s = value.trim();
+    if (RegExp(r'^\d+$').hasMatch(s)) return int.tryParse(s);
+    // HH:mm:ss
+    final parts = s.split(':');
+    if (parts.length == 3) {
+      final h = int.tryParse(parts[0]) ?? 0;
+      final m = int.tryParse(parts[1]) ?? 0;
+      final sec = int.tryParse(parts[2]) ?? 0;
+      return h * 3600 + m * 60 + sec;
+    }
+    if (parts.length == 2) {
+      final m = int.tryParse(parts[0]) ?? 0;
+      final sec = int.tryParse(parts[1]) ?? 0;
+      return m * 60 + sec;
+    }
+  }
+  return null;
+}
+
+----- FILE: ./chat_settings_model.dart -----
+
+import '../../domain/entities/attachment.dart';
+
+class ChatSettingsModel extends ChatSettings {
+  const ChatSettingsModel({
+    required super.id,
+    required super.userId,
+    super.notificationsEnabled,
+    super.soundEnabled,
+    super.showReadReceipts,
+    super.showTypingIndicator,
+    super.theme,
+    super.fontSize,
+    super.autoDownloadMedia,
+    super.backupMessages,
+  });
+
+  factory ChatSettingsModel.fromJson(Map<String, dynamic> json) {
+    return ChatSettingsModel(
+      id: json['id'] ?? '',
+      userId: json['userId'] ?? json['user_id'] ?? '',
+      notificationsEnabled: json['notificationsEnabled'] ?? json['notifications_enabled'] ?? true,
+      soundEnabled: json['soundEnabled'] ?? json['sound_enabled'] ?? true,
+      showReadReceipts: json['showReadReceipts'] ?? json['show_read_receipts'] ?? true,
+      showTypingIndicator: json['showTypingIndicator'] ?? json['show_typing_indicator'] ?? true,
+      theme: json['theme'] ?? 'auto',
+      fontSize: json['fontSize'] ?? json['font_size'] ?? 'medium',
+      autoDownloadMedia: json['autoDownloadMedia'] ?? json['auto_download_media'] ?? true,
+      backupMessages: json['backupMessages'] ?? json['backup_messages'] ?? false,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'user_id': userId,
+      'notifications_enabled': notificationsEnabled,
+      'sound_enabled': soundEnabled,
+      'show_read_receipts': showReadReceipts,
+      'show_typing_indicator': showTypingIndicator,
+      'theme': theme,
+      'font_size': fontSize,
+      'auto_download_media': autoDownloadMedia,
+      'backup_messages': backupMessages,
+    };
+  }
+}
+----- FILE: ./chat_user_model.dart -----
+import 'package:bookn_cp_app/features/chat/domain/entities/conversation.dart';
+
+class ChatUserModel extends ChatUser {
+  const ChatUserModel({
+    required super.id,
+    required super.name,
+    required super.email,
+    super.phone,
+    super.profileImage,
+    required super.userType,
+    required super.status,
+    super.lastSeen,
+    super.propertyId,
+    required super.isOnline,
+  });
+
+  factory ChatUserModel.fromJson(Map<String, dynamic> json) {
+    return ChatUserModel(
+      id: json['user_id'] ?? json['userId'] ?? json['id'] ?? '',
+      name: json['name'] ?? '',
+      email: json['email'] ?? '',
+      phone: json['phone'],
+      profileImage: json['profile_image'] ?? json['profileImage'],
+      userType: json['user_type'] ?? json['userType'] ?? 'customer',
+      status: json['status'] ?? 'offline',
+      lastSeen: json['last_seen'] != null || json['lastSeen'] != null
+          ? DateTime.parse(json['last_seen'] ?? json['lastSeen'])
+          : null,
+      propertyId: json['property_id'] ?? json['propertyId'],
+      isOnline: json['is_online'] ?? json['isOnline'] ?? false,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'user_id': id,
+      'name': name,
+      'email': email,
+      if (phone != null) 'phone': phone,
+      if (profileImage != null) 'profile_image': profileImage,
+      'user_type': userType,
+      'status': status,
+      if (lastSeen != null) 'last_seen': lastSeen!.toIso8601String(),
+      if (propertyId != null) 'property_id': propertyId,
+      'is_online': isOnline,
+    };
+  }
+}
+----- FILE: ./conversation_model.dart -----
+import 'package:bookn_cp_app/features/chat/data/models/chat_user_model.dart';
+
+import '../../domain/entities/conversation.dart';
+import 'message_model.dart';
+
+class ConversationModel extends Conversation {
+  const ConversationModel({
+    required super.id,
+    required super.conversationType,
+    super.title,
+    super.description,
+    super.avatar,
+    required super.createdAt,
+    required super.updatedAt,
+    super.lastMessage,
+    super.unreadCount,
+    super.isArchived,
+    super.isMuted,
+    super.propertyId,
+    required super.participants,
+  });
+
+  factory ConversationModel.fromJson(Map<String, dynamic> json) {
+    return ConversationModel(
+      id: json['conversation_id'] ?? json['id'] ?? '',
+      conversationType: json['conversationType'] ?? json['conversation_type'] ?? 'direct',
+      title: json['title'],
+      description: json['description'],
+      avatar: json['avatar'],
+      createdAt: DateTime.parse(json['createdAt'] ?? json['created_at']),
+      updatedAt: DateTime.parse(json['updatedAt'] ?? json['updated_at']),
+      lastMessage: json['lastMessage'] != null || json['last_message'] != null
+          ? MessageModel.fromJson(json['lastMessage'] ?? json['last_message'])
+          : null,
+      unreadCount: json['unreadCount'] ?? json['unread_count'] ?? 0,
+      isArchived: json['isArchived'] ?? json['is_archived'] ?? false,
+      isMuted: json['isMuted'] ?? json['is_muted'] ?? false,
+      propertyId: json['propertyId'] ?? json['property_id'],
+      participants: (json['participants'] as List? ?? [])
+          .map((p) => ChatUserModel.fromJson(p))
+          .toList(),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'conversation_id': id,
+      'conversation_type': conversationType,
+      if (title != null) 'title': title,
+      if (description != null) 'description': description,
+      if (avatar != null) 'avatar': avatar,
+      'created_at': createdAt.toIso8601String(),
+      'updated_at': updatedAt.toIso8601String(),
+      if (lastMessage != null) 'last_message': (lastMessage as MessageModel).toJson(),
+      'unread_count': unreadCount,
+      'is_archived': isArchived,
+      'is_muted': isMuted,
+      if (propertyId != null) 'property_id': propertyId,
+      'participants': participants.map((p) => (p as ChatUserModel).toJson()).toList(),
+    };
+  }
+
+  factory ConversationModel.fromEntity(Conversation conversation) {
+    return ConversationModel(
+      id: conversation.id,
+      conversationType: conversation.conversationType,
+      title: conversation.title,
+      description: conversation.description,
+      avatar: conversation.avatar,
+      createdAt: conversation.createdAt,
+      updatedAt: conversation.updatedAt,
+      lastMessage: conversation.lastMessage,
+      unreadCount: conversation.unreadCount,
+      isArchived: conversation.isArchived,
+      isMuted: conversation.isMuted,
+      propertyId: conversation.propertyId,
+      participants: conversation.participants,
+    );
+  }
+
+}
+----- FILE: ./delivery_receipt_model.dart -----
+import 'package:bookn_cp_app/features/chat/domain/entities/message.dart';
+
+class DeliveryReceiptModel extends DeliveryReceipt {
+  const DeliveryReceiptModel({
+    super.deliveredAt,
+    super.readAt,
+    super.readBy,
+  });
+
+  factory DeliveryReceiptModel.fromJson(Map<String, dynamic> json) {
+    return DeliveryReceiptModel(
+      deliveredAt: json['deliveredAt'] != null || json['delivered_at'] != null
+          ? DateTime.parse(json['deliveredAt'] ?? json['delivered_at'])
+          : null,
+      readAt: json['readAt'] != null || json['read_at'] != null
+          ? DateTime.parse(json['readAt'] ?? json['read_at'])
+          : null,
+      readBy: json['readBy'] != null
+          ? List<String>.from(json['readBy'])
+          : json['read_by'] != null
+              ? List<String>.from(json['read_by'])
+              : [],
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      if (deliveredAt != null) 'delivered_at': deliveredAt!.toIso8601String(),
+      if (readAt != null) 'read_at': readAt!.toIso8601String(),
+      'read_by': readBy,
+    };
+  }
+}
+----- FILE: ./message_model.dart -----
+import 'package:bookn_cp_app/features/chat/data/models/delivery_receipt_model.dart';
+import 'message_reaction_model.dart';
+
+import '../../domain/entities/message.dart';
+import 'attachment_model.dart';
+
+class MessageModel extends Message {
+  const MessageModel({
+    required super.id,
+    required super.conversationId,
+    required super.senderId,
+    required super.messageType,
+    super.content,
+    super.location,
+    super.replyToMessageId,
+    super.reactions,
+    super.attachments,
+    required super.createdAt,
+    required super.updatedAt,
+    required super.status,
+    super.isEdited,
+    super.editedAt,
+    super.deliveryReceipt,
+    super.isDeleted,
+    super.senderName,
+  });
+
+  factory MessageModel.fromJson(Map<String, dynamic> json) {
+    bool parseBool(dynamic value) {
+      if (value == null) return false;
+      if (value is bool) return value;
+      if (value is num) return value != 0;
+      if (value is String) {
+        final normalized = value.toLowerCase().trim();
+        return normalized == 'true' || normalized == '1' || normalized == 'yes';
+      }
+      return false;
+    }
+
+    String? extractSenderName(dynamic rawSender) {
+      if (rawSender == null) return null;
+      if (rawSender is String && rawSender.isNotEmpty) {
+        return rawSender;
+      }
+      if (rawSender is Map<String, dynamic>) {
+        return rawSender['full_name'] ??
+            rawSender['name'] ??
+            rawSender['display_name'] ??
+            rawSender['username'];
+      }
+      return rawSender.toString();
+    }
+
+    return MessageModel(
+      id: json['id'] ?? json['message_id'] ?? '',
+      conversationId: json['conversationId'] ?? json['conversation_id'] ?? '',
+      senderId: json['senderId'] ?? json['sender_id'] ?? '',
+      messageType: json['messageType'] ?? json['message_type'] ?? 'text',
+      content: json['content'],
+      location: json['location'] != null
+          ? LocationModel.fromJson(json['location'])
+          : null,
+      replyToMessageId: json['replyToMessageId'] ?? json['reply_to_message_id'],
+      reactions: (json['reactions'] as List? ?? [])
+          .map((r) => MessageReactionModel.fromJson(r))
+          .toList(),
+      attachments: (json['attachments'] as List? ?? [])
+          .map((a) => AttachmentModel.fromJson(a))
+          .toList(),
+      createdAt: DateTime.parse(json['createdAt'] ?? json['created_at']),
+      updatedAt: DateTime.parse(json['updatedAt'] ?? json['updated_at']),
+      status: json['status'] ?? 'sent',
+      isEdited: json['isEdited'] ?? json['is_edited'] ?? false,
+      editedAt: json['editedAt'] != null || json['edited_at'] != null
+          ? DateTime.parse(json['editedAt'] ?? json['edited_at'])
+          : null,
+      deliveryReceipt:
+          json['deliveryReceipt'] != null || json['delivery_receipt'] != null
+              ? DeliveryReceiptModel.fromJson(
+                  json['deliveryReceipt'] ?? json['delivery_receipt'])
+              : null,
+      isDeleted: parseBool(
+        json['isDeleted'] ??
+            json['is_deleted'] ??
+            json['deleted'] ??
+            json['deleted_at'] != null,
+      ),
+      senderName: json['senderName'] ??
+          json['sender_name'] ??
+          extractSenderName(json['sender']) ??
+          extractSenderName(json['from']),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'message_id': id,
+      'conversation_id': conversationId,
+      'sender_id': senderId,
+      'message_type': messageType,
+      if (content != null) 'content': content,
+      if (location != null) 'location': (location as LocationModel).toJson(),
+      if (replyToMessageId != null) 'reply_to_message_id': replyToMessageId,
+      'reactions':
+          reactions.map((r) => (r as MessageReactionModel).toJson()).toList(),
+      'attachments':
+          attachments.map((a) => (a as AttachmentModel).toJson()).toList(),
+      'created_at': createdAt.toIso8601String(),
+      'updated_at': updatedAt.toIso8601String(),
+      'status': status,
+      'is_edited': isEdited,
+      if (editedAt != null) 'edited_at': editedAt!.toIso8601String(),
+      if (deliveryReceipt != null)
+        'delivery_receipt': (deliveryReceipt as DeliveryReceiptModel).toJson(),
+      'is_deleted': isDeleted,
+      if (senderName != null && senderName!.isNotEmpty)
+        'sender_name': senderName,
+    };
+  }
+
+  factory MessageModel.fromEntity(Message message) {
+    return MessageModel(
+      id: message.id,
+      conversationId: message.conversationId,
+      senderId: message.senderId,
+      messageType: message.messageType,
+      content: message.content,
+      location: message.location,
+      replyToMessageId: message.replyToMessageId,
+      reactions: message.reactions,
+      attachments: message.attachments,
+      createdAt: message.createdAt,
+      updatedAt: message.updatedAt,
+      status: message.status,
+      isEdited: message.isEdited,
+      editedAt: message.editedAt,
+      deliveryReceipt: message.deliveryReceipt,
+      isDeleted: message.isDeleted,
+      senderName: message.senderName,
+    );
+  }
+}
+
+class LocationModel extends Location {
+  const LocationModel({
+    required super.latitude,
+    required super.longitude,
+    super.address,
+  });
+
+  factory LocationModel.fromJson(Map<String, dynamic> json) {
+    return LocationModel(
+      latitude: (json['latitude'] as num).toDouble(),
+      longitude: (json['longitude'] as num).toDouble(),
+      address: json['address'],
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'latitude': latitude,
+      'longitude': longitude,
+      if (address != null) 'address': address,
+    };
+  }
+}
+
+----- FILE: ./message_reaction_model.dart -----
+import 'package:bookn_cp_app/features/chat/domain/entities/message.dart';
+
+
+class MessageReactionModel extends MessageReaction {
+  const MessageReactionModel({
+    required super.id,
+    required super.messageId,
+    required super.userId,
+    required super.reactionType,
+  });
+
+  factory MessageReactionModel.fromJson(Map<String, dynamic> json) {
+    return MessageReactionModel(
+      id: json['id'] ?? '',
+      messageId: json['messageId'] ?? json['message_id'] ?? '',
+      userId: json['userId'] ?? json['user_id'] ?? '',
+      reactionType: json['reactionType'] ?? json['reaction_type'] ?? '',
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'message_id': messageId,
+      'user_id': userId,
+      'reaction_type': reactionType,
+    };
+  }
+}
+
+----- FILE: ./search_result_model.dart -----
+

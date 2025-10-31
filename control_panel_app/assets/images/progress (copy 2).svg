@@ -1,0 +1,267 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Enterprise Gradient - Professional & Trustworthy -->
+    <linearGradient id="enterpriseGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0F172A;stop-opacity:1" />
+      <stop offset="25%" style="stop-color:#1E40AF;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#3B82F6;stop-opacity:1" />
+      <stop offset="75%" style="stop-color:#10B981;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#FCD34D;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Royal Blue Gradient -->
+    <linearGradient id="royalGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1E3A8A;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#2563EB;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#60A5FA;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Luxury Gold Accent -->
+    <linearGradient id="goldAccent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FEF3C7;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#FCD34D;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#F59E0B;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Premium B Letter -->
+    <linearGradient id="premiumB" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#FFFFFF;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#F9FAFB;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#E5E7EB;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Background Mesh -->
+    <radialGradient id="meshGradient">
+      <stop offset="0%" style="stop-color:#2563EB;stop-opacity:0.08" />
+      <stop offset="40%" style="stop-color:#1E40AF;stop-opacity:0.05" />
+      <stop offset="100%" style="stop-color:#0F172A;stop-opacity:0.02" />
+    </radialGradient>
+    
+    <!-- Professional Shadow -->
+    <filter id="proShadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="10"/>
+      <feOffset dx="0" dy="15" result="offsetblur"/>
+      <feFlood flood-color="#0F172A" flood-opacity="0.35"/>
+      <feComposite in2="offsetblur" operator="in"/>
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#FCD34D" flood-opacity="0.15"/>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    
+    <!-- Crystal Shine Effect -->
+    <filter id="crystalShine">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur"/>
+      <feSpecularLighting result="specOut" in="blur" specularConstant="2" specularExponent="30" lighting-color="white">
+        <fePointLight x="150" y="150" z="300"/>
+      </feSpecularLighting>
+      <feComposite in="specOut" in2="SourceAlpha" operator="in" result="specOut2"/>
+      <feComposite in="SourceGraphic" in2="specOut2" operator="arithmetic" k1="0" k2="1" k3="1" k4="0"/>
+    </filter>
+    
+    <!-- Enterprise Pattern -->
+    <pattern id="gridPattern" x="0" y="0" width="50" height="50" patternUnits="userSpaceOnUse">
+      <rect width="50" height="50" fill="none"/>
+      <circle cx="25" cy="25" r="1" fill="#2563EB" opacity="0.08"/>
+      <line x1="0" y1="25" x2="50" y2="25" stroke="#2563EB" stroke-width="0.2" opacity="0.05"/>
+      <line x1="25" y1="0" x2="25" y2="50" stroke="#2563EB" stroke-width="0.2" opacity="0.05"/>
+    </pattern>
+    
+    <!-- Metallic Gradient -->
+    <linearGradient id="metallic" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#F9FAFB;stop-opacity:1" />
+      <stop offset="25%" style="stop-color:#E5E7EB;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#F9FAFB;stop-opacity:1" />
+      <stop offset="75%" style="stop-color:#D1D5DB;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#F3F4F6;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Luxury Ring System -->
+  <g id="luxuryRings">
+    <!-- Outer Ring -->
+    <circle cx="256" cy="256" r="240" fill="none" stroke="url(#royalGradient)" stroke-width="0.5" opacity="0.2" stroke-dasharray="15 5">
+      <animateTransform attributeName="transform" type="rotate" from="0 256 256" to="360 256 256" dur="40s" repeatCount="indefinite"/>
+    </circle>
+    <!-- Middle Ring -->
+    <circle cx="256" cy="256" r="220" fill="none" stroke="url(#goldAccent)" stroke-width="0.3" opacity="0.15" stroke-dasharray="8 12">
+      <animateTransform attributeName="transform" type="rotate" from="0 256 256" to="-360 256 256" dur="35s" repeatCount="indefinite"/>
+    </circle>
+    <!-- Inner Ring -->
+    <circle cx="256" cy="256" r="200" fill="none" stroke="url(#royalGradient)" stroke-width="0.5" opacity="0.1" stroke-dasharray="20 10">
+      <animateTransform attributeName="transform" type="rotate" from="0 256 256" to="360 256 256" dur="30s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+  
+  <!-- Main Circle with Premium Effect -->
+  <g filter="url(#proShadow)">
+    <!-- Base Circle -->
+    <circle cx="256" cy="256" r="175" fill="url(#royalGradient)"/>
+    
+    <!-- Glass Layer -->
+    <circle cx="256" cy="256" r="175" fill="url(#royalGradient)" opacity="0.9"/>
+    
+    <!-- Top Shine -->
+    <ellipse cx="256" cy="190" rx="130" ry="70" fill="url(#metallic)" opacity="0.2"/>
+    
+    <!-- Gold Ring Accent -->
+    <circle cx="256" cy="256" r="175" fill="none" stroke="url(#goldAccent)" stroke-width="2" opacity="0.6"/>
+  </g>
+  
+  <!-- Professional B Logo -->
+  <g transform="translate(256, 256)">
+    <!-- Shadow Layer -->
+    <path d="
+      M -60 -95
+      L -60 95
+      L 30 95
+      Q 85 95, 85 50
+      Q 85 25, 60 12
+      Q 80 0, 80 -35
+      Q 80 -95, 25 -95
+      L -60 -95
+      Z
+    " 
+    fill="#000000" 
+    opacity="0.2"
+    transform="translate(3, 3)"/>
+    
+    <!-- Main B with Metallic Effect -->
+    <path d="
+      M -60 -95
+      L -60 95
+      L 30 95
+      Q 85 95, 85 50
+      Q 85 25, 60 12
+      Q 80 0, 80 -35
+      Q 80 -95, 25 -95
+      L -60 -95
+      Z
+      
+      M -20 -65
+      L 20 -65
+      Q 45 -65, 45 -40
+      Q 45 -15, 20 -15
+      L -20 -15
+      Z
+      
+      M -20 15
+      L 25 15
+      Q 50 15, 50 50
+      Q 50 65, 25 65
+      L -20 65
+      Z
+    " 
+    fill="url(#metallic)" 
+    filter="url(#crystalShine)"
+    stroke="url(#goldAccent)" 
+    stroke-width="1"
+    stroke-linejoin="round">
+      <animateTransform attributeName="transform" type="scale" values="1; 1.01; 1" dur="5s" repeatCount="indefinite"/>
+    </path>
+    
+    <!-- Inner B Highlight -->
+    <path d="
+      M -60 -95
+      L -60 -85
+      L 25 -85
+      Q 70 -85, 70 -35
+      Q 70 -25, 65 -20
+    " 
+    fill="none" 
+    stroke="rgba(255,255,255,0.5)" 
+    stroke-width="2"
+    stroke-linecap="round"/>
+    
+    <!-- Premium Badge -->
+    <g transform="translate(45, -50)">
+      <circle cx="0" cy="0" r="18" fill="url(#goldAccent)" opacity="0.9"/>
+      <circle cx="0" cy="0" r="18" fill="none" stroke="#FFFFFF" stroke-width="1" opacity="0.8"/>
+      <text x="0" y="5" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#0F172A" text-anchor="middle">★</text>
+      <animate attributeName="opacity" values="0.9;1;0.9" dur="3s" repeatCount="indefinite"/>
+    </g>
+  </g>
+  
+  <!-- Professional Orbiting System -->
+  <g id="orbitSystem">
+    <!-- Primary Orbit - Gold -->
+    <g transform="rotate(0 256 256)">
+      <circle cx="256" cy="81" r="10" fill="url(#goldAccent)">
+        <animate attributeName="r" values="10;12;10" dur="3s" repeatCount="indefinite"/>
+      </circle>
+      <circle cx="256" cy="81" r="18" fill="none" stroke="url(#goldAccent)" stroke-width="1" opacity="0.4">
+        <animate attributeName="r" values="18;28;18" dur="3s" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values="0.4;0;0.4" dur="3s" repeatCount="indefinite"/>
+      </circle>
+      <animateTransform attributeName="transform" type="rotate" from="0 256 256" to="360 256 256" dur="20s" repeatCount="indefinite"/>
+    </g>
+    
+    <!-- Secondary Orbit - Emerald -->
+    <g transform="rotate(120 256 256)">
+      <circle cx="256" cy="81" r="8" fill="#10B981" opacity="0.9">
+        <animate attributeName="opacity" values="0.9;0.5;0.9" dur="4s" repeatCount="indefinite"/>
+      </circle>
+      <animateTransform attributeName="transform" type="rotate" from="120 256 256" to="480 256 256" dur="25s" repeatCount="indefinite"/>
+    </g>
+    
+    <!-- Tertiary Orbit - Royal Blue -->
+    <g transform="rotate(240 256 256)">
+      <circle cx="256" cy="81" r="8" fill="#2563EB" opacity="0.9">
+        <animate attributeName="opacity" values="0.9;0.5;0.9" dur="4s" begin="2s" repeatCount="indefinite"/>
+      </circle>
+      <animateTransform attributeName="transform" type="rotate" from="240 256 256" to="600 256 256" dur="25s" repeatCount="indefinite"/>
+    </g>
+  </g>
+  
+  <!-- Corner Elements - Premium Style -->
+  <g opacity="0.6">
+    <!-- Top Left -->
+    <g transform="translate(80, 80)">
+      <rect x="0" y="0" width="30" height="2" fill="url(#goldAccent)">
+        <animate attributeName="width" values="30;40;30" dur="4s" repeatCount="indefinite"/>
+      </rect>
+      <rect x="0" y="0" width="2" height="30" fill="url(#goldAccent)">
+        <animate attributeName="height" values="30;40;30" dur="4s" repeatCount="indefinite"/>
+      </rect>
+    </g>
+    
+    <!-- Top Right -->
+    <g transform="translate(432, 80)">
+      <rect x="-30" y="0" width="30" height="2" fill="url(#goldAccent)">
+        <animate attributeName="width" values="30;40;30" dur="4s" begin="1s" repeatCount="indefinite"/>
+      </rect>
+      <rect x="-2" y="0" width="2" height="30" fill="url(#goldAccent)">
+        <animate attributeName="height" values="30;40;30" dur="4s" begin="1s" repeatCount="indefinite"/>
+      </rect>
+    </g>
+    
+    <!-- Bottom Right -->
+    <g transform="translate(432, 432)">
+      <rect x="-30" y="-2" width="30" height="2" fill="url(#goldAccent)">
+        <animate attributeName="width" values="30;40;30" dur="4s" begin="2s" repeatCount="indefinite"/>
+      </rect>
+      <rect x="-2" y="-30" width="2" height="30" fill="url(#goldAccent)">
+        <animate attributeName="height" values="30;40;30" dur="4s" begin="2s" repeatCount="indefinite"/>
+      </rect>
+    </g>
+    
+    <!-- Bottom Left -->
+    <g transform="translate(80, 432)">
+      <rect x="0" y="-2" width="30" height="2" fill="url(#goldAccent)">
+        <animate attributeName="width" values="30;40;30" dur="4s" begin="3s" repeatCount="indefinite"/>
+      </rect>
+      <rect x="0" y="-30" width="2" height="30" fill="url(#goldAccent)">
+        <animate attributeName="height" values="30;40;30" dur="4s" begin="3s" repeatCount="indefinite"/>
+      </rect>
+    </g>
+  </g>
+  
+  <!-- Enterprise Text -->
+  <text x="256" y="475" font-family="'Segoe UI', Arial, sans-serif" font-size="26" font-weight="600" fill="#0F172A" text-anchor="middle" letter-spacing="3">
+    BOOKN
+  </text>
+  <text x="256" y="495" font-family="'Segoe UI', Arial, sans-serif" font-size="11" font-weight="400" fill="#64748B" text-anchor="middle" letter-spacing="2">
+    ENTERPRISE BOOKING SYSTEM
+  </text>
+</svg>

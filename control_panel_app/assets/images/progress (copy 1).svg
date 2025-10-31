@@ -1,0 +1,238 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="primaryGradientHD" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#06B6D4;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#3B82F6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#8B5CF6;stop-opacity:1" />
+    </linearGradient>
+    
+    <linearGradient id="bGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ffffff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#e0e7ff;stop-opacity:1" />
+    </linearGradient>
+    
+    <radialGradient id="glowGradientHD">
+      <stop offset="0%" style="stop-color:#3B82F6;stop-opacity:0.35">
+        <animate attributeName="stop-opacity" values="0.25;0.45;0.25" dur="3s" repeatCount="indefinite"/>
+      </stop>
+      <stop offset="40%" style="stop-color:#8B5CF6;stop-opacity:0.2">
+        <animate attributeName="stop-opacity" values="0.15;0.25;0.15" dur="3s" repeatCount="indefinite"/>
+      </stop>
+      <stop offset="100%" style="stop-color:#1E1B4B;stop-opacity:0" />
+    </radialGradient>
+    
+    <filter id="centerGlowHD" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="8" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="
+        1 0 0 0 0
+        0 1 0 0 0
+        0 0 1 0 0
+        0 0 0 2 0"/>
+      <feBlend in="SourceGraphic" in2="blur" mode="normal" />
+    </filter>
+    
+    <filter id="bShadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#3B82F6" flood-opacity="0.3"/>
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#ffffff" flood-opacity="0.2"/>
+    </filter>
+    
+    <filter id="particleGlowHD" x="-400%" y="-400%" width="800%" height="800%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="
+        0.23 0.47 0.98 0 0
+        0.23 0.47 0.98 0 0
+        0.23 0.47 0.98 0 0
+        0 0 0 4 0"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    
+    <filter id="dropShadowHD" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="12"/>
+      <feOffset dx="0" dy="4" result="offsetblur"/>
+      <feFlood flood-color="#3B82F6" flood-opacity="0.6"/>
+      <feComposite in2="offsetblur" operator="in"/>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Background glow -->
+  <circle cx="256" cy="256" r="256" fill="url(#glowGradientHD)"/>
+  
+  <!-- Rotating rings group -->
+  <g id="rotatingRingsHD">
+    <circle 
+      cx="256" 
+      cy="256" 
+      r="248" 
+      fill="none" 
+      stroke="#3B82F6" 
+      stroke-width="3" 
+      opacity="0.25"
+    />
+    <circle 
+      cx="256" 
+      cy="256" 
+      r="220" 
+      fill="none" 
+      stroke="#3B82F6" 
+      stroke-width="2.5" 
+      opacity="0.2"
+    />
+    <animateTransform
+      attributeName="transform"
+      type="rotate"
+      from="0 256 256"
+      to="360 256 256"
+      dur="20s"
+      repeatCount="indefinite"
+    />
+  </g>
+  
+  <!-- Center circle with gradient -->
+  <g filter="url(#dropShadowHD)">
+    <circle 
+      cx="256" 
+      cy="256" 
+      r="198" 
+      fill="url(#primaryGradientHD)"
+      filter="url(#centerGlowHD)"
+    />
+  </g>
+  
+  <!-- Improved Letter B with modern design -->
+  <g transform="translate(256, 256)" filter="url(#bShadow)">
+    <path d="
+      M -60 -100
+      L -60 100
+      L 20 100
+      C 50 100, 80 85, 80 50
+      C 80 25, 65 10, 45 5
+      C 60 0, 70 -15, 70 -35
+      C 70 -70, 45 -100, 10 -100
+      L -60 -100
+      Z
+      
+      M -20 -70
+      L 5 -70
+      C 25 -70, 35 -60, 35 -40
+      C 35 -20, 25 -15, 5 -15
+      L -20 -15
+      Z
+      
+      M -20 15
+      L 10 15
+      C 30 15, 45 25, 45 45
+      C 45 65, 30 70, 10 70
+      L -20 70
+      Z
+    " 
+    fill="url(#bGradient)" 
+    stroke="rgba(255,255,255,0.3)" 
+    stroke-width="2"
+    stroke-linejoin="round"
+    stroke-linecap="round">
+      <!-- تأثير النبض المحسن للحرف B -->
+      <animateTransform
+        attributeName="transform"
+        type="scale"
+        values="1; 1.03; 1"
+        dur="3s"
+        repeatCount="indefinite"
+      />
+    </path>
+    
+    <!-- Inner glow for B -->
+    <path d="
+      M -60 -100
+      L -60 100
+      L 20 100
+      C 50 100, 80 85, 80 50
+      C 80 25, 65 10, 45 5
+      C 60 0, 70 -15, 70 -35
+      C 70 -70, 45 -100, 10 -100
+      L -60 -100
+      Z
+    " 
+    fill="none" 
+    stroke="rgba(255,255,255,0.1)" 
+    stroke-width="1"
+    opacity="0.5">
+      <animate attributeName="opacity" values="0.3;0.7;0.3" dur="3s" repeatCount="indefinite"/>
+    </path>
+  </g>
+  
+  <!-- Decorative accent lines -->
+  <g transform="translate(256, 256)" opacity="0.4">
+    <line x1="-90" y1="-120" x2="-90" y2="120" stroke="url(#primaryGradientHD)" stroke-width="2">
+      <animate attributeName="opacity" values="0;0.6;0" dur="4s" repeatCount="indefinite"/>
+    </line>
+    <line x1="90" y1="-120" x2="90" y2="120" stroke="url(#primaryGradientHD)" stroke-width="2">
+      <animate attributeName="opacity" values="0;0.6;0" dur="4s" begin="0.5s" repeatCount="indefinite"/>
+    </line>
+  </g>
+  
+  <!-- Orbiting particle starting from last 10% (324 degrees) -->
+  <g id="orbitingParticleHD" transform="rotate(324 256 256)">
+    <circle 
+      cx="256" 
+      cy="56" 
+      r="21" 
+      fill="#60A5FA"
+      filter="url(#particleGlowHD)"
+    />
+    <animateTransform
+      attributeName="transform"
+      type="rotate"
+      from="324 256 256"
+      to="684 256 256"
+      dur="10s"
+      repeatCount="indefinite"
+    />
+  </g>
+  
+  <!-- Particle pulse effect starting from last 10% -->
+  <g transform="rotate(324 256 256)">
+    <circle 
+      cx="256" 
+      cy="56" 
+      r="21" 
+      fill="none"
+      stroke="#60A5FA"
+      stroke-width="3"
+      opacity="0"
+    >
+      <animate attributeName="r" values="21;56;21" dur="2s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0.9;0;0.9" dur="2s" repeatCount="indefinite"/>
+    </circle>
+    <animateTransform
+      attributeName="transform"
+      type="rotate"
+      from="324 256 256"
+      to="684 256 256"
+      dur="10s"
+      repeatCount="indefinite"
+    />
+  </g>
+  
+  <!-- Additional decorative particles -->
+  <g opacity="0.3">
+    <circle cx="180" cy="180" r="3" fill="#60A5FA">
+      <animate attributeName="opacity" values="0;1;0" dur="3s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="332" cy="180" r="3" fill="#8B5CF6">
+      <animate attributeName="opacity" values="0;1;0" dur="3s" begin="1s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="332" cy="332" r="3" fill="#06B6D4">
+      <animate attributeName="opacity" values="0;1;0" dur="3s" begin="2s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="180" cy="332" r="3" fill="#3B82F6">
+      <animate attributeName="opacity" values="0;1;0" dur="3s" begin="0.5s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+</svg>

@@ -1,0 +1,1 @@
+// Removed configuration for legacy SectionItem entity
