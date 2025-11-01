@@ -495,12 +495,12 @@ namespace YemenBooking.IndexingTests.Tests
             var totalPrice = await CalculatePriceAsync(unitId, checkIn, checkOut);
             var nights = Math.Max(1, (checkOut - checkIn).Days);
             
-            var days = new List<Application.Features.Pricing.Queries.GetPricingBreakdown.DayPriceDto>();
+            var days = new List<YemenBooking.Application.Features.Pricing.Queries.GetPricingBreakdown.DayPriceDto>();
             var dailyPrice = totalPrice / nights;
             
             for (var date = checkIn; date < checkOut; date = date.AddDays(1))
             {
-                days.Add(new Application.Features.Pricing.Queries.GetPricingBreakdown.DayPriceDto
+                days.Add(new YemenBooking.Application.Features.Pricing.Queries.GetPricingBreakdown.DayPriceDto
                 {
                     Date = date,
                     Price = dailyPrice,
@@ -509,7 +509,7 @@ namespace YemenBooking.IndexingTests.Tests
                 });
             }
             
-            return new Application.Features.Pricing.Queries.GetPricingBreakdown.PricingBreakdownDto
+            return new YemenBooking.Application.Features.Pricing.Queries.GetPricingBreakdown.PricingBreakdownDto
             {
                 CheckIn = checkIn,
                 CheckOut = checkOut,
