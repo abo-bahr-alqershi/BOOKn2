@@ -31,7 +31,7 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.AspNetCore.Hosting;
 using System.IO;
 using YemenBooking.Infrastructure.Services;
-using YemenBooking.Infrastructure.Redis.Services;
+using YemenBooking.Infrastructure.Redis.Configuration;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Http;
 using YemenBooking.Application.Features.Properties.Queries.GetPropertyDetails;
@@ -294,14 +294,8 @@ builder.Services.AddHttpClient<IPaymentGatewayService, PaymentGatewayService>();
 // إشغّل مرسل الإشعارات المجدولة
 builder.Services.AddHostedService<ScheduledNotificationsDispatcher>();
 
-builder.Services.AddSingleton<IRedisConnectionManager, RedisConnectionManager>();
-
-builder.Services.AddScoped<IIndexingService, RedisIndexingService>();
-builder.Services.AddScoped<IPropertySearchService, RedisSearchService>();
-builder.Services.AddScoped<IPropertyIndexingService, PropertyIndexingService>();
-builder.Services.AddScoped<IUnitIndexingService, UnitIndexingService>();
-builder.Services.AddScoped<IPriceCacheService, PriceCacheService>();
-builder.Services.AddHostedService<RedisMaintenanceService>();
+// تسجيل نظام Redis الجديد للفهرسة والبحث
+builder.Services.AddRedisIndexingSystem(builder.Configuration);
 
 // IMPORTANT: IIndexingService depends on scoped repositories/services, so register it as Scoped
 // builder.Services.AddScoped<IIndexingService>(provider =>
