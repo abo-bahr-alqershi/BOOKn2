@@ -108,18 +108,34 @@ namespace YemenBooking.IndexingTests
             return Task.CompletedTask;
         }
 
-        public Task<PricingBreakdownDto> GetPricingBreakdownAsync(Guid unitId, DateTime checkIn, DateTime checkOut)
+        public Task<Application.Features.Pricing.Queries.GetPricingBreakdown.PricingBreakdownDto> GetPricingBreakdownAsync(Guid unitId, DateTime checkIn, DateTime checkOut)
         {
             // إرجاع تفاصيل تسعير وهمية
             var nights = (checkOut - checkIn).Days;
             if (nights <= 0) nights = 1;
+            var totalPrice = 100m * nights;
             
-            var breakdown = new PricingBreakdownDto
+            var days = new List<Application.Features.Pricing.Queries.GetPricingBreakdown.DayPriceDto>();
+            
+            for (var date = checkIn; date < checkOut; date = date.AddDays(1))
+            {
+                days.Add(new Application.Features.Pricing.Queries.GetPricingBreakdown.DayPriceDto
+                {
+                    Date = date,
+                    Price = 100m,
+                    PriceType = "Standard"
+                });
+            }
+            
+            var breakdown = new Application.Features.Pricing.Queries.GetPricingBreakdown.PricingBreakdownDto
             {
                 CheckIn = checkIn,
                 CheckOut = checkOut,
                 TotalNights = nights,
-                Currency = "YER"
+                Currency = "YER",
+                Days = days,
+                SubTotal = totalPrice,
+                Total = totalPrice
             };
             
             return Task.FromResult(breakdown);

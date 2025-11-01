@@ -12,7 +12,7 @@ using YemenBooking.Infrastructure.Redis.Configuration;
 using YemenBooking.Infrastructure.Data.Context;
 using YemenBooking.Infrastructure.Repositories;
 using YemenBooking.Core.Interfaces.Repositories;
-using YemenBooking.Infrastructure.Services.RedisConnectionManager;
+using YemenBooking.Infrastructure.Services;
 using YemenBooking.Core.Indexing.Models;
 using YemenBooking.Core.Entities;
 
@@ -30,7 +30,7 @@ namespace YemenBooking.IndexingTests.Tests
         protected readonly IIndexingService _indexingService;
         protected readonly IPropertyRepository _propertyRepository;
         protected readonly IUnitRepository _unitRepository;
-        protected readonly IRedisConnectionManager _redisManager;
+        // protected readonly IRedisConnectionManager _redisManager;
         protected readonly ILogger _logger;
         protected readonly YemenBookingDbContext _dbContext;
         protected readonly Random _random = new Random();
@@ -51,7 +51,7 @@ namespace YemenBooking.IndexingTests.Tests
             _indexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
             _propertyRepository = scope.ServiceProvider.GetRequiredService<IPropertyRepository>();
             _unitRepository = scope.ServiceProvider.GetRequiredService<IUnitRepository>();
-            _redisManager = scope.ServiceProvider.GetRequiredService<IRedisConnectionManager>();
+            // _redisManager = scope.ServiceProvider.GetRequiredService<IRedisConnectionManager>();
             _dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
             
             var loggerFactory = scope.ServiceProvider.GetRequiredService<ILoggerFactory>();
@@ -176,8 +176,8 @@ namespace YemenBooking.IndexingTests.Tests
             await _dbContext.SaveChangesAsync();
 
             // تنظيف Redis
-            var db = _redisManager.GetDatabase();
-            await db.ExecuteAsync("FLUSHDB");
+            // var db = _redisManager.GetDatabase();
+            // await db.ExecuteAsync("FLUSHDB");
         }
 
         /// <summary>

@@ -13,7 +13,6 @@ using YemenBooking.Infrastructure.Data.Context;
 using YemenBooking.Infrastructure.Redis.Configuration;
 using YemenBooking.Infrastructure.Repositories;
 using YemenBooking.Infrastructure.Services;
-using YemenBooking.Infrastructure.Services.RedisConnectionManager;
 
 namespace YemenBooking.IndexingTests.Tests
 {
@@ -37,11 +36,6 @@ namespace YemenBooking.IndexingTests.Tests
         /// قاعدة البيانات الاختبارية
         /// </summary>
         public YemenBookingDbContext DbContext { get; private set; }
-
-        /// <summary>
-        /// مدير اتصال Redis
-        /// </summary>
-        public IRedisConnectionManager RedisManager { get; private set; }
 
         /// <summary>
         /// خدمة الفهرسة
@@ -161,7 +155,7 @@ namespace YemenBooking.IndexingTests.Tests
             
             // الحصول على الخدمات
             DbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
-            RedisManager = scope.ServiceProvider.GetRequiredService<IRedisConnectionManager>();
+            // RedisManager = scope.ServiceProvider.GetRequiredService<IRedisConnectionManager>();
             IndexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
 
             // تطبيق الترحيلات إذا لزم الأمر
@@ -321,8 +315,9 @@ namespace YemenBooking.IndexingTests.Tests
         /// </summary>
         private async Task CleanupRedisAsync()
         {
-            var db = RedisManager.GetDatabase();
-            await db.ExecuteAsync("FLUSHDB");
+            // var db = RedisManager.GetDatabase();
+            // await db.ExecuteAsync("FLUSHDB");
+            await Task.CompletedTask;
         }
 
         /// <summary>
@@ -500,12 +495,29 @@ namespace YemenBooking.IndexingTests.Tests
             var totalPrice = await CalculatePriceAsync(unitId, checkIn, checkOut);
             var nights = Math.Max(1, (checkOut - checkIn).Days);
             
+            var days = new List<Application.Features.Pricing.Queries.GetPricingBreakdown.DayPriceDto>();
+            var dailyPrice = totalPrice / nights;
+            
+            for (var date = checkIn; date < checkOut; date = date.AddDays(1))
+            {
+                days.Add(new Application.Features.Pricing.Queries.GetPricingBreakdown.DayPriceDto
+                {
+                    Date = date,
+                    Price = dailyPrice,
+                    PriceType = "Standard",
+                    Description = "السعر الأساسي"
+                });
+            }
+            
             return new Application.Features.Pricing.Queries.GetPricingBreakdown.PricingBreakdownDto
             {
                 CheckIn = checkIn,
                 CheckOut = checkOut,
                 TotalNights = nights,
-                Currency = "YER"
+                Currency = "YER",
+                Days = days,
+                SubTotal = totalPrice,
+                Total = totalPrice
             };
         }
     }
