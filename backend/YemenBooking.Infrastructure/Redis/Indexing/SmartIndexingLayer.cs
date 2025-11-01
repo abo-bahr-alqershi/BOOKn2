@@ -347,6 +347,10 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 TotalUnits = unitsList.Count,
                 AvailableUnitsCount = unitsList.Count(u => u.IsActive),
                 UnitIds = unitsList.Select(u => u.Id).ToList(),
+                
+                // أنواع الوحدات المتوفرة
+                UnitTypeIds = unitsList.Select(u => u.UnitTypeId).Distinct().ToList(),
+                UnitTypeNames = unitsList.Select(u => u.UnitType?.Name).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().ToList(),
 
                 // المرافق والخدمات
                 AmenityIds = property.Amenities?.Select(a => a.Id).ToList() ?? new List<Guid>(),
@@ -442,7 +446,16 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
 
             // فهارس التصنيف
             _ = tran.SetAddAsync(RedisKeySchemas.GetCityKey(doc.City), propId);
+            
+            // إضافة لفهرس نوع العقار بالمعرف GUID
             _ = tran.SetAddAsync(RedisKeySchemas.GetTypeKey(doc.PropertyTypeId), propId);
+            
+            // إضافة أيضاً لفهرس بالاسم النصي لنوع العقار لدعم البحث بالاسم
+            if (!string.IsNullOrWhiteSpace(doc.PropertyTypeName))
+            {
+                var typeNameKey = string.Format(RedisKeySchemas.TAG_TYPE, doc.PropertyTypeName.ToLowerInvariant());
+                _ = tran.SetAddAsync(typeNameKey, propId);
+            }
 
             foreach (var amenityId in doc.AmenityIds)
             {
@@ -480,8 +493,39 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
             // تحديث نوع العقار
             if (oldDoc.PropertyTypeId != newDoc.PropertyTypeId)
             {
+                // إزالة من الفهرس القديم بالمعرف
                 _ = tran.SetRemoveAsync(RedisKeySchemas.GetTypeKey(oldDoc.PropertyTypeId), propId);
+                // إضافة للفهرس الجديد بالمعرف
                 _ = tran.SetAddAsync(RedisKeySchemas.GetTypeKey(newDoc.PropertyTypeId), propId);
+                
+                // إزالة من فهرس الاسم القديم
+                if (!string.IsNullOrWhiteSpace(oldDoc.PropertyTypeName))
+                {
+                    var oldTypeNameKey = string.Format(RedisKeySchemas.TAG_TYPE, oldDoc.PropertyTypeName.ToLowerInvariant());
+                    _ = tran.SetRemoveAsync(oldTypeNameKey, propId);
+                }
+                
+                // إضافة لفهرس الاسم الجديد
+                if (!string.IsNullOrWhiteSpace(newDoc.PropertyTypeName))
+                {
+                    var newTypeNameKey = string.Format(RedisKeySchemas.TAG_TYPE, newDoc.PropertyTypeName.ToLowerInvariant());
+                    _ = tran.SetAddAsync(newTypeNameKey, propId);
+                }
+            }
+            // تحديث اسم النوع فقط (في حالة تغيير الاسم بدون تغيير المعرف)
+            else if (oldDoc.PropertyTypeName != newDoc.PropertyTypeName)
+            {
+                if (!string.IsNullOrWhiteSpace(oldDoc.PropertyTypeName))
+                {
+                    var oldTypeNameKey = string.Format(RedisKeySchemas.TAG_TYPE, oldDoc.PropertyTypeName.ToLowerInvariant());
+                    _ = tran.SetRemoveAsync(oldTypeNameKey, propId);
+                }
+                
+                if (!string.IsNullOrWhiteSpace(newDoc.PropertyTypeName))
+                {
+                    var newTypeNameKey = string.Format(RedisKeySchemas.TAG_TYPE, newDoc.PropertyTypeName.ToLowerInvariant());
+                    _ = tran.SetAddAsync(newTypeNameKey, propId);
+                }
             }
 
             // تحديث المرافق

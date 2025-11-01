@@ -191,6 +191,18 @@ namespace YemenBooking.Infrastructure.Redis.Models
         [Key(25)]
         public List<Guid> UnitIds { get; set; } = new();
         
+        /// <summary>
+        /// معرفات أنواع الوحدات المتوفرة في العقار
+        /// </summary>
+        [Key(251)]
+        public List<Guid> UnitTypeIds { get; set; } = new();
+        
+        /// <summary>
+        /// أسماء أنواع الوحدات للبحث النصي
+        /// </summary>
+        [Key(252)]
+        public List<string> UnitTypeNames { get; set; } = new();
+        
         #endregion
 
         #region المرافق والخدمات
@@ -402,7 +414,18 @@ namespace YemenBooking.Infrastructure.Redis.Models
                 
                 // الصور
                 new("main_image", MainImageUrl ?? ""),
-                new("images_count", ImagesCount)
+                new("images_count", ImagesCount),
+                
+                // معرفات وأنواع الوحدات
+                new("unit_type_ids", string.Join(",", UnitTypeIds ?? new List<Guid>())),
+                new("unit_type_names", string.Join(",", UnitTypeNames ?? new List<string>())),
+                
+                // معرفات المرافق والخدمات
+                new("amenity_ids", string.Join(",", AmenityIds ?? new List<Guid>())),
+                new("service_ids", string.Join(",", ServiceIds ?? new List<Guid>())),
+                
+                // الحقول الديناميكية
+                new("dynamic_fields", System.Text.Json.JsonSerializer.Serialize(DynamicFields ?? new Dictionary<string, string>()))
             };
             
             return entries.ToArray();
@@ -473,7 +496,18 @@ namespace YemenBooking.Infrastructure.Redis.Models
                 
                 // الصور
                 MainImageUrl = dict.GetValueOrDefault("main_image"),
-                ImagesCount = int.Parse(dict.GetValueOrDefault("images_count", "0"))
+                ImagesCount = int.Parse(dict.GetValueOrDefault("images_count", "0")),
+                
+                // معرفات وأنواع الوحدات
+                UnitTypeIds = ParseGuidsFromString(dict.GetValueOrDefault("unit_type_ids", "")),
+                UnitTypeNames = ParseStringsFromString(dict.GetValueOrDefault("unit_type_names", "")),
+                
+                // معرفات المرافق والخدمات
+                AmenityIds = ParseGuidsFromString(dict.GetValueOrDefault("amenity_ids", "")),
+                ServiceIds = ParseGuidsFromString(dict.GetValueOrDefault("service_ids", "")),
+                
+                // الحقول الديناميكية
+                DynamicFields = ParseDynamicFields(dict.GetValueOrDefault("dynamic_fields", "{}"))
             };
         }
         
@@ -489,12 +523,67 @@ namespace YemenBooking.Infrastructure.Redis.Models
             var reviewWeight = 0.2;
             var featuredWeight = 0.1;
             
-            PopularityScore = 
-                (double)(AverageRating * (decimal)ratingWeight * ReviewsCount) +
-                (TotalBookings * bookingWeight) +
-                (ViewsCount * viewWeight) +
-                (ReviewsCount * reviewWeight) +
-                (IsFeatured ? 100 * featuredWeight : 0);
+            // تطبيع القيم (0-1)
+            var normalizedRating = Math.Min((double)AverageRating / 5.0, 1.0);
+            var normalizedBookings = Math.Min(TotalBookings / 100.0, 1.0);
+            var normalizedViews = Math.Min(ViewsCount / 1000.0, 1.0);
+            var normalizedReviews = Math.Min(ReviewsCount / 50.0, 1.0);
+            var featuredBonus = IsFeatured ? 1.0 : 0.0;
+            
+            // حساب النقاط
+            var score = (normalizedRating * ratingWeight) +
+                        (normalizedBookings * bookingWeight) +
+                        (normalizedViews * viewWeight) +
+                        (normalizedReviews * reviewWeight) +
+                        (featuredBonus * featuredWeight);
+            
+            // تحويل إلى نطاق 0-100
+            PopularityScore = score * 100;
+        }
+        
+        /// <summary>
+        /// تحليل معرفات GUIDs من نص
+        /// </summary>
+        private static List<Guid> ParseGuidsFromString(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return new List<Guid>();
+            
+            return value.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(s => Guid.TryParse(s, out var guid) ? guid : Guid.Empty)
+                .Where(g => g != Guid.Empty)
+                .ToList();
+        }
+        
+        /// <summary>
+        /// تحليل قائمة نصوص من نص
+        /// </summary>
+        private static List<string> ParseStringsFromString(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return new List<string>();
+            
+            return value.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(s => s.Trim())
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .ToList();
+        }
+        
+        /// <summary>
+        /// تحليل الحقول الديناميكية من JSON
+        /// </summary>
+        private static Dictionary<string, string> ParseDynamicFields(string jsonValue)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(jsonValue) || jsonValue == "{}") 
+                    return new Dictionary<string, string>();
+                    
+                return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(jsonValue) 
+                    ?? new Dictionary<string, string>();
+            }
+            catch
+            {
+                return new Dictionary<string, string>();
+            }
         }
         
         #endregion

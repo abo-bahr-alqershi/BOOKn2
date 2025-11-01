@@ -280,22 +280,45 @@ namespace YemenBooking.Infrastructure.Redis.Search
             // البدء بجميع العقارات أو مجموعة محددة
             if (!string.IsNullOrWhiteSpace(request.City))
             {
+                _logger.LogInformation("🏙️ البحث في المدينة: {City}", request.City);
                 var cityKey = RedisKeySchemas.GetCityKey(request.City);
                 var cityProperties = await _db.SetMembersAsync(cityKey);
                 propertyIds = cityProperties.Select(p => p.ToString()).ToHashSet();
+                _logger.LogInformation("✅ تم العثور على {Count} عقار في المدينة", propertyIds.Count);
             }
             else
             {
                 var allProperties = await _db.SetMembersAsync(RedisKeySchemas.PROPERTIES_ALL_SET);
                 propertyIds = allProperties.Select(p => p.ToString()).ToHashSet();
+                _logger.LogInformation("📋 البدء بجميع العقارات: {Count}", propertyIds.Count);
             }
 
             // تطبيق فلتر النوع
             if (!string.IsNullOrWhiteSpace(request.PropertyType))
             {
-                var typeKey = string.Format(RedisKeySchemas.TAG_TYPE, request.PropertyType);
+                _logger.LogInformation("🏢 تطبيق فلتر نوع العقار: {PropertyType}", request.PropertyType);
+                
+                // محاولة كـ GUID أولاً (معرف نوع العقار)
+                string typeKey;
+                if (Guid.TryParse(request.PropertyType, out var propertyTypeGuid))
+                {
+                    // استخدام معرف النوع
+                    typeKey = string.Format(RedisKeySchemas.TAG_TYPE, propertyTypeGuid.ToString());
+                }
+                else
+                {
+                    // استخدام اسم النوع
+                    typeKey = string.Format(RedisKeySchemas.TAG_TYPE, request.PropertyType);
+                }
+                
                 var typeProperties = await _db.SetMembersAsync(typeKey);
-                propertyIds.IntersectWith(typeProperties.Select(p => p.ToString()));
+                var typePropsSet = typeProperties.Select(p => p.ToString()).ToHashSet();
+                
+                _logger.LogInformation("🔍 عقارات النوع المطلوب: {Count}", typePropsSet.Count);
+                
+                propertyIds.IntersectWith(typePropsSet);
+                
+                _logger.LogInformation("✅ بعد فلتر النوع: {Count} عقار", propertyIds.Count);
             }
 
             // تطبيق فلتر المرافق
@@ -493,31 +516,163 @@ namespace YemenBooking.Infrastructure.Redis.Search
             List<PropertyIndexDocument> properties,
             PropertySearchRequest request)
         {
+            // فلتر نوع العقار - مهم جداً
+            if (!string.IsNullOrWhiteSpace(request.PropertyType))
+            {
+                _logger.LogInformation("🔍 تطبيق فلتر نوع العقار: {PropertyType}", request.PropertyType);
+                
+                // محاولة التحليل كـ GUID (معرف نوع العقار)
+                if (Guid.TryParse(request.PropertyType, out var propertyTypeId))
+                {
+                    properties = properties.Where(p => p.PropertyTypeId == propertyTypeId).ToList();
+                    _logger.LogInformation("✅ تم فلترة {Count} عقار بنوع: {TypeId}", properties.Count, propertyTypeId);
+                }
+                else
+                {
+                    // البحث بالاسم النصي
+                    properties = properties.Where(p => 
+                        string.Equals(p.PropertyTypeName, request.PropertyType, StringComparison.OrdinalIgnoreCase)
+                    ).ToList();
+                    _logger.LogInformation("✅ تم فلترة {Count} عقار بنوع: {TypeName}", properties.Count, request.PropertyType);
+                }
+            }
+
+            // فلتر نوع الوحدة
+            if (!string.IsNullOrWhiteSpace(request.UnitTypeId))
+            {
+                _logger.LogInformation("🔍 تطبيق فلتر نوع الوحدة: {UnitTypeId}", request.UnitTypeId);
+                
+                if (Guid.TryParse(request.UnitTypeId, out var unitTypeId))
+                {
+                    properties = properties.Where(p => 
+                        p.UnitTypeIds != null && p.UnitTypeIds.Contains(unitTypeId)
+                    ).ToList();
+                    _logger.LogInformation("✅ تم فلترة {Count} عقار بنوع الوحدة", properties.Count);
+                }
+            }
+
             // فلتر السعر
             if (request.MinPrice.HasValue)
             {
+                _logger.LogInformation("🔍 تطبيق فلتر السعر الأدنى: {MinPrice}", request.MinPrice.Value);
                 properties = properties.Where(p => p.MinPrice >= request.MinPrice.Value).ToList();
+                _logger.LogInformation("✅ تبقى {Count} عقار بعد فلتر السعر الأدنى", properties.Count);
             }
 
             if (request.MaxPrice.HasValue)
             {
+                _logger.LogInformation("🔍 تطبيق فلتر السعر الأقصى: {MaxPrice}", request.MaxPrice.Value);
                 properties = properties.Where(p => p.MinPrice <= request.MaxPrice.Value).ToList();
+                _logger.LogInformation("✅ تبقى {Count} عقار بعد فلتر السعر الأقصى", properties.Count);
             }
 
             // فلتر التقييم
             if (request.MinRating.HasValue)
             {
+                _logger.LogInformation("🔍 تطبيق فلتر التقييم: {MinRating}", request.MinRating.Value);
                 properties = properties.Where(p => p.AverageRating >= request.MinRating.Value).ToList();
+                _logger.LogInformation("✅ تبقى {Count} عقار بعد فلتر التقييم", properties.Count);
             }
 
             // فلتر السعة
             if (request.GuestsCount.HasValue)
             {
+                _logger.LogInformation("🔍 تطبيق فلتر عدد الضيوف: {GuestsCount}", request.GuestsCount.Value);
                 properties = properties.Where(p => p.MaxCapacity >= request.GuestsCount.Value).ToList();
+                _logger.LogInformation("✅ تبقى {Count} عقار بعد فلتر عدد الضيوف", properties.Count);
             }
 
-            // فلتر الحالة
+            // فلتر المرافق
+            if (request.RequiredAmenityIds?.Any() == true)
+            {
+                _logger.LogInformation("🔍 تطبيق فلتر المرافق: {Count} مرفق", request.RequiredAmenityIds.Count);
+                
+                foreach (var amenityId in request.RequiredAmenityIds)
+                {
+                    if (Guid.TryParse(amenityId, out var amenityGuid))
+                    {
+                        properties = properties.Where(p => 
+                            p.AmenityIds != null && p.AmenityIds.Contains(amenityGuid)
+                        ).ToList();
+                    }
+                }
+                _logger.LogInformation("✅ تبقى {Count} عقار بعد فلتر المرافق", properties.Count);
+            }
+
+            // فلتر الخدمات
+            if (request.ServiceIds?.Any() == true)
+            {
+                _logger.LogInformation("🔍 تطبيق فلتر الخدمات: {Count} خدمة", request.ServiceIds.Count);
+                
+                foreach (var serviceId in request.ServiceIds)
+                {
+                    if (Guid.TryParse(serviceId, out var serviceGuid))
+                    {
+                        properties = properties.Where(p => 
+                            p.ServiceIds != null && p.ServiceIds.Contains(serviceGuid)
+                        ).ToList();
+                    }
+                }
+                _logger.LogInformation("✅ تبقى {Count} عقار بعد فلتر الخدمات", properties.Count);
+            }
+
+            // فلتر الحقول الديناميكية
+            if (request.DynamicFieldFilters?.Any() == true)
+            {
+                _logger.LogInformation("🔍 تطبيق فلاتر الحقول الديناميكية: {Count} حقل", request.DynamicFieldFilters.Count);
+                
+                foreach (var filter in request.DynamicFieldFilters)
+                {
+                    var fieldName = filter.Key;
+                    var fieldValue = filter.Value?.ToString();
+                    
+                    if (!string.IsNullOrWhiteSpace(fieldValue))
+                    {
+                        properties = properties.Where(p =>
+                            p.DynamicFields != null &&
+                            p.DynamicFields.ContainsKey(fieldName) &&
+                            string.Equals(p.DynamicFields[fieldName], fieldValue, StringComparison.OrdinalIgnoreCase)
+                        ).ToList();
+                    }
+                }
+                _logger.LogInformation("✅ تبقى {Count} عقار بعد فلاتر الحقول الديناميكية", properties.Count);
+            }
+
+            // فلتر التواريخ والإتاحة
+            if (request.CheckIn.HasValue && request.CheckOut.HasValue)
+            {
+                _logger.LogInformation("🔍 تطبيق فلتر الإتاحة: {CheckIn} - {CheckOut}", 
+                    request.CheckIn.Value.ToString("yyyy-MM-dd"), 
+                    request.CheckOut.Value.ToString("yyyy-MM-dd"));
+                
+                // مؤقتاً: نعرض فقط العقارات المتاحة
+                // في المستقبل، سيتم التحقق من الإتاحة الفعلية للتواريخ المحددة
+                var beforeAvailability = properties.Count;
+                
+                // نفلتر العقارات غير المتاحة بالكامل
+                properties = properties.Where(p => 
+                    p.IsActive && // العقار نشط
+                    p.TotalUnits > 0 // لديه وحدات
+                ).ToList();
+                
+                if (beforeAvailability != properties.Count)
+                {
+                    _logger.LogInformation("✅ تم فلتر {Count} عقار غير متاح", 
+                        beforeAvailability - properties.Count);
+                }
+            }
+
+            // فلتر الحالة - يجب أن يكون دائماً في النهاية
+            var beforeStatusFilter = properties.Count;
             properties = properties.Where(p => p.IsActive && p.IsApproved).ToList();
+            
+            if (beforeStatusFilter != properties.Count)
+            {
+                _logger.LogInformation("⚠️ تم استبعاد {Count} عقار غير نشط أو غير معتمد", 
+                    beforeStatusFilter - properties.Count);
+            }
+
+            _logger.LogInformation("📊 النتيجة النهائية بعد الفلترة: {Count} عقار", properties.Count);
 
             return properties;
         }
