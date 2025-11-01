@@ -23,6 +23,25 @@ prepare_data_dir() {
   mkdir -p "$DATA_DIR"
 }
 
+port_in_use() {
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltn sport = :"$HOST_PORT" | tail -n +2 | grep -q .
+  elif command -v lsof >/dev/null 2>&1; then
+    lsof -i TCP:"$HOST_PORT" -sTCP:LISTEN >/dev/null 2>&1
+  elif command -v netstat >/dev/null 2>&1; then
+    netstat -ltn | awk '{print $4}' | grep -q ":$HOST_PORT$"
+  else
+    return 1
+  fi
+}
+
+ensure_port_available() {
+  if port_in_use; then
+    log "Host port $HOST_PORT is already in use. Stop the conflicting service or choose another port via REDISEARCH_PORT."
+    exit 1
+  fi
+}
+
 container_exists() {
   docker ps -a --format '{{.Names}}' | grep -Fxq "$CONTAINER_NAME"
 }
@@ -41,6 +60,8 @@ start_container() {
     log "Container '$CONTAINER_NAME' is already running on port $HOST_PORT."
     return 0
   fi
+
+  ensure_port_available
 
   if container_exists; then
     log "Found existing container '$CONTAINER_NAME'. Starting it again."
@@ -136,7 +157,7 @@ Environment variables:
 EOF
       exit 1
       ;;
-  es
+  esac
 }
 
 main

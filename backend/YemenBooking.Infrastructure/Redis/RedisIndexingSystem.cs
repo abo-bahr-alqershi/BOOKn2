@@ -542,12 +542,13 @@ namespace YemenBooking.Infrastructure.Redis
                     var processed = 0;
                     var failed = 0;
 
-                    // معالجة على دفعات
-                    foreach (var batch in properties.Chunk(50))
+                    // معالجة على دفعات صغيرة لتجنب مشاكل DbContext
+                    foreach (var batch in properties.Chunk(10)) // تقليل حجم الدفعة من 50 إلى 10
                     {
                         cancellationToken.ThrowIfCancellationRequested();
 
-                        var tasks = batch.Select(async property =>
+                        // معالجة كل عقار في الدفعة بالتسلسل لتجنب مشاكل التزامن
+                        foreach (var property in batch)
                         {
                             try
                             {
@@ -556,18 +557,16 @@ namespace YemenBooking.Infrastructure.Redis
                                     cancellationToken);
                                 
                                 if (result)
-                                    Interlocked.Increment(ref processed);
+                                    processed++;
                                 else
-                                    Interlocked.Increment(ref failed);
+                                    failed++;
                             }
                             catch (Exception ex)
                             {
                                 _logger.LogError(ex, "فشل فهرسة العقار {PropertyId}", property.Id);
-                                Interlocked.Increment(ref failed);
+                                failed++;
                             }
-                        });
-
-                        await Task.WhenAll(tasks);
+                        }
 
                         _logger.LogInformation(
                             "التقدم: {Processed}/{Total} (فشل: {Failed})",
@@ -721,7 +720,8 @@ namespace YemenBooking.Infrastructure.Redis
             {
                 _logger.LogInformation("جلب جميع العقارات النشطة من قاعدة البيانات");
                 
-                // استخدام المستودع لجلب جميع العقارات
+                // استخدام المستودع لجلب جميع العقارات مع البيانات المرتبطة
+                // ملاحظة: يفضل أن يقوم المستودع بتضمين Include للبيانات المطلوبة
                 var allProperties = await _propertyRepository.GetAllAsync();
                 
                 // فلترة العقارات النشطة فقط

@@ -38,7 +38,7 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
             _propertyRepository = propertyRepository;
             _logger = logger;
             _db = _redisManager.GetDatabase();
-            _indexingLock = new SemaphoreSlim(5, 5); // حد أقصى 5 عمليات فهرسة متزامنة
+            _indexingLock = new SemaphoreSlim(3, 3); // حد أقصى 3 عمليات فهرسة متزامنة لتحسين الاستقرار
         }
 
         #region عمليات الفهرسة الأساسية
@@ -85,8 +85,9 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 {
                     _logger.LogInformation("✅ تمت فهرسة العقار بنجاح: {PropertyId}", property.Id);
                     
-                    // تحديث حالة الفهرسة في قاعدة البيانات
-                    await MarkPropertyAsIndexedAsync(property.Id, cancellationToken);
+                    // ملاحظة: تم تعطيل تحديث حالة الفهرسة في قاعدة البيانات لتجنب مشاكل التزامن
+                    // الفهرسة الحقيقية تحدث في Redis وليس هناك حاجة لتحديث قاعدة البيانات
+                    // await MarkPropertyAsIndexedAsync(property.Id, cancellationToken);
                     
                     // نشر حدث الفهرسة
                     await PublishIndexingEventAsync("property:indexed", property.Id);
