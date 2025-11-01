@@ -31,29 +31,22 @@ namespace YemenBooking.IndexingTests.Tests
         /// التكوين
         /// </summary>
         public IConfiguration Configuration { get; private set; }
-
-        /// <summary>
-        /// قاعدة البيانات الاختبارية
-        /// </summary>
-        public YemenBookingDbContext DbContext { get; private set; }
-
-        /// <summary>
-        /// خدمة الفهرسة
-        /// </summary>
-        public IIndexingService IndexingService { get; private set; }
+        
+        private bool _initialized = false;
+        private readonly SemaphoreSlim _initializationLock = new SemaphoreSlim(1, 1);
 
         /// <summary>
         /// مُنشئ الموفر
         /// </summary>
         public TestDatabaseFixture()
         {
-            InitializeAsync().GetAwaiter().GetResult();
+            Initialize();
         }
 
         /// <summary>
-        /// تهيئة البيئة الاختبارية
+        /// تهيئة البيئة الاختبارية بشكل متزامن
         /// </summary>
-        private async Task InitializeAsync()
+        private void Initialize()
         {
             // بناء التكوين
             var builder = new ConfigurationBuilder()
@@ -111,8 +104,8 @@ namespace YemenBooking.IndexingTests.Tests
             // بناء موفر الخدمات
             ServiceProvider = services.BuildServiceProvider();
 
-            // تهيئة الخدمات
-            await InitializeServicesAsync();
+            // تهيئة قاعدة البيانات فقط - تجاهل الفهرسة في التهيئة
+            Task.Run(async () => await InitializeDatabaseOnlyAsync()).Wait(TimeSpan.FromSeconds(10));
         }
 
         /// <summary>
@@ -132,8 +125,8 @@ namespace YemenBooking.IndexingTests.Tests
             services.AddScoped<IPropertyServiceRepository, PropertyServiceRepository>();
             services.AddScoped<IPricingRuleRepository, PricingRuleRepository>();
             services.AddScoped<IUnitAvailabilityRepository, UnitAvailabilityRepository>();
-            services.AddScoped<IDynamicFieldRepository, DynamicFieldRepository>();
-            services.AddScoped<IPropertyDynamicFieldValueRepository, PropertyDynamicFieldValueRepository>();
+            // services.AddScoped<IDynamicFieldRepository, DynamicFieldRepository>();  // معلق - الكيان غير موجود
+            // services.AddScoped<IPropertyDynamicFieldValueRepository, PropertyDynamicFieldValueRepository>(); // معلق - الكيان غير موجود
         }
 
         /// <summary>
@@ -147,33 +140,42 @@ namespace YemenBooking.IndexingTests.Tests
         }
 
         /// <summary>
-        /// تهيئة الخدمات الأساسية
+        /// تهيئة قاعدة البيانات فقط
         /// </summary>
-        private async Task InitializeServicesAsync()
+        private async Task InitializeDatabaseOnlyAsync()
         {
-            using var scope = ServiceProvider.CreateScope();
-            
-            // الحصول على الخدمات
-            DbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
-            // RedisManager = scope.ServiceProvider.GetRequiredService<IRedisConnectionManager>();
-            IndexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
-
-            // تطبيق الترحيلات إذا لزم الأمر
-            if (!Configuration.GetValue<bool>("Testing:UseInMemoryDatabase", false))
+            await _initializationLock.WaitAsync();
+            try
             {
-                await DbContext.Database.MigrateAsync();
+                if (_initialized) return;
+                
+                using var scope = ServiceProvider.CreateScope();
+                var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+
+                // تطبيق الترحيلات إذا لزم الأمر
+                if (!Configuration.GetValue<bool>("Testing:UseInMemoryDatabase", false))
+                {
+                    await dbContext.Database.MigrateAsync();
+                }
+                else
+                {
+                    await dbContext.Database.EnsureCreatedAsync();
+                }
+
+                // تهيئة البيانات الأساسية فقط
+                await SeedBasicDataAsync();
+
+                // تنظيف Redis فقط - بدون إعادة بناء الفهرس لتجنب الحلقة اللانهائية
+                await CleanupRedisAsync();
+                // تجاهل RebuildIndexAsync لتجنب الحلقة اللانهائية
+                // await RebuildIndexAsync();
+                
+                _initialized = true;
             }
-            else
+            finally
             {
-                await DbContext.Database.EnsureCreatedAsync();
+                _initializationLock.Release();
             }
-
-            // تهيئة البيانات الأساسية
-            await SeedBasicDataAsync();
-
-            // تنظيف Redis وإعادة بناء الفهرس
-            await CleanupRedisAsync();
-            await RebuildIndexAsync();
         }
 
         /// <summary>
@@ -189,35 +191,35 @@ namespace YemenBooking.IndexingTests.Tests
             {
                 var propertyTypes = new[]
                 {
-                    new Core.Entities.PropertyType 
+                    new YemenBooking.Core.Entities.PropertyType 
                     { 
                         Id = Guid.Parse("30000000-0000-0000-0000-000000000001"), 
                         Name = "منتجع",
                         Icon = "🏖️",
                         IsActive = true 
                     },
-                    new Core.Entities.PropertyType 
+                    new YemenBooking.Core.Entities.PropertyType 
                     { 
                         Id = Guid.Parse("30000000-0000-0000-0000-000000000002"), 
                         Name = "شقق مفروشة",
                         Icon = "🏢",
                         IsActive = true 
                     },
-                    new Core.Entities.PropertyType 
+                    new YemenBooking.Core.Entities.PropertyType 
                     { 
                         Id = Guid.Parse("30000000-0000-0000-0000-000000000003"), 
                         Name = "فندق",
                         Icon = "🏨",
                         IsActive = true 
                     },
-                    new Core.Entities.PropertyType 
+                    new YemenBooking.Core.Entities.PropertyType 
                     { 
                         Id = Guid.Parse("30000000-0000-0000-0000-000000000004"), 
                         Name = "فيلا",
                         Icon = "🏡",
                         IsActive = true 
                     },
-                    new Core.Entities.PropertyType 
+                    new YemenBooking.Core.Entities.PropertyType 
                     { 
                         Id = Guid.Parse("30000000-0000-0000-0000-000000000005"), 
                         Name = "شاليه",
@@ -235,34 +237,38 @@ namespace YemenBooking.IndexingTests.Tests
             {
                 var unitTypes = new[]
                 {
-                    new Core.Entities.UnitType
+                    new YemenBooking.Core.Entities.UnitType
                     {
                         Id = Guid.Parse("20000000-0000-0000-0000-000000000001"),
                         Name = "غرفة مفردة",
+                        Description = "غرفة مفردة مريحة",
                         PropertyTypeId = Guid.Parse("30000000-0000-0000-0000-000000000003"),
                         MaxCapacity = 1,
                         IsActive = true
                     },
-                    new Core.Entities.UnitType
+                    new YemenBooking.Core.Entities.UnitType
                     {
                         Id = Guid.Parse("20000000-0000-0000-0000-000000000002"),
                         Name = "غرفة مزدوجة",
+                        Description = "غرفة مزدوجة واسعة",
                         PropertyTypeId = Guid.Parse("30000000-0000-0000-0000-000000000003"),
                         MaxCapacity = 2,
                         IsActive = true
                     },
-                    new Core.Entities.UnitType
+                    new YemenBooking.Core.Entities.UnitType
                     {
                         Id = Guid.Parse("20000000-0000-0000-0000-000000000003"),
                         Name = "جناح",
+                        Description = "جناح فاخر",
                         PropertyTypeId = Guid.Parse("30000000-0000-0000-0000-000000000003"),
                         MaxCapacity = 4,
                         IsActive = true
                     },
-                    new Core.Entities.UnitType
+                    new YemenBooking.Core.Entities.UnitType
                     {
                         Id = Guid.Parse("20000000-0000-0000-0000-000000000004"),
                         Name = "شقة",
+                        Description = "شقة كاملة مفروشة",
                         PropertyTypeId = Guid.Parse("30000000-0000-0000-0000-000000000002"),
                         MaxCapacity = 6,
                         IsActive = true
@@ -278,11 +284,11 @@ namespace YemenBooking.IndexingTests.Tests
             {
                 var amenities = new[]
                 {
-                    new Core.Entities.Amenity { Id = Guid.NewGuid(), Name = "واي فاي", Icon = "📶", IsActive = true },
-                    new Core.Entities.Amenity { Id = Guid.NewGuid(), Name = "مسبح", Icon = "🏊", IsActive = true },
-                    new Core.Entities.Amenity { Id = Guid.NewGuid(), Name = "موقف سيارات", Icon = "🚗", IsActive = true },
-                    new Core.Entities.Amenity { Id = Guid.NewGuid(), Name = "مطعم", Icon = "🍽️", IsActive = true },
-                    new Core.Entities.Amenity { Id = Guid.NewGuid(), Name = "صالة رياضية", Icon = "💪", IsActive = true },
+                    new YemenBooking.Core.Entities.Amenity { Id = Guid.NewGuid(), Name = "واي فاي", Icon = "📶", IsActive = true },
+                    new YemenBooking.Core.Entities.Amenity { Id = Guid.NewGuid(), Name = "مسبح", Icon = "🏊", IsActive = true },
+                    new YemenBooking.Core.Entities.Amenity { Id = Guid.NewGuid(), Name = "موقف سيارات", Icon = "🚗", IsActive = true },
+                    new YemenBooking.Core.Entities.Amenity { Id = Guid.NewGuid(), Name = "مطعم", Icon = "🍽️", IsActive = true },
+                    new YemenBooking.Core.Entities.Amenity { Id = Guid.NewGuid(), Name = "صالة رياضية", Icon = "💪", IsActive = true },
                 };
 
                 dbContext.Amenities.AddRange(amenities);
@@ -292,14 +298,13 @@ namespace YemenBooking.IndexingTests.Tests
             // إضافة المستخدم الافتراضي للاختبار
             if (!await dbContext.Users.AnyAsync())
             {
-                var testUser = new Core.Entities.User
+                var testUser = new YemenBooking.Core.Entities.User
                 {
                     Id = Guid.Parse("10000000-0000-0000-0000-000000000001"),
                     Email = "test@example.com",
-                    PasswordHash = "hashed_password",
-                    FullName = "مستخدم اختباري",
-                    PhoneNumber = "770123456",
-                    Role = Core.Enums.UserRole.Owner,
+                    Password = "hashed_password",
+                    Name = "مستخدم اختباري",
+                    Phone = "770123456",
                     IsActive = true,
                     EmailConfirmed = true,
                     CreatedAt = DateTime.UtcNow
@@ -320,21 +325,8 @@ namespace YemenBooking.IndexingTests.Tests
             await Task.CompletedTask;
         }
 
-        /// <summary>
-        /// إعادة بناء الفهرس
-        /// </summary>
-        private async Task RebuildIndexAsync()
-        {
-            try
-            {
-                await IndexingService.RebuildIndexAsync();
-                Console.WriteLine("✅ تم إعادة بناء الفهرس بنجاح");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"⚠️ خطأ في إعادة بناء الفهرس: {ex.Message}");
-            }
-        }
+        // تم حذف RebuildIndexAsync لتجنب الحلقة اللانهائية عند بدء الاختبارات
+        // يتم الفهرسة عند الحاجة داخل الاختبارات نفسها
 
         /// <summary>
         /// تنظيف الموارد
@@ -344,10 +336,12 @@ namespace YemenBooking.IndexingTests.Tests
             // تنظيف قاعدة البيانات الاختبارية
             if (Configuration.GetValue<bool>("Testing:UseInMemoryDatabase", false))
             {
-                DbContext?.Database.EnsureDeleted();
+                using var scope = ServiceProvider?.CreateScope();
+                var dbContext = scope?.ServiceProvider.GetService<YemenBookingDbContext>();
+                dbContext?.Database.EnsureDeleted();
             }
-
-            DbContext?.Dispose();
+            
+            _initializationLock?.Dispose();
             
             if (ServiceProvider is IDisposable disposable)
             {

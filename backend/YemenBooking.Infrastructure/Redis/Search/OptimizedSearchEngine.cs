@@ -13,6 +13,7 @@ using YemenBooking.Infrastructure.Redis.Models;
 using YemenBooking.Infrastructure.Redis.Cache;
 using YemenBooking.Core.Indexing.Models;
 using YemenBooking.Application.Infrastructure.Services;
+using YemenBooking.Core.Interfaces.Repositories;
 
 namespace YemenBooking.Infrastructure.Redis.Search
 {
@@ -23,27 +24,46 @@ namespace YemenBooking.Infrastructure.Redis.Search
     public class OptimizedSearchEngine
     {
         private readonly IRedisConnectionManager _redisManager;
-        private readonly IMultiLevelCache _cacheManager;
+        private readonly IPropertyRepository _propertyRepository;
+        private readonly MultiLevelCache _cacheManager;
         private readonly ILogger<OptimizedSearchEngine> _logger;
-        private readonly IDatabase _db;
         private readonly IMemoryCache _memoryCache;
+        private IDatabase _db;
         private readonly SemaphoreSlim _searchLimiter;
+        private readonly object _dbLock = new object();
 
         /// <summary>
         /// مُنشئ محرك البحث المحسن
         /// </summary>
         public OptimizedSearchEngine(
             IRedisConnectionManager redisManager,
-            IMultiLevelCache cacheManager,
+            IPropertyRepository propertyRepository,
+            MultiLevelCache cacheManager,
             ILogger<OptimizedSearchEngine> logger,
             IMemoryCache memoryCache)
         {
             _redisManager = redisManager;
+            _propertyRepository = propertyRepository;
             _cacheManager = cacheManager;
             _logger = logger;
             _memoryCache = memoryCache;
-            _db = _redisManager.GetDatabase();
+            _db = null; // تأجيل تهيئة Database
             _searchLimiter = new SemaphoreSlim(50, 50); // حد أقصى 50 بحث متزامن
+        }
+
+        private IDatabase GetDatabase()
+        {
+            if (_db != null)
+                return _db;
+                
+            lock (_dbLock)
+            {
+                if (_db == null)
+                {
+                    _db = _redisManager.GetDatabase();
+                }
+            }
+            return _db;
         }
 
         #region البحث الرئيسي
@@ -192,7 +212,7 @@ namespace YemenBooking.Infrastructure.Redis.Search
                 // إضافة الصفحة
                 args.AddRange(new object[] { "LIMIT", offset.ToString(), request.PageSize.ToString() });
 
-                var result = await _db.ExecuteAsync("FT.SEARCH", args.ToArray());
+                var result = await GetDatabase().ExecuteAsync("FT.SEARCH", args.ToArray());
                 return ParseRediSearchResult(result, request);
             }
             catch (Exception ex)
@@ -217,7 +237,7 @@ namespace YemenBooking.Infrastructure.Redis.Search
                 : RedisKeySchemas.GEO_PROPERTIES;
 
             // استخدام GeoRadius للبحث الجغرافي
-            var geoResults = await _db.GeoRadiusAsync(
+            var geoResults = await GetDatabase().GeoRadiusAsync(
                 geoKey,
                 request.Longitude.Value,
                 request.Latitude.Value,
@@ -264,7 +284,7 @@ namespace YemenBooking.Infrastructure.Redis.Search
             var keys = BuildLuaScriptKeys(request);
             var args = BuildLuaScriptArgs(request);
 
-            var result = await _db.ScriptEvaluateAsync(luaScript, keys, args);
+            var result = await GetDatabase().ScriptEvaluateAsync(luaScript, keys, args);
             return ParseLuaScriptResult(result, request);
         }
 
@@ -282,13 +302,13 @@ namespace YemenBooking.Infrastructure.Redis.Search
             {
                 _logger.LogInformation("🏙️ البحث في المدينة: {City}", request.City);
                 var cityKey = RedisKeySchemas.GetCityKey(request.City);
-                var cityProperties = await _db.SetMembersAsync(cityKey);
+                var cityProperties = await GetDatabase().SetMembersAsync(cityKey);
                 propertyIds = cityProperties.Select(p => p.ToString()).ToHashSet();
                 _logger.LogInformation("✅ تم العثور على {Count} عقار في المدينة", propertyIds.Count);
             }
             else
             {
-                var allProperties = await _db.SetMembersAsync(RedisKeySchemas.PROPERTIES_ALL_SET);
+                var allProperties = await GetDatabase().SetMembersAsync(RedisKeySchemas.PROPERTIES_ALL_SET);
                 propertyIds = allProperties.Select(p => p.ToString()).ToHashSet();
                 _logger.LogInformation("📋 البدء بجميع العقارات: {Count}", propertyIds.Count);
             }
@@ -311,7 +331,7 @@ namespace YemenBooking.Infrastructure.Redis.Search
                     typeKey = string.Format(RedisKeySchemas.TAG_TYPE, request.PropertyType);
                 }
                 
-                var typeProperties = await _db.SetMembersAsync(typeKey);
+                var typeProperties = await GetDatabase().SetMembersAsync(typeKey);
                 var typePropsSet = typeProperties.Select(p => p.ToString()).ToHashSet();
                 
                 _logger.LogInformation("🔍 عقارات النوع المطلوب: {Count}", typePropsSet.Count);
@@ -327,9 +347,40 @@ namespace YemenBooking.Infrastructure.Redis.Search
                 foreach (var amenityId in request.RequiredAmenityIds)
                 {
                     var amenityKey = RedisKeySchemas.GetAmenityKey(Guid.Parse(amenityId));
-                    var amenityProperties = await _db.SetMembersAsync(amenityKey);
+                    var amenityProperties = await GetDatabase().SetMembersAsync(amenityKey);
                     propertyIds.IntersectWith(amenityProperties.Select(p => p.ToString()));
                 }
+            }
+
+            // تطبيق فلاتر الحقول الديناميكية
+            if (request.DynamicFieldFilters?.Any() == true)
+            {
+                _logger.LogInformation("🔍 تطبيق فلاتر الحقول الديناميكية: {Count} فلتر", request.DynamicFieldFilters.Count);
+                
+                foreach (var filter in request.DynamicFieldFilters)
+                {
+                    // البحث عن العقارات التي لديها قيمة الحقل المطلوبة
+                    var valueIndexKey = $"dynamic_value:{filter.Key.ToLower()}:{filter.Value.ToLower()}";
+                    var matchingProperties = await GetDatabase().SetMembersAsync(valueIndexKey);
+                    
+                    if (matchingProperties.Length > 0)
+                    {
+                        var matchingSet = matchingProperties.Select(p => p.ToString()).ToHashSet();
+                        propertyIds.IntersectWith(matchingSet);
+                        _logger.LogInformation("✅ فلتر ديناميكي {Field}={Value}: {Count} نتيجة", 
+                            filter.Key, filter.Value, matchingSet.Count);
+                    }
+                    else
+                    {
+                        _logger.LogInformation("⚠️ لا توجد نتائج للفلتر الديناميكي {Field}={Value}", 
+                            filter.Key, filter.Value);
+                        // إذا لم تجد أي عقار بهذا الحقل، النتيجة فارغة
+                        propertyIds.Clear();
+                        break;
+                    }
+                }
+                
+                _logger.LogInformation("✅ بعد فلاتر الحقول الديناميكية: {Count} عقار", propertyIds.Count);
             }
 
             if (!propertyIds.Any())
@@ -361,13 +412,13 @@ namespace YemenBooking.Infrastructure.Redis.Search
             CancellationToken cancellationToken)
         {
             var searchText = request.SearchText?.ToLowerInvariant();
-            var allProperties = await _db.SetMembersAsync(RedisKeySchemas.PROPERTIES_ALL_SET);
+            var allProperties = await GetDatabase().SetMembersAsync(RedisKeySchemas.PROPERTIES_ALL_SET);
             var matchedProperties = new List<PropertyIndexDocument>();
 
             foreach (var propertyId in allProperties)
             {
                 var propertyKey = RedisKeySchemas.GetPropertyKey(Guid.Parse(propertyId));
-                var propertyData = await _db.HashGetAllAsync(propertyKey);
+                var propertyData = await GetDatabase().HashGetAllAsync(propertyKey);
                 
                 if (propertyData.Length == 0) continue;
                 
@@ -379,6 +430,19 @@ namespace YemenBooking.Infrastructure.Redis.Search
                     doc.City?.ToLowerInvariant().Contains(searchText) == true)
                 {
                     matchedProperties.Add(doc);
+                }
+                
+                // البحث في الحقول الديناميكية أيضاً
+                if (doc.DynamicFields != null)
+                {
+                    foreach (var field in doc.DynamicFields.Values)
+                    {
+                        if (field?.ToLowerInvariant().Contains(searchText) == true)
+                        {
+                            matchedProperties.Add(doc);
+                            break;
+                        }
+                    }
                 }
             }
 
@@ -401,7 +465,7 @@ namespace YemenBooking.Infrastructure.Redis.Search
         {
             try
             {
-                var marker = await _db.StringGetAsync("search:module:available");
+                var marker = await GetDatabase().StringGetAsync("search:module:available");
                 return marker == "1";
             }
             catch
@@ -486,7 +550,7 @@ namespace YemenBooking.Infrastructure.Redis.Search
         private async Task<List<PropertyIndexDocument>> GetPropertiesDetailsAsync(List<string> propertyIds)
         {
             var properties = new List<PropertyIndexDocument>();
-            var batch = _db.CreateBatch();
+            var batch = GetDatabase().CreateBatch();
             var tasks = new List<Task<HashEntry[]>>();
 
             foreach (var propertyId in propertyIds)
@@ -764,23 +828,24 @@ namespace YemenBooking.Infrastructure.Redis.Search
         private void RecordMetrics(long elapsedMs, bool fromCache, bool isError = false)
         {
             // تسجيل المقاييس للمراقبة
-            _ = _db.StringIncrementAsync(RedisKeySchemas.STATS_SEARCH_COUNT);
+            var db = GetDatabase();
+            _ = db.StringIncrementAsync(RedisKeySchemas.STATS_SEARCH_COUNT);
             
             if (fromCache)
             {
-                _ = _db.StringIncrementAsync("stats:cache:hits");
+                _ = db.StringIncrementAsync("stats:cache:hits");
             }
             else
             {
-                _ = _db.StringIncrementAsync("stats:cache:misses");
+                _ = db.StringIncrementAsync("stats:cache:misses");
             }
             
             if (isError)
             {
-                _ = _db.StringIncrementAsync(string.Format(RedisKeySchemas.STATS_ERRORS, "search"));
+                _ = db.StringIncrementAsync(string.Format(RedisKeySchemas.STATS_ERRORS, "search"));
             }
             
-            _ = _db.StringSetAsync($"stats:search:last_latency", elapsedMs);
+            _ = db.StringSetAsync($"stats:search:last_latency", elapsedMs);
         }
 
         /// <summary>

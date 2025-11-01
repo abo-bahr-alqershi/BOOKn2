@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Xunit;
 using Xunit.Abstractions;
 using YemenBooking.Core.Entities;
+using YemenBooking.Core.ValueObjects;
 using YemenBooking.Core.Indexing.Models;
 
 namespace YemenBooking.IndexingTests.Tests.Availability
@@ -213,13 +214,13 @@ namespace YemenBooking.IndexingTests.Tests.Availability
             {
                 Id = Guid.NewGuid(),
                 UserId = Guid.Parse("10000000-0000-0000-0000-000000000001"),
-                PropertyId = property.Id,
                 UnitId = unit.Id,
                 CheckIn = checkIn.AddDays(-1),
                 CheckOut = checkOut.AddDays(1),
-                Status = Core.Enums.BookingStatus.Confirmed,
-                TotalAmount = new Money { Amount = 500, Currency = "YER", ExchangeRate = 1 },
-                CreatedAt = DateTime.UtcNow
+                Status = YemenBooking.Core.Enums.BookingStatus.Confirmed,
+                TotalPrice = new Money(500, "YER"),
+                BookedAt = DateTime.UtcNow,
+                GuestsCount = 2
             };
 
             _dbContext.Bookings.Add(booking);
@@ -265,7 +266,7 @@ namespace YemenBooking.IndexingTests.Tests.Availability
                 MaxCapacity = 2,
                 IsAvailable = true,
                 IsActive = true,
-                BasePrice = new Money { Amount = 100, Currency = "YER", ExchangeRate = 1 }
+                BasePrice = new Money(100, "YER")
             };
             _dbContext.Units.Add(unit2);
 
@@ -278,13 +279,13 @@ namespace YemenBooking.IndexingTests.Tests.Availability
             {
                 Id = Guid.NewGuid(),
                 UserId = Guid.Parse("10000000-0000-0000-0000-000000000001"),
-                PropertyId = property.Id,
                 UnitId = unit1.Id,
                 CheckIn = checkIn,
                 CheckOut = checkOut,
-                Status = Core.Enums.BookingStatus.Confirmed,
-                TotalAmount = new Money { Amount = 300, Currency = "YER", ExchangeRate = 1 },
-                CreatedAt = DateTime.UtcNow
+                Status = YemenBooking.Core.Enums.BookingStatus.Confirmed,
+                TotalPrice = new Money(300, "YER"),
+                BookedAt = DateTime.UtcNow,
+                GuestsCount = 2
             };
 
             _dbContext.Bookings.Add(booking);
@@ -329,24 +330,24 @@ namespace YemenBooking.IndexingTests.Tests.Availability
                 {
                     Id = Guid.NewGuid(),
                     UserId = Guid.Parse("10000000-0000-0000-0000-000000000001"),
-                    PropertyId = property.Id,
                     UnitId = unit.Id,
                     CheckIn = DateTime.Now.AddDays(1),
                     CheckOut = DateTime.Now.AddDays(5),
-                    Status = Core.Enums.BookingStatus.Confirmed,
-                    TotalAmount = new Money { Amount = 400, Currency = "YER", ExchangeRate = 1 }
+                    Status = YemenBooking.Core.Enums.BookingStatus.Confirmed,
+                    TotalPrice = new Money(400, "YER"),
+                    BookedAt = DateTime.Now
                 },
                 // حجز من 10-15
                 new Booking
                 {
                     Id = Guid.NewGuid(),
                     UserId = Guid.Parse("10000000-0000-0000-0000-000000000001"),
-                    PropertyId = property.Id,
                     UnitId = unit.Id,
                     CheckIn = DateTime.Now.AddDays(10),
                     CheckOut = DateTime.Now.AddDays(15),
-                    Status = Core.Enums.BookingStatus.Confirmed,
-                    TotalAmount = new Money { Amount = 500, Currency = "YER", ExchangeRate = 1 }
+                    Status = YemenBooking.Core.Enums.BookingStatus.Confirmed,
+                    TotalPrice = new Money(500, "YER"),
+                    BookedAt = DateTime.Now
                 }
             };
 

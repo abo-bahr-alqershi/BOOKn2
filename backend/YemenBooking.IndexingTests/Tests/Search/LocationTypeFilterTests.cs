@@ -129,18 +129,18 @@ namespace YemenBooking.IndexingTests.Tests.Search
 
             // عقار قريب (ضمن 5 كم)
             var nearProperty = await CreateTestPropertyAsync("عقار قريب", "صنعاء");
-            nearProperty.Latitude = centerLat + 0.01;
-            nearProperty.Longitude = centerLon + 0.01;
+            nearProperty.Latitude = (decimal)(centerLat + 0.01);
+            nearProperty.Longitude = (decimal)(centerLon + 0.01);
 
             // عقار متوسط (ضمن 10 كم)
             var mediumProperty = await CreateTestPropertyAsync("عقار متوسط", "صنعاء");
-            mediumProperty.Latitude = centerLat + 0.05;
-            mediumProperty.Longitude = centerLon + 0.05;
+            mediumProperty.Latitude = (decimal)(centerLat + 0.05);
+            mediumProperty.Longitude = (decimal)(centerLon + 0.05);
 
             // عقار بعيد (خارج 10 كم)
             var farProperty = await CreateTestPropertyAsync("عقار بعيد", "صنعاء");
-            farProperty.Latitude = centerLat + 0.5;
-            farProperty.Longitude = centerLon + 0.5;
+            farProperty.Latitude = (decimal)(centerLat + 0.5);
+            farProperty.Longitude = (decimal)(centerLon + 0.5);
 
             _dbContext.Properties.UpdateRange(nearProperty, mediumProperty, farProperty);
             await _dbContext.SaveChangesAsync();
@@ -149,8 +149,8 @@ namespace YemenBooking.IndexingTests.Tests.Search
             // البحث ضمن نطاق 5 كم
             var searchRequest = new PropertySearchRequest
             {
-                Latitude = centerLat,
-                Longitude = centerLon,
+                Latitude = 15.3522,
+                Longitude = 44.2095,
                 RadiusKm = 5,
                 PageNumber = 1,
                 PageSize = 10
@@ -477,13 +477,13 @@ namespace YemenBooking.IndexingTests.Tests.Search
             var centerLon = 44.1910;
 
             var nearHotel = await CreateTestPropertyAsync("فندق قريب", "صنعاء", hotelType);
-            nearHotel.Latitude = centerLat + 0.01;
-            nearHotel.Longitude = centerLon + 0.01;
+            nearHotel.Latitude = (decimal)(centerLat + 0.01);
+            nearHotel.Longitude = (decimal)(centerLon + 0.01);
 
             var nearApartment = await CreateTestPropertyAsync("شقة قريبة", "صنعاء", 
                 Guid.Parse("30000000-0000-0000-0000-000000000002"));
-            nearApartment.Latitude = centerLat + 0.01;
-            nearApartment.Longitude = centerLon + 0.01;
+            nearApartment.Latitude = (decimal)(centerLat + 0.01);
+            nearApartment.Longitude = (decimal)(centerLon + 0.01);
 
             _dbContext.Properties.UpdateRange(nearHotel, nearApartment);
             await _dbContext.SaveChangesAsync();

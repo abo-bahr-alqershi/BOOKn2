@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -8,13 +9,15 @@ using Microsoft.EntityFrameworkCore;
 using Xunit;
 using Xunit.Abstractions;
 using YemenBooking.Application.Features.SearchAndFilters.Services;
+using YemenBooking.Infrastructure.Redis;
 using YemenBooking.Infrastructure.Redis.Configuration;
 using YemenBooking.Infrastructure.Data.Context;
+using YemenBooking.Core.Entities;
+using YemenBooking.Core.ValueObjects;
 using YemenBooking.Infrastructure.Repositories;
 using YemenBooking.Core.Interfaces.Repositories;
 using YemenBooking.Infrastructure.Services;
 using YemenBooking.Core.Indexing.Models;
-using YemenBooking.Core.Entities;
 
 namespace YemenBooking.IndexingTests.Tests
 {
@@ -25,37 +28,27 @@ namespace YemenBooking.IndexingTests.Tests
     public abstract class TestBase : IClassFixture<TestDatabaseFixture>, IDisposable
     {
         protected readonly TestDatabaseFixture _fixture;
-        protected readonly ITestOutputHelper _output;
-        protected readonly IServiceProvider _serviceProvider;
-        protected readonly IIndexingService _indexingService;
-        protected readonly IPropertyRepository _propertyRepository;
-        protected readonly IUnitRepository _unitRepository;
-        // protected readonly IRedisConnectionManager _redisManager;
-        protected readonly ILogger _logger;
+        protected readonly IServiceScope _scope;
         protected readonly YemenBookingDbContext _dbContext;
+        protected readonly IIndexingService _indexingService;
+        protected readonly ILogger<TestBase> _logger;
+        protected readonly ITestOutputHelper _output;
         protected readonly Random _random = new Random();
 
         /// <summary>
-        /// مُنشئ الفئة الأساسية
+        /// منشئ الاختبار الأساسي
         /// </summary>
-        /// <param name="fixture">موفر البيانات والخدمات</param>
-        /// <param name="output">مخرجات الاختبار</param>
         protected TestBase(TestDatabaseFixture fixture, ITestOutputHelper output)
         {
             _fixture = fixture;
             _output = output;
-            _serviceProvider = fixture.ServiceProvider;
+            _scope = _fixture.ServiceProvider.CreateScope();
+            _dbContext = _scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+            _indexingService = _scope.ServiceProvider.GetRequiredService<IIndexingService>();
+            _logger = _scope.ServiceProvider.GetRequiredService<ILogger<TestBase>>();
             
-            // الحصول على الخدمات المطلوبة
-            using var scope = _serviceProvider.CreateScope();
-            _indexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
-            _propertyRepository = scope.ServiceProvider.GetRequiredService<IPropertyRepository>();
-            _unitRepository = scope.ServiceProvider.GetRequiredService<IUnitRepository>();
-            // _redisManager = scope.ServiceProvider.GetRequiredService<IRedisConnectionManager>();
-            _dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
-            
-            var loggerFactory = scope.ServiceProvider.GetRequiredService<ILoggerFactory>();
-            _logger = loggerFactory.CreateLogger(GetType());
+            // التأكد من تهيئة البيانات الأساسية باستخدام TestDataHelper
+            Task.Run(async () => await TestDataHelper.EnsureAllBaseDataAsync(_dbContext)).GetAwaiter().GetResult();
         }
 
         /// <summary>
@@ -69,28 +62,15 @@ namespace YemenBooking.IndexingTests.Tests
             bool isActive = true,
             bool isApproved = true)
         {
-            name ??= $"عقار اختباري {_random.Next(1000, 9999)}";
-            city ??= GetRandomCity();
-            typeId ??= GetRandomPropertyType();
-
-            var property = new Property
-            {
-                Id = Guid.NewGuid(),
-                Name = name,
-                City = city,
-                TypeId = typeId.Value,
-                IsActive = isActive,
-                IsApproved = isApproved,
-                OwnerId = Guid.NewGuid(),
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow,
-                Address = $"شارع {_random.Next(1, 100)}",
-                Description = "وصف اختباري",
-                Latitude = 15.3694 + (_random.NextDouble() * 0.1),
-                Longitude = 44.1910 + (_random.NextDouble() * 0.1),
-                StarRating = _random.Next(1, 6),
-                AverageRating = (decimal)(_random.NextDouble() * 5)
-            };
+            // استخدام TestDataHelper لإنشاء عقار صحيح
+            var property = TestDataHelper.CreateValidProperty(
+                name: name ?? $"عقار اختباري {_random.Next(1000, 9999)}",
+                city: city ?? GetRandomCity(),
+                typeId: typeId ?? GetRandomPropertyType()
+            );
+            
+            property.IsActive = isActive;
+            property.IsApproved = isApproved;
 
             _dbContext.Properties.Add(property);
             await _dbContext.SaveChangesAsync();
@@ -106,28 +86,11 @@ namespace YemenBooking.IndexingTests.Tests
         /// </summary>
         protected async Task CreateTestUnitsForPropertyAsync(Guid propertyId, int count = 3)
         {
+            
             for (int i = 0; i < count; i++)
             {
-                var unit = new Unit
-                {
-                    Id = Guid.NewGuid(),
-                    PropertyId = propertyId,
-                    Name = $"وحدة {i + 1}",
-                    UnitTypeId = GetRandomUnitType(),
-                    MaxCapacity = _random.Next(2, 10),
-                    AdultsCapacity = _random.Next(2, 8),
-                    ChildrenCapacity = _random.Next(0, 4),
-                    IsAvailable = true,
-                    IsActive = true,
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow,
-                    BasePrice = new Money
-                    {
-                        Amount = _random.Next(50, 500) * 10,
-                        Currency = "YER",
-                        ExchangeRate = 1
-                    }
-                };
+                // استخدام TestDataHelper لإنشاء وحدة صحيحة
+                var unit = TestDataHelper.CreateValidUnit(propertyId, $"وحدة {i + 1}");
 
                 _dbContext.Units.Add(unit);
             }
@@ -293,7 +256,8 @@ namespace YemenBooking.IndexingTests.Tests
 
         public virtual void Dispose()
         {
-            // التنظيف إذا لزم الأمر
+            // التنظيف والتخلص من الـ scope
+            _scope?.Dispose();
         }
     }
 }

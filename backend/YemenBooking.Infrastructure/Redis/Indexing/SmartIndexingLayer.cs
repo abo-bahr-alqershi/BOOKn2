@@ -23,8 +23,9 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
         private readonly IRedisConnectionManager _redisManager;
         private readonly IPropertyRepository _propertyRepository;
         private readonly ILogger<SmartIndexingLayer> _logger;
-        private readonly IDatabase _db;
+        private IDatabase _db;
         private readonly SemaphoreSlim _indexingLock;
+        private readonly object _dbLock = new object();
         
         /// <summary>
         /// مُنشئ طبقة الفهرسة الذكية
@@ -37,8 +38,24 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
             _redisManager = redisManager;
             _propertyRepository = propertyRepository;
             _logger = logger;
-            _db = _redisManager.GetDatabase();
+            // تأجيل الحصول على Database لتجنب مشاكل التزامن
+            _db = null;
             _indexingLock = new SemaphoreSlim(3, 3); // حد أقصى 3 عمليات فهرسة متزامنة لتحسين الاستقرار
+        }
+
+        private IDatabase GetDatabase()
+        {
+            if (_db != null)
+                return _db;
+                
+            lock (_dbLock)
+            {
+                if (_db == null)
+                {
+                    _db = _redisManager.GetDatabase();
+                }
+            }
+            return _db;
         }
 
         #region عمليات الفهرسة الأساسية
@@ -51,6 +68,13 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
             Property property, 
             CancellationToken cancellationToken = default)
         {
+            // التحقق من صحة المدخلات
+            if (property == null)
+            {
+                _logger.LogWarning("محاولة فهرسة عقار null");
+                return false;
+            }
+            
             await _indexingLock.WaitAsync(cancellationToken);
             try
             {
@@ -59,9 +83,17 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
 
                 // 1. بناء نموذج الفهرس
                 var indexDoc = await BuildPropertyIndexDocumentAsync(property, cancellationToken);
+                
+                // التحقق من صحة البيانات
+                if (indexDoc == null)
+                {
+                    _logger.LogWarning("فشل بناء نموذج الفهرس للعقار: {PropertyId}", property.Id);
+                    return false;
+                }
 
                 // 2. إنشاء معاملة Pipeline لضمان الذرية
-                var tran = _db.CreateTransaction();
+                var db = GetDatabase();
+                var tran = db.CreateTransaction();
 
                 // 3. حفظ البيانات الأساسية في Hash
                 var propertyKey = RedisKeySchemas.GetPropertyKey(property.Id);
@@ -124,8 +156,9 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 _logger.LogInformation("تحديث فهرسة العقار: {PropertyId}", property.Id);
 
                 // 1. جلب البيانات القديمة للمقارنة
+                var db = GetDatabase();
                 var propertyKey = RedisKeySchemas.GetPropertyKey(property.Id);
-                var oldData = await _db.HashGetAllAsync(propertyKey);
+                var oldData = await db.HashGetAllAsync(propertyKey);
                 PropertyIndexDocument oldDoc = null;
                 
                 if (oldData.Length > 0)
@@ -137,7 +170,7 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 var newDoc = await BuildPropertyIndexDocumentAsync(property, cancellationToken);
 
                 // 3. إنشاء معاملة للتحديث
-                var tran = _db.CreateTransaction();
+                var tran = db.CreateTransaction();
 
                 // 4. تحديث البيانات الأساسية
                 _ = tran.HashSetAsync(propertyKey, newDoc.ToHashEntries());
@@ -192,8 +225,9 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 _logger.LogInformation("حذف العقار من الفهارس: {PropertyId}", propertyId);
 
                 // 1. جلب البيانات الحالية للعقار
+                var db = GetDatabase();
                 var propertyKey = RedisKeySchemas.GetPropertyKey(propertyId);
-                var data = await _db.HashGetAllAsync(propertyKey);
+                var data = await db.HashGetAllAsync(propertyKey);
                 
                 if (data.Length == 0)
                 {
@@ -204,7 +238,7 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 var doc = PropertyIndexDocument.FromHashEntries(data);
 
                 // 2. إنشاء معاملة للحذف
-                var tran = _db.CreateTransaction();
+                var tran = db.CreateTransaction();
 
                 // 3. حذف من جميع الفهارس
                 await RemoveFromAllIndexesAsync(tran, doc);
@@ -216,7 +250,7 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
 
                 // 5. حذف وحدات العقار
                 var unitsKey = RedisKeySchemas.GetPropertyUnitsKey(propertyId);
-                var unitIds = await _db.SetMembersAsync(unitsKey);
+                var unitIds = await db.SetMembersAsync(unitsKey);
                 
                 foreach (var unitId in unitIds)
                 {
@@ -266,7 +300,8 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                     unit.Id, unit.PropertyId);
 
                 var unitDoc = BuildUnitIndexDocument(unit);
-                var tran = _db.CreateTransaction();
+                var db = GetDatabase();
+                var tran = db.CreateTransaction();
 
                 // حفظ بيانات الوحدة
                 var unitKey = RedisKeySchemas.GetUnitKey(unit.Id);
@@ -378,7 +413,11 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 CreatedAt = property.CreatedAt,
                 UpdatedAt = property.UpdatedAt,
                 LastIndexedAt = DateTime.UtcNow,
-                LastModifiedTicks = property.UpdatedAt.Ticks
+                LastModifiedTicks = property.UpdatedAt.Ticks,
+                
+                // الحقول الديناميكية
+                DynamicFields = await GetDynamicFieldsForPropertyAsync(property.Id, cancellationToken),
+                Tags = new List<string>() // يمكن إضافة tags لاحقاً
             };
 
             // حساب نقاط الشعبية
@@ -415,6 +454,36 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
             };
         }
 
+        /// <summary>
+        /// جلب الحقول الديناميكية للعقار من Redis
+        /// </summary>
+        private async Task<Dictionary<string, string>> GetDynamicFieldsForPropertyAsync(
+            Guid propertyId,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                var dynamicFieldsKey = $"{RedisKeySchemas.GetPropertyKey(propertyId)}:dynamic_fields";
+                var db = GetDatabase();
+                var fields = await db.HashGetAllAsync(dynamicFieldsKey);
+                
+                if (fields.Length == 0)
+                {
+                    return new Dictionary<string, string>();
+                }
+                
+                return fields.ToDictionary(
+                    x => x.Name.ToString(),
+                    x => x.Value.ToString()
+                );
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "خطأ في جلب الحقول الديناميكية للعقار {PropertyId}", propertyId);
+                return new Dictionary<string, string>();
+            }
+        }
+        
         #endregion
 
         #region عمليات الفهارس المساعدة
@@ -682,12 +751,13 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
             Guid propertyId,
             int unitCapacity)
         {
+            var db = GetDatabase();
             var propertyKey = RedisKeySchemas.GetPropertyKey(propertyId);
-            var currentCapacity = await _db.HashGetAsync(propertyKey, "max_capacity");
+            var currentCapacity = await db.HashGetAsync(propertyKey, "max_capacity");
             
             if (currentCapacity.IsNullOrEmpty || unitCapacity > (int)currentCapacity)
             {
-                _ = tran.HashSetAsync(propertyKey, "max_capacity", unitCapacity);
+                await db.HashSetAsync(propertyKey, "max_capacity", unitCapacity);
             }
         }
 
@@ -699,20 +769,61 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
             Guid propertyId,
             decimal unitPrice)
         {
+            var db = GetDatabase();
             var propertyKey = RedisKeySchemas.GetPropertyKey(propertyId);
-            var currentMinPrice = await _db.HashGetAsync(propertyKey, "min_price");
-            var currentMaxPrice = await _db.HashGetAsync(propertyKey, "max_price");
+            var currentMinPrice = await db.HashGetAsync(propertyKey, "min_price");
+            var currentMaxPrice = await db.HashGetAsync(propertyKey, "max_price");
             
             if (currentMinPrice.IsNullOrEmpty || unitPrice < (decimal)currentMinPrice)
             {
-                _ = tran.HashSetAsync(propertyKey, "min_price", unitPrice.ToString());
-                _ = tran.SortedSetAddAsync(RedisKeySchemas.INDEX_PRICE, 
+                await db.HashSetAsync(propertyKey, new HashEntry[] 
+                {
+                    new HashEntry("min_price", (double)unitPrice)
+                });
+                await db.SortedSetAddAsync(RedisKeySchemas.INDEX_PRICE, 
                     propertyId.ToString(), (double)unitPrice, SortedSetWhen.Always);
             }
             
             if (currentMaxPrice.IsNullOrEmpty || unitPrice > (decimal)currentMaxPrice)
             {
-                _ = tran.HashSetAsync(propertyKey, "max_price", unitPrice.ToString());
+                await db.HashSetAsync(propertyKey, new HashEntry[] 
+                {
+                    new HashEntry("max_price", (double)unitPrice)
+                });
+            }
+        }
+
+        #endregion
+
+        #region عمليات القراءة
+
+        /// <summary>
+        /// قراءة فهرس العقار من Redis
+        /// </summary>
+        public async Task<PropertyIndexDocument?> GetPropertyIndexAsync(
+            Guid propertyId,
+            CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var db = GetDatabase();
+                var propertyKey = RedisKeySchemas.GetPropertyKey(propertyId);
+                var hashEntries = await db.HashGetAllAsync(propertyKey);
+                
+                if (!hashEntries.Any())
+                {
+                    _logger.LogInformation("لم يتم العثور على فهرس للعقار: {PropertyId}", propertyId);
+                    return null;
+                }
+
+                // تحويل من HashEntries إلى PropertyIndexDocument
+                var doc = PropertyIndexDocument.FromHashEntries(hashEntries);
+                return doc;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "خطأ في قراءة فهرس العقار: {PropertyId}", propertyId);
+                return null;
             }
         }
 

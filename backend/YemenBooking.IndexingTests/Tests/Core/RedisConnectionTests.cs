@@ -8,6 +8,7 @@ using Xunit;
 using StackExchange.Redis;
 using YemenBooking.Infrastructure.Redis;
 using YemenBooking.Infrastructure.Redis.Core;
+using YemenBooking.Infrastructure.Services;
 using YemenBooking.Application.Infrastructure.Services;
 using Moq;
 
@@ -49,7 +50,10 @@ namespace YemenBooking.IndexingTests.Tests.Core
         public async Task DisposeAsync()
         {
             _logger.LogInformation("🧹 تنظيف موارد اختبارات Redis");
-            _redisManager?.Dispose();
+            if (_redisManager is IDisposable disposable)
+            {
+                disposable.Dispose();
+            }
             await Task.CompletedTask;
         }
 

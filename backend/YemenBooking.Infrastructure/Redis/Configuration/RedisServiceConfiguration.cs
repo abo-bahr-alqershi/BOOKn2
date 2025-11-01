@@ -59,7 +59,7 @@ namespace YemenBooking.Infrastructure.Redis.Configuration
             });
 
             // 3. تسجيل نظام الكاش متعدد المستويات
-            services.AddSingleton<IMultiLevelCache, MultiLevelCache>(provider =>
+            services.AddSingleton<MultiLevelCache>(provider =>
             {
                 var memoryCache = provider.GetRequiredService<Microsoft.Extensions.Caching.Memory.IMemoryCache>();
                 var redisManager = provider.GetRequiredService<IRedisConnectionManager>();
@@ -67,16 +67,20 @@ namespace YemenBooking.Infrastructure.Redis.Configuration
                 
                 return new MultiLevelCache(memoryCache, redisManager, logger);
             });
+            
+            // تسجيل الواجهة IMultiLevelCache
+            services.AddSingleton<IMultiLevelCache>(provider => provider.GetRequiredService<MultiLevelCache>());
 
             // 4. تسجيل محرك البحث المحسن
             services.AddScoped<OptimizedSearchEngine>(provider =>
             {
                 var redisManager = provider.GetRequiredService<IRedisConnectionManager>();
-                var cacheManager = provider.GetRequiredService<IMultiLevelCache>();
-                var memoryCache = provider.GetRequiredService<Microsoft.Extensions.Caching.Memory.IMemoryCache>();
+                var propertyRepository = provider.GetRequiredService<IPropertyRepository>();
+                var cacheManager = provider.GetRequiredService<MultiLevelCache>();
                 var logger = provider.GetRequiredService<ILogger<OptimizedSearchEngine>>();
+                var memoryCache = provider.GetRequiredService<Microsoft.Extensions.Caching.Memory.IMemoryCache>();
                 
-                return new OptimizedSearchEngine(redisManager, cacheManager, logger, memoryCache);
+                return new OptimizedSearchEngine(redisManager, propertyRepository, cacheManager, logger, memoryCache);
             });
 
             // 5. تسجيل معالج الإتاحة
@@ -99,12 +103,12 @@ namespace YemenBooking.Infrastructure.Redis.Configuration
                 return new ErrorHandlingAndMonitoring(redisManager, logger);
             });
 
-            // 7. تسجيل النظام الرئيسي كـ IIndexingService
-            services.AddScoped<IIndexingService>(provider =>
+            // 7. تسجيل النظام الرئيسي
+            services.AddScoped<RedisIndexingSystem>(provider =>
             {
                 var indexingLayer = provider.GetRequiredService<SmartIndexingLayer>();
                 var searchEngine = provider.GetRequiredService<OptimizedSearchEngine>();
-                var cacheManager = (MultiLevelCache)provider.GetRequiredService<IMultiLevelCache>();
+                var cacheManager = provider.GetRequiredService<MultiLevelCache>();
                 var availabilityProcessor = provider.GetRequiredService<AvailabilityProcessor>();
                 var errorHandler = provider.GetRequiredService<ErrorHandlingAndMonitoring>();
                 var redisManager = provider.GetRequiredService<IRedisConnectionManager>();
@@ -124,6 +128,9 @@ namespace YemenBooking.Infrastructure.Redis.Configuration
                     logger,
                     configuration);
             });
+            
+            // تسجيل كـ IIndexingService أيضاً
+            services.AddScoped<IIndexingService>(provider => provider.GetRequiredService<RedisIndexingSystem>());
 
             // 8. إضافة خدمات الصيانة المجدولة (اختياري)
             if (configuration.GetValue<bool>("Redis:EnableScheduledMaintenance", false))

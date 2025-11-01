@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Xunit;
 using Xunit.Abstractions;
 using YemenBooking.Core.Entities;
+using YemenBooking.Core.ValueObjects;
 using YemenBooking.Core.Indexing.Models;
 using YemenBooking.Core.Enums;
 
@@ -36,15 +37,18 @@ namespace YemenBooking.IndexingTests.Tests.Integration
             {
                 Id = Guid.NewGuid(),
                 Name = "فندق السيناريو الكامل",
+                Description = "وصف فندق السيناريو الكامل للاختبار",
                 City = "صنعاء",
                 Address = "شارع الستين",
+                Currency = "YER",
                 TypeId = Guid.Parse("30000000-0000-0000-0000-000000000003"),
                 OwnerId = Guid.Parse("10000000-0000-0000-0000-000000000001"),
                 IsActive = false, // يبدأ غير نشط
                 IsApproved = false, // يبدأ غير معتمد
                 StarRating = 4,
                 AverageRating = 0,
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
             };
 
             _dbContext.Properties.Add(property);
@@ -87,7 +91,7 @@ namespace YemenBooking.IndexingTests.Tests.Integration
                     MaxCapacity = 1,
                     IsAvailable = true,
                     IsActive = true,
-                    BasePrice = new Money { Amount = 100, Currency = "YER" }
+                    BasePrice = new Money(100, "YER")
                 },
                 new Unit
                 {
@@ -98,7 +102,7 @@ namespace YemenBooking.IndexingTests.Tests.Integration
                     MaxCapacity = 2,
                     IsAvailable = true,
                     IsActive = true,
-                    BasePrice = new Money { Amount = 200, Currency = "YER" }
+                    BasePrice = new Money(200, "YER")
                 }
             };
 
@@ -128,12 +132,13 @@ namespace YemenBooking.IndexingTests.Tests.Integration
             {
                 Id = Guid.NewGuid(),
                 UserId = Guid.Parse("10000000-0000-0000-0000-000000000001"),
-                PropertyId = property.Id,
                 UnitId = units[0].Id,
                 CheckIn = DateTime.Now.AddDays(10),
                 CheckOut = DateTime.Now.AddDays(12),
                 Status = BookingStatus.Confirmed,
-                TotalAmount = new Money { Amount = 200, Currency = "YER" }
+                TotalPrice = new Money(200, "YER"),
+                BookedAt = DateTime.Now,
+                GuestsCount = 2
             };
 
             _dbContext.Bookings.Add(booking);
@@ -158,11 +163,15 @@ namespace YemenBooking.IndexingTests.Tests.Integration
             {
                 Id = Guid.NewGuid(),
                 BookingId = booking.Id,
-                UserId = booking.UserId,
                 PropertyId = property.Id,
-                Rating = 5,
+                Cleanliness = 5,
+                Service = 5,
+                Location = 5,
+                Value = 5,
+                AverageRating = 5,
                 Comment = "ممتاز",
-                IsApproved = true
+                IsPendingApproval = false,
+                CreatedAt = DateTime.UtcNow
             };
 
             _dbContext.Reviews.Add(review);
@@ -204,9 +213,9 @@ namespace YemenBooking.IndexingTests.Tests.Integration
             // الإعداد
             var amenities = new List<Amenity>
             {
-                new Amenity { Id = Guid.NewGuid(), Name = "مسبح", Icon = "🏊" },
-                new Amenity { Id = Guid.NewGuid(), Name = "واي فاي", Icon = "📶" },
-                new Amenity { Id = Guid.NewGuid(), Name = "موقف سيارات", Icon = "🚗" }
+                new Amenity { Id = Guid.NewGuid(), Name = "مسبح", Icon = "🏊", Description = "مسبح خارجي", IsActive = true },
+                new Amenity { Id = Guid.NewGuid(), Name = "واي فاي", Icon = "📶", Description = "واي فاي مجاني", IsActive = true },
+                new Amenity { Id = Guid.NewGuid(), Name = "موقف سيارات", Icon = "🚗", Description = "موقف سيارات مجاني", IsActive = true }
             };
 
             foreach (var amenity in amenities)
@@ -226,9 +235,11 @@ namespace YemenBooking.IndexingTests.Tests.Integration
             {
                 var propertyAmenity = new PropertyAmenity
                 {
+                    Id = Guid.NewGuid(),
                     PropertyId = property.Id,
-                    AmenityId = amenity.Id,
-                    IsAvailable = true
+                    PtaId = amenity.Id,  // assuming amenity.Id maps to PTA
+                    IsAvailable = true,
+                    ExtraCost = new Money(0, "YER")
                 };
                 _dbContext.Set<PropertyAmenity>().Add(propertyAmenity);
             }
@@ -273,29 +284,37 @@ namespace YemenBooking.IndexingTests.Tests.Integration
                 {
                     Id = Guid.NewGuid(),
                     UnitId = unit.Id,
-                    RuleName = "سعر عادي",
-                    BasePrice = 100,
-                    DayOfWeekRules = "1,2,3,4", // الأحد - الأربعاء
-                    IsActive = true
+                    PriceType = "Regular",
+                    PriceAmount = 100,
+                    StartDate = DateTime.Now,
+                    EndDate = DateTime.Now.AddMonths(1),
+                    PricingTier = "Standard",
+                    Currency = "YER",
+                    Description = "سعر عادي"
                 },
                 new PricingRule
                 {
                     Id = Guid.NewGuid(),
                     UnitId = unit.Id,
-                    RuleName = "سعر نهاية الأسبوع",
-                    BasePrice = 150,
-                    DayOfWeekRules = "5,6,0", // الخميس - السبت
-                    IsActive = true
+                    PriceType = "Weekend",
+                    PriceAmount = 150,
+                    StartDate = DateTime.Now,
+                    EndDate = DateTime.Now.AddMonths(1),
+                    PricingTier = "Premium",
+                    Currency = "YER",
+                    Description = "سعر نهاية الأسبوع"
                 },
                 new PricingRule
                 {
                     Id = Guid.NewGuid(),
                     UnitId = unit.Id,
-                    RuleName = "سعر الموسم",
-                    BasePrice = 200,
+                    PriceType = "Seasonal",
+                    PriceAmount = 200,
                     StartDate = DateTime.Now.AddDays(30),
                     EndDate = DateTime.Now.AddDays(60),
-                    IsActive = true
+                    PricingTier = "Peak",
+                    Currency = "YER",
+                    Description = "سعر الموسم"
                 }
             };
 
@@ -337,7 +356,7 @@ namespace YemenBooking.IndexingTests.Tests.Integration
         #region اختبارات التكامل مع الحقول الديناميكية
 
         /// <summary>
-        /// اختبار سيناريو معقد مع حقول ديناميكية
+        /// اختبار سيناريو معقد مع حقول ديناميكية 
         /// </summary>
         [Fact]
         public async Task Test_ComplexDynamicFieldsIntegration()
@@ -347,42 +366,63 @@ namespace YemenBooking.IndexingTests.Tests.Integration
             // الإعداد - إنشاء حقول ديناميكية لنوع العقار
             var propertyTypeId = Guid.Parse("30000000-0000-0000-0000-000000000003");
             
-            var dynamicFields = new List<DynamicField>
+            // إنشاء نوع وحدة اختباري
+            var unitType = new UnitType
             {
-                new DynamicField
+                Id = Guid.NewGuid(),
+                Name = "غرفة فندقية",
+                PropertyTypeId = propertyTypeId,
+                MaxCapacity = 4,
+                IsActive = true
+            };
+            _dbContext.Set<UnitType>().Add(unitType);
+            await _dbContext.SaveChangesAsync();
+
+            var dynamicFields = new List<UnitTypeField>
+            {
+                new UnitTypeField
                 {
                     Id = Guid.NewGuid(),
-                    Name = "floor_count",
+                    UnitTypeId = unitType.Id,
+                    FieldName = "floor_count",
                     DisplayName = "عدد الطوابق",
-                    FieldType = "number",
-                    PropertyTypeId = propertyTypeId,
+                    FieldTypeId = "number",
                     IsRequired = false,
-                    IsActive = true
+                    IsSearchable = true,
+                    IsPublic = true,
+                    Category = "basic",
+                    SortOrder = 1
                 },
-                new DynamicField
+                new UnitTypeField
                 {
                     Id = Guid.NewGuid(),
-                    Name = "check_in_time",
+                    UnitTypeId = unitType.Id,
+                    FieldName = "check_in_time",
                     DisplayName = "وقت تسجيل الدخول",
-                    FieldType = "time",
-                    PropertyTypeId = propertyTypeId,
+                    FieldTypeId = "time",
                     IsRequired = true,
-                    IsActive = true
+                    IsSearchable = true,
+                    IsPublic = true,
+                    Category = "basic",
+                    SortOrder = 2
                 },
-                new DynamicField
+                new UnitTypeField
                 {
                     Id = Guid.NewGuid(),
-                    Name = "pet_policy",
+                    UnitTypeId = unitType.Id,
+                    FieldName = "pet_policy",
                     DisplayName = "سياسة الحيوانات الأليفة",
-                    FieldType = "select",
-                    PropertyTypeId = propertyTypeId,
-                    FieldOptions = "allowed,not_allowed,with_fee",
+                    FieldTypeId = "select",
+                    FieldOptions = "[\"allowed\",\"not_allowed\",\"with_fee\"]",
                     IsRequired = false,
-                    IsActive = true
+                    IsSearchable = true,
+                    IsPublic = true,
+                    Category = "amenities",
+                    SortOrder = 3
                 }
             };
 
-            _dbContext.Set<DynamicField>().AddRange(dynamicFields);
+            _dbContext.Set<UnitTypeField>().AddRange(dynamicFields);
             await _dbContext.SaveChangesAsync();
 
             // إنشاء عقارات بقيم مختلفة للحقول الديناميكية
@@ -390,78 +430,112 @@ namespace YemenBooking.IndexingTests.Tests.Integration
             var hotel2 = await CreateTestPropertyAsync("فندق لا يسمح بالحيوانات", "صنعاء", propertyTypeId);
             var hotel3 = await CreateTestPropertyAsync("فندق يسمح برسوم", "صنعاء", propertyTypeId);
 
-            // إضافة قيم الحقول الديناميكية
-            var fieldValues = new List<PropertyDynamicFieldValue>
+            // إنشاء وحدات للعقارات
+            var unit1 = new Unit
             {
-                // Hotel 1
-                new PropertyDynamicFieldValue
+                Id = Guid.NewGuid(),
+                PropertyId = hotel1.Id,
+                Name = "غرفة 1",
+                UnitTypeId = unitType.Id,
+                MaxCapacity = 4,
+                BasePrice = new Money(100, "YER"),
+                IsActive = true
+            };
+            var unit2 = new Unit
+            {
+                Id = Guid.NewGuid(),
+                PropertyId = hotel2.Id,
+                Name = "غرفة 2",
+                UnitTypeId = unitType.Id,
+                MaxCapacity = 4,
+                BasePrice = new Money(100, "YER"),
+                IsActive = true
+            };
+            var unit3 = new Unit
+            {
+                Id = Guid.NewGuid(),
+                PropertyId = hotel3.Id,
+                Name = "غرفة 3",
+                UnitTypeId = unitType.Id,
+                MaxCapacity = 4,
+                BasePrice = new Money(100, "YER"),
+                IsActive = true
+            };
+            _dbContext.Units.AddRange(unit1, unit2, unit3);
+            await _dbContext.SaveChangesAsync();
+
+            // إضافة قيم الحقول الديناميكية
+            var fieldValues = new List<UnitFieldValue>
+            {
+                // Unit 1 (Hotel 1)
+                new UnitFieldValue
                 {
                     Id = Guid.NewGuid(),
-                    PropertyId = hotel1.Id,
-                    DynamicFieldId = dynamicFields[0].Id,
-                    Value = "5"
+                    UnitId = unit1.Id,
+                    UnitTypeFieldId = dynamicFields[0].Id,
+                    FieldValue = "5"
                 },
-                new PropertyDynamicFieldValue
+                new UnitFieldValue
                 {
                     Id = Guid.NewGuid(),
-                    PropertyId = hotel1.Id,
-                    DynamicFieldId = dynamicFields[1].Id,
-                    Value = "14:00"
+                    UnitId = unit1.Id,
+                    UnitTypeFieldId = dynamicFields[1].Id,
+                    FieldValue = "14:00"
                 },
-                new PropertyDynamicFieldValue
+                new UnitFieldValue
                 {
                     Id = Guid.NewGuid(),
-                    PropertyId = hotel1.Id,
-                    DynamicFieldId = dynamicFields[2].Id,
-                    Value = "allowed"
+                    UnitId = unit1.Id,
+                    UnitTypeFieldId = dynamicFields[2].Id,
+                    FieldValue = "allowed"
                 },
-                // Hotel 2
-                new PropertyDynamicFieldValue
+                // Unit 2 (Hotel 2)
+                new UnitFieldValue
                 {
                     Id = Guid.NewGuid(),
-                    PropertyId = hotel2.Id,
-                    DynamicFieldId = dynamicFields[0].Id,
-                    Value = "3"
+                    UnitId = unit2.Id,
+                    UnitTypeFieldId = dynamicFields[0].Id,
+                    FieldValue = "3"
                 },
-                new PropertyDynamicFieldValue
+                new UnitFieldValue
                 {
                     Id = Guid.NewGuid(),
-                    PropertyId = hotel2.Id,
-                    DynamicFieldId = dynamicFields[1].Id,
-                    Value = "15:00"
+                    UnitId = unit2.Id,
+                    UnitTypeFieldId = dynamicFields[1].Id,
+                    FieldValue = "15:00"
                 },
-                new PropertyDynamicFieldValue
+                new UnitFieldValue
                 {
                     Id = Guid.NewGuid(),
-                    PropertyId = hotel2.Id,
-                    DynamicFieldId = dynamicFields[2].Id,
-                    Value = "not_allowed"
+                    UnitId = unit2.Id,
+                    UnitTypeFieldId = dynamicFields[2].Id,
+                    FieldValue = "not_allowed"
                 },
-                // Hotel 3
-                new PropertyDynamicFieldValue
+                // Unit 3 (Hotel 3)
+                new UnitFieldValue
                 {
                     Id = Guid.NewGuid(),
-                    PropertyId = hotel3.Id,
-                    DynamicFieldId = dynamicFields[0].Id,
-                    Value = "7"
+                    UnitId = unit3.Id,
+                    UnitTypeFieldId = dynamicFields[0].Id,
+                    FieldValue = "7"
                 },
-                new PropertyDynamicFieldValue
+                new UnitFieldValue
                 {
                     Id = Guid.NewGuid(),
-                    PropertyId = hotel3.Id,
-                    DynamicFieldId = dynamicFields[1].Id,
-                    Value = "13:00"
+                    UnitId = unit3.Id,
+                    UnitTypeFieldId = dynamicFields[1].Id,
+                    FieldValue = "13:00"
                 },
-                new PropertyDynamicFieldValue
+                new UnitFieldValue
                 {
                     Id = Guid.NewGuid(),
-                    PropertyId = hotel3.Id,
-                    DynamicFieldId = dynamicFields[2].Id,
-                    Value = "with_fee"
+                    UnitId = unit3.Id,
+                    UnitTypeFieldId = dynamicFields[2].Id,
+                    FieldValue = "with_fee"
                 }
             };
 
-            _dbContext.Set<PropertyDynamicFieldValue>().AddRange(fieldValues);
+            _dbContext.Set<UnitFieldValue>().AddRange(fieldValues);
             await _dbContext.SaveChangesAsync();
 
             // فهرسة الحقول الديناميكية

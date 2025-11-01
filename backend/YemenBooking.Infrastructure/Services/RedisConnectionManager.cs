@@ -20,26 +20,39 @@ namespace YemenBooking.Infrastructure.Services
         private IConnectionMultiplexer _connection;
         private readonly IAsyncPolicy _retryPolicy;
         private bool _disposed;
+        private bool _initialized = false;
+        private Task<bool> _initializationTask = null;
+        private readonly object _initLock = new object();
 
         public RedisConnectionManager(IConfiguration configuration, ILogger<RedisConnectionManager> logger)
         {
             _logger = logger;
             
             var redisConfig = configuration.GetSection("Redis");
-            _configOptions = new ConfigurationOptions
+            // استخدام Connection string إذا كان موجوداً
+            var connectionString = redisConfig["Connection"];
+            if (!string.IsNullOrEmpty(connectionString))
             {
-                EndPoints = { redisConfig["EndPoint"] ?? "localhost:6379" },
-                Password = redisConfig["Password"],
-                DefaultDatabase = int.Parse(redisConfig["Database"] ?? "0"),
-                ConnectTimeout = 5000,
-                SyncTimeout = 5000,
-                AsyncTimeout = 5000,
-                KeepAlive = 60,
-                ConnectRetry = 3,
-                ReconnectRetryPolicy = new ExponentialRetry(5000),
-                AbortOnConnectFail = false,
-                AllowAdmin = true
-            };
+                _configOptions = ConfigurationOptions.Parse(connectionString);
+                _configOptions.DefaultDatabase = int.Parse(redisConfig["Database"] ?? "0");
+            }
+            else
+            {
+                _configOptions = new ConfigurationOptions
+                {
+                    EndPoints = { redisConfig["EndPoint"] ?? "localhost:6379" },
+                    Password = redisConfig["Password"],
+                    DefaultDatabase = int.Parse(redisConfig["Database"] ?? "0"),
+                    ConnectTimeout = 1000, // 1 ثانية فقط
+                    SyncTimeout = 1000,
+                    AsyncTimeout = 1000,
+                    KeepAlive = 60,
+                    ConnectRetry = 1, // محاولة واحدة فقط
+                    ReconnectRetryPolicy = new LinearRetry(1000), // فترة قصيرة
+                    AbortOnConnectFail = false,
+                    AllowAdmin = false // لا حاجة لصلاحيات admin في الاختبارات
+                };
+            }
 
             // إعداد سياسة إعادة المحاولة مع Circuit Breaker
             _retryPolicy = Policy
@@ -71,14 +84,63 @@ namespace YemenBooking.Infrastructure.Services
                                 _logger.LogInformation("إعادة تعيين دائرة القاطع لـ Redis");
                             }));
 
-            InitializeConnection();
+            // لا نقوم بالاتصال في المُنشئ
+            _logger.LogInformation("✅ RedisConnectionManager created (lazy connection)");
         }
 
-        private void InitializeConnection()
+        private async Task<bool> EnsureConnectedAsync()
+        {
+            if (_initialized && _connection != null && _connection.IsConnected)
+                return true;
+
+            // استخدام lock للتأكد من أن مهمة التهيئة تبدأ مرة واحدة فقط
+            lock (_initLock)
+            {
+                if (_initializationTask == null)
+                {
+                    _initializationTask = InitializeConnectionWithLockAsync();
+                }
+            }
+
+            return await _initializationTask;
+        }
+
+        private async Task<bool> InitializeConnectionWithLockAsync()
+        {
+            await _connectionLock.WaitAsync();
+            try
+            {
+                if (_initialized && _connection != null && _connection.IsConnected)
+                    return true;
+
+                return await InitializeConnectionAsync();
+            }
+            finally
+            {
+                _connectionLock.Release();
+            }
+        }
+
+        private async Task<bool> InitializeConnectionAsync()
         {
             try
             {
-                _connection = ConnectionMultiplexer.Connect(_configOptions);
+                _logger.LogInformation("🔌 محاولة الاتصال بـ Redis...");
+                
+                // محاولة الاتصال بشكل غير متزامن مع timeout
+                var connectTask = ConnectionMultiplexer.ConnectAsync(_configOptions);
+                var timeoutTask = Task.Delay(3000);
+                
+                var completedTask = await Task.WhenAny(connectTask, timeoutTask);
+                
+                if (completedTask == timeoutTask)
+                {
+                    _logger.LogWarning("⚠️ انتهى وقت الاتصال بـ Redis (3 ثواني)");
+                    _initialized = false;
+                    return false;
+                }
+                
+                _connection = await connectTask;
                 
                 _connection.ConnectionFailed += (sender, args) =>
                 {
@@ -105,44 +167,89 @@ namespace YemenBooking.Infrastructure.Services
                     }
                 };
 
-                _logger.LogInformation("تم تأسيس اتصال Redis بنجاح");
+                _logger.LogInformation("✅ تم إنشاء اتصال Redis بنجاح");
+                _initialized = true;
+                return true;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "فشل في تأسيس اتصال Redis");
-                throw;
+                _logger.LogWarning(ex, "⚠️ فشل في إنشاء اتصال Redis");
+                _initialized = false;
+                return false;
             }
         }
 
         public IDatabase GetDatabase(int db = -1)
         {
-            EnsureConnection();
-            return _connection.GetDatabase(db);
+            // التحقق من الاتصال بشكل آمن دون حجب
+            if (_initialized && _connection != null && _connection.IsConnected)
+            {
+                return _connection.GetDatabase(db);
+            }
+            
+            // محاولة الاتصال بشكل غير متزامن مع timeout قصير
+            var task = Task.Run(async () => await EnsureConnectedAsync());
+            if (task.Wait(TimeSpan.FromSeconds(2)))
+            {
+                if (task.Result && _connection != null)
+                {
+                    return _connection.GetDatabase(db);
+                }
+            }
+            
+            throw new InvalidOperationException("Unable to connect to Redis within timeout");
         }
 
         public ISubscriber GetSubscriber()
         {
-            EnsureConnection();
-            return _connection.GetSubscriber();
+            // التحقق من الاتصال بشكل آمن دون حجب
+            if (_initialized && _connection != null && _connection.IsConnected)
+            {
+                return _connection.GetSubscriber();
+            }
+            
+            // محاولة الاتصال بشكل غير متزامن مع timeout قصير
+            var task = Task.Run(async () => await EnsureConnectedAsync());
+            if (task.Wait(TimeSpan.FromSeconds(2)))
+            {
+                if (task.Result && _connection != null)
+                {
+                    return _connection.GetSubscriber();
+                }
+            }
+            
+            throw new InvalidOperationException("Unable to connect to Redis within timeout");
         }
 
         public IServer GetServer()
         {
-            EnsureConnection();
-            var endpoints = _connection.GetEndPoints();
-            return _connection.GetServer(endpoints[0]);
+            // التحقق من الاتصال بشكل آمن دون حجب
+            if (_initialized && _connection != null && _connection.IsConnected)
+            {
+                var endpoints = _connection.GetEndPoints();
+                return _connection.GetServer(endpoints[0]);
+            }
+            
+            // محاولة الاتصال بشكل غير متزامن مع timeout قصير
+            var task = Task.Run(async () => await EnsureConnectedAsync());
+            if (task.Wait(TimeSpan.FromSeconds(2)))
+            {
+                if (task.Result && _connection != null)
+                {
+                    var endpoints = _connection.GetEndPoints();
+                    return _connection.GetServer(endpoints[0]);
+                }
+            }
+            
+            throw new InvalidOperationException("Unable to connect to Redis within timeout");
         }
 
         public async Task<bool> IsConnectedAsync()
         {
             try
             {
-                if (_connection == null || !_connection.IsConnected)
-                    return false;
-
-                var db = GetDatabase();
-                await db.PingAsync();
-                return true;
+                // محاولة الاتصال إذا لم يكن متصلاً
+                return await EnsureConnectedAsync();
             }
             catch
             {
@@ -157,25 +264,7 @@ namespace YemenBooking.Infrastructure.Services
             _logger.LogInformation("تم مسح قاعدة بيانات Redis {Database}", db);
         }
 
-        private void EnsureConnection()
-        {
-            if (_connection != null && _connection.IsConnected)
-                return;
-
-            _connectionLock.Wait();
-            try
-            {
-                if (_connection == null || !_connection.IsConnected)
-                {
-                    _connection?.Dispose();
-                    InitializeConnection();
-                }
-            }
-            finally
-            {
-                _connectionLock.Release();
-            }
-        }
+        // حذفت EnsureConnection القديمة واستبدلت بـ EnsureConnectedAsync
 
         public void Dispose()
         {

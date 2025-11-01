@@ -6,6 +6,7 @@ using Xunit;
 using Xunit.Abstractions;
 using YemenBooking.Core.Entities;
 using YemenBooking.Core.Indexing.Models;
+using YemenBooking.Core.ValueObjects;
 
 namespace YemenBooking.IndexingTests.Tests.Indexing
 {
@@ -344,7 +345,7 @@ namespace YemenBooking.IndexingTests.Tests.Indexing
                 IsAvailable = true,
                 IsActive = true,
                 CreatedAt = DateTime.UtcNow,
-                BasePrice = new Money { Amount = 200, Currency = "YER", ExchangeRate = 1 }
+                BasePrice = new Money(200, "YER")
             };
 
             _dbContext.Units.Add(unit);
@@ -388,7 +389,7 @@ namespace YemenBooking.IndexingTests.Tests.Indexing
                 MaxCapacity = 2,
                 IsAvailable = true,
                 IsActive = true,
-                BasePrice = new Money { Amount = 100, Currency = "YER", ExchangeRate = 1 }
+                BasePrice = new Money(100, "YER")
             };
 
             _dbContext.Units.Add(unit);
@@ -398,7 +399,7 @@ namespace YemenBooking.IndexingTests.Tests.Indexing
 
             // التحديث
             unit.MaxCapacity = 4;
-            unit.BasePrice = new Money { Amount = 200, Currency = "YER", ExchangeRate = 1 };
+            unit.BasePrice = new Money(200, "YER");
             _dbContext.Units.Update(unit);
             await _dbContext.SaveChangesAsync();
 

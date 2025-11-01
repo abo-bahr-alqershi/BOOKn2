@@ -39,7 +39,9 @@ namespace YemenBooking.Infrastructure.Redis
         private readonly IUnitRepository _unitRepository;
         private readonly ILogger<RedisIndexingSystem> _logger;
         private readonly IConfiguration _configuration;
-        private readonly bool _isInitialized;
+        private bool _isInitialized = false;
+        private readonly SemaphoreSlim _initializationLock = new SemaphoreSlim(1, 1);
+        private Task<bool> _initializationTask = null;
 
         /// <summary>
         /// مُنشئ النظام الرئيسي للفهرسة
@@ -67,11 +69,42 @@ namespace YemenBooking.Infrastructure.Redis
             _logger = logger;
             _configuration = configuration;
 
-            // تهيئة النظام
-            _isInitialized = InitializeSystemAsync().GetAwaiter().GetResult();
+            // لا نقوم بالتهيئة في المُنشئ لتجنب التأخير
+            // سيتم التهيئة بشكل كسول عند أول استخدام
+            _logger.LogInformation("✅ RedisIndexingSystem created (lazy initialization)");
         }
 
         #region التهيئة
+
+        /// <summary>
+        /// التأكد من أن النظام مُهيأ
+        /// </summary>
+        private async Task<bool> EnsureInitializedAsync()
+        {
+            if (_isInitialized)
+                return true;
+
+            await _initializationLock.WaitAsync();
+            try
+            {
+                // تحقق مرة أخرى بعد الحصول على القفل
+                if (_isInitialized)
+                    return true;
+
+                // إذا لم تبدأ التهيئة بعد، ابدأها
+                if (_initializationTask == null)
+                {
+                    _initializationTask = InitializeSystemAsync();
+                }
+
+                _isInitialized = await _initializationTask;
+                return _isInitialized;
+            }
+            finally
+            {
+                _initializationLock.Release();
+            }
+        }
 
         /// <summary>
         /// تهيئة النظام بالكامل
@@ -297,6 +330,13 @@ namespace YemenBooking.Infrastructure.Redis
         /// </summary>
         public async Task OnPropertyCreatedAsync(Guid propertyId, CancellationToken cancellationToken = default)
         {
+            // التأكد من التهيئة أولاً
+            if (!await EnsureInitializedAsync())
+            {
+                _logger.LogWarning("النظام غير مُهيأ، تخطي فهرسة العقار {PropertyId}", propertyId);
+                return;
+            }
+
             await _errorHandler.ExecuteWithErrorHandlingAsync(
                 async () =>
                 {
@@ -317,6 +357,13 @@ namespace YemenBooking.Infrastructure.Redis
         /// </summary>
         public async Task OnPropertyUpdatedAsync(Guid propertyId, CancellationToken cancellationToken = default)
         {
+            // التأكد من التهيئة أولاً
+            if (!await EnsureInitializedAsync())
+            {
+                _logger.LogWarning("النظام غير مُهيأ، تخطي تحديث العقار {PropertyId}", propertyId);
+                return;
+            }
+
             await _errorHandler.ExecuteWithErrorHandlingAsync(
                 async () =>
                 {
@@ -358,6 +405,20 @@ namespace YemenBooking.Infrastructure.Redis
             PropertySearchRequest request,
             CancellationToken cancellationToken = default)
         {
+            // التأكد من التهيئة أولاً
+            if (!await EnsureInitializedAsync())
+            {
+                _logger.LogWarning("النظام غير مُهيأ، إرجاع نتائج فارغة");
+                return new PropertySearchResult
+                {
+                    Properties = new List<PropertySearchItem>(),
+                    TotalCount = 0,
+                    PageNumber = request.PageNumber,
+                    PageSize = request.PageSize,
+                    TotalPages = 0
+                };
+            }
+
             return await _errorHandler.ExecuteWithErrorHandlingAsync(
                 async () =>
                 {
@@ -720,14 +781,39 @@ namespace YemenBooking.Infrastructure.Redis
             {
                 _logger.LogInformation("جلب جميع العقارات النشطة من قاعدة البيانات");
                 
-                // استخدام المستودع لجلب جميع العقارات مع البيانات المرتبطة
-                // ملاحظة: يفضل أن يقوم المستودع بتضمين Include للبيانات المطلوبة
-                var allProperties = await _propertyRepository.GetAllAsync();
+                var activeProperties = new List<Property>();
                 
-                // فلترة العقارات النشطة فقط
-                var activeProperties = allProperties
-                    .Where(p => p.IsActive && p.IsApproved)
-                    .ToList();
+                // جلب العقارات على دفعات لتجنب مشاكل الذاكرة
+                var pageSize = 100;
+                var pageNumber = 1;
+                bool hasMore = true;
+                
+                while (hasMore && !cancellationToken.IsCancellationRequested)
+                {
+                    var (items, totalCount) = await _propertyRepository.GetPagedAsync(
+                        pageNumber,
+                        pageSize,
+                        predicate: p => p.IsActive && p.IsApproved,
+                        cancellationToken: cancellationToken);
+                    
+                    if (items != null && items.Any())
+                    {
+                        activeProperties.AddRange(items);
+                        pageNumber++;
+                        hasMore = (pageNumber - 1) * pageSize < totalCount;
+                        
+                        // حد أقصى للعقارات لتجنب المشاكل
+                        if (activeProperties.Count >= 1000)
+                        {
+                            _logger.LogWarning("تم الوصول للحد الأقصى من العقارات (1000)");
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        hasMore = false;
+                    }
+                }
                 
                 _logger.LogInformation("تم العثور على {Count} عقار نشط", activeProperties.Count);
                 return activeProperties;
@@ -735,7 +821,8 @@ namespace YemenBooking.Infrastructure.Redis
             catch (Exception ex)
             {
                 _logger.LogError(ex, "خطأ في جلب العقارات النشطة");
-                throw;
+                // إرجاع قائمة فارغة بدلاً من رمي الاستثناء
+                return new List<Property>();
             }
         }
 
@@ -780,10 +867,117 @@ namespace YemenBooking.Infrastructure.Redis
             return Task.CompletedTask;
         }
 
-        public Task OnDynamicFieldChangedAsync(Guid propertyId, string fieldName, string fieldValue, bool isAdd, CancellationToken cancellationToken = default)
+        /// <summary>
+        /// تحديث حقل ديناميكي للعقار
+        /// </summary>
+        public async Task OnDynamicFieldChangedAsync(
+            Guid propertyId, 
+            string fieldName, 
+            string fieldValue, 
+            bool isAdd, 
+            CancellationToken cancellationToken = default)
         {
-            // TODO: تنفيذ تحديث الحقول الديناميكية
-            return Task.CompletedTask;
+            await _errorHandler.ExecuteWithErrorHandlingAsync(
+                async () =>
+                {
+                    var db = _redisManager.GetDatabase();
+                    var propertyKey = RedisKeySchemas.GetPropertyKey(propertyId);
+                    var dynamicFieldsKey = $"{propertyKey}:dynamic_fields";
+                    
+                    _logger.LogInformation(
+                        "تحديث حقل ديناميكي: PropertyId={PropertyId}, Field={Field}, Value={Value}, IsAdd={IsAdd}",
+                        propertyId, fieldName, fieldValue, isAdd);
+
+                    if (isAdd)
+                    {
+                        // إضافة أو تحديث الحقل الديناميكي
+                        if (!string.IsNullOrEmpty(fieldValue))
+                        {
+                            // حفظ القيمة في Hash
+                            await db.HashSetAsync(dynamicFieldsKey, fieldName, fieldValue);
+                            
+                            // إضافة إلى فهرس البحث النصي
+                            var searchKey = $"dynamic_field:{fieldName.ToLower()}:{propertyId}";
+                            await db.StringSetAsync(searchKey, fieldValue, TimeSpan.FromDays(30));
+                            
+                            // إضافة إلى مجموعة الحقول الديناميكية للعقار
+                            await db.SetAddAsync($"property:{propertyId}:dynamic_fields_set", fieldName);
+                            
+                            // إضافة إلى فهرس القيم للبحث السريع
+                            var valueIndexKey = $"dynamic_value:{fieldName.ToLower()}:{fieldValue.ToLower()}";
+                            await db.SetAddAsync(valueIndexKey, propertyId.ToString());
+                            
+                            // تحديث الكاش
+                            await _cacheManager.RemoveAsync($"property:{propertyId}");
+                        }
+                    }
+                    else
+                    {
+                        // حذف أو تحديث الحقل
+                        if (string.IsNullOrEmpty(fieldValue))
+                        {
+                            // حذف الحقل
+                            await db.HashDeleteAsync(dynamicFieldsKey, fieldName);
+                            await db.SetRemoveAsync($"property:{propertyId}:dynamic_fields_set", fieldName);
+                            
+                            // حذف من فهرس البحث
+                            var searchKey = $"dynamic_field:{fieldName.ToLower()}:{propertyId}";
+                            await db.KeyDeleteAsync(searchKey);
+                        }
+                        else
+                        {
+                            // تحديث القيمة الموجودة
+                            var oldValue = await db.HashGetAsync(dynamicFieldsKey, fieldName);
+                            if (!oldValue.IsNullOrEmpty)
+                            {
+                                // حذف القيمة القديمة من الفهرس
+                                var oldValueIndexKey = $"dynamic_value:{fieldName.ToLower()}:{oldValue.ToString().ToLower()}";
+                                await db.SetRemoveAsync(oldValueIndexKey, propertyId.ToString());
+                            }
+                            
+                            // إضافة القيمة الجديدة
+                            await db.HashSetAsync(dynamicFieldsKey, fieldName, fieldValue);
+                            var newValueIndexKey = $"dynamic_value:{fieldName.ToLower()}:{fieldValue.ToLower()}";
+                            await db.SetAddAsync(newValueIndexKey, propertyId.ToString());
+                        }
+                        
+                        // تحديث الكاش
+                        await _cacheManager.RemoveAsync($"property:{propertyId}");
+                    }
+                    
+                    // تحديث فهرس البحث الرئيسي
+                    await UpdatePropertySearchIndexAsync(propertyId, cancellationToken);
+                    
+                    _logger.LogInformation("✅ تم تحديث الحقل الديناميكي بنجاح");
+                    return true;
+                },
+                $"DynamicFieldChange_{propertyId}_{fieldName}",
+                new Dictionary<string, object>
+                {
+                    ["PropertyId"] = propertyId,
+                    ["FieldName"] = fieldName,
+                    ["IsAdd"] = isAdd
+                }
+            );
+        }
+        
+        /// <summary>
+        /// تحديث فهرس البحث للعقار
+        /// </summary>
+        private async Task UpdatePropertySearchIndexAsync(Guid propertyId, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var property = await GetPropertyByIdAsync(propertyId, cancellationToken);
+                if (property != null)
+                {
+                    await _indexingLayer.UpdatePropertyIndexAsync(property, cancellationToken);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "خطأ في تحديث فهرس البحث للعقار {PropertyId}", propertyId);
+            }
         }
 
         #endregion

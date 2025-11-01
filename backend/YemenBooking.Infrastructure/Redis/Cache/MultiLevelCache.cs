@@ -21,7 +21,8 @@ namespace YemenBooking.Infrastructure.Redis.Cache
         private readonly IMemoryCache _memoryCache;
         private readonly IRedisConnectionManager _redisManager;
         private readonly ILogger<MultiLevelCache> _logger;
-        private readonly IDatabase _db;
+        private IDatabase _db;
+        private readonly object _dbLock = new object();
 
         // إعدادات TTL لكل مستوى
         private static readonly TimeSpan L1_TTL = TimeSpan.FromSeconds(30);
@@ -39,7 +40,22 @@ namespace YemenBooking.Infrastructure.Redis.Cache
             _memoryCache = memoryCache;
             _redisManager = redisManager;
             _logger = logger;
-            _db = _redisManager.GetDatabase();
+            _db = null; // تأجيل تهيئة Database
+        }
+
+        private IDatabase GetDatabase()
+        {
+            if (_db != null)
+                return _db;
+                
+            lock (_dbLock)
+            {
+                if (_db == null)
+                {
+                    _db = _redisManager.GetDatabase();
+                }
+            }
+            return _db;
         }
 
         #region عمليات القراءة
@@ -63,7 +79,7 @@ namespace YemenBooking.Infrastructure.Redis.Cache
 
                 // 2. البحث في L2 (Redis Result Cache)
                 var l2Key = GetL2Key(key);
-                var l2Data = await _db.StringGetAsync(l2Key);
+                var l2Data = await GetDatabase().StringGetAsync(l2Key);
                 if (!l2Data.IsNullOrEmpty)
                 {
                     _logger.LogDebug("✅ L2 Cache Hit: {Key}", key);
@@ -79,7 +95,7 @@ namespace YemenBooking.Infrastructure.Redis.Cache
 
                 // 3. البحث في L3 (Redis Data Cache)
                 var l3Key = GetL3Key(key);
-                var l3Data = await _db.StringGetAsync(l3Key);
+                var l3Data = await GetDatabase().StringGetAsync(l3Key);
                 if (!l3Data.IsNullOrEmpty)
                 {
                     _logger.LogDebug("✅ L3 Cache Hit: {Key}", key);
@@ -126,7 +142,7 @@ namespace YemenBooking.Infrastructure.Redis.Cache
 
                     case CacheLevel.L2:
                         var l2Key = GetL2Key(key);
-                        var l2Data = await _db.StringGetAsync(l2Key);
+                        var l2Data = await GetDatabase().StringGetAsync(l2Key);
                         if (!l2Data.IsNullOrEmpty)
                         {
                             RecordCacheHit("L2");
@@ -136,7 +152,7 @@ namespace YemenBooking.Infrastructure.Redis.Cache
 
                     case CacheLevel.L3:
                         var l3Key = GetL3Key(key);
-                        var l3Data = await _db.StringGetAsync(l3Key);
+                        var l3Data = await GetDatabase().StringGetAsync(l3Key);
                         if (!l3Data.IsNullOrEmpty)
                         {
                             RecordCacheHit("L3");
@@ -306,12 +322,12 @@ namespace YemenBooking.Infrastructure.Redis.Cache
 
                 if (l2Keys.Any())
                 {
-                    await _db.KeyDeleteAsync(l2Keys);
+                    await GetDatabase().KeyDeleteAsync(l2Keys);
                 }
 
                 if (l3Keys.Any())
                 {
-                    await _db.KeyDeleteAsync(l3Keys);
+                    await GetDatabase().KeyDeleteAsync(l3Keys);
                 }
 
                 _logger.LogWarning("✅ تم مسح جميع مستويات الكاش");
@@ -336,10 +352,10 @@ namespace YemenBooking.Infrastructure.Redis.Cache
                 var stats = new CacheStatistics();
 
                 // إحصائيات الـ Hits
-                var l1Hits = await _db.StringGetAsync("stats:cache:l1:hits");
-                var l2Hits = await _db.StringGetAsync("stats:cache:l2:hits");
-                var l3Hits = await _db.StringGetAsync("stats:cache:l3:hits");
-                var misses = await _db.StringGetAsync("stats:cache:misses");
+                var l1Hits = await GetDatabase().StringGetAsync("stats:cache:l1:hits");
+                var l2Hits = await GetDatabase().StringGetAsync("stats:cache:l2:hits");
+                var l3Hits = await GetDatabase().StringGetAsync("stats:cache:l3:hits");
+                var misses = await GetDatabase().StringGetAsync("stats:cache:misses");
 
                 stats.L1Hits = l1Hits.HasValue ? (long)l1Hits : 0;
                 stats.L2Hits = l2Hits.HasValue ? (long)l2Hits : 0;
@@ -380,7 +396,7 @@ namespace YemenBooking.Infrastructure.Redis.Cache
                     "stats:cache:misses"
                 };
 
-                await _db.KeyDeleteAsync(keys.Select(k => (RedisKey)k).ToArray());
+                await GetDatabase().KeyDeleteAsync(keys.Select(k => (RedisKey)k).ToArray());
                 
                 _logger.LogInformation("تم إعادة تعيين إحصائيات الكاش");
             }
@@ -431,7 +447,7 @@ namespace YemenBooking.Infrastructure.Redis.Cache
         private async Task SetL2Async(string key, byte[] serialized, TimeSpan? expiry = null)
         {
             var l2Key = GetL2Key(key);
-            await _db.StringSetAsync(l2Key, serialized, expiry ?? L2_TTL);
+            await GetDatabase().StringSetAsync(l2Key, serialized, expiry ?? L2_TTL);
         }
 
         /// <summary>
@@ -440,7 +456,7 @@ namespace YemenBooking.Infrastructure.Redis.Cache
         private async Task SetL3Async(string key, byte[] serialized, TimeSpan? expiry = null)
         {
             var l3Key = GetL3Key(key);
-            await _db.StringSetAsync(l3Key, serialized, expiry ?? L3_TTL);
+            await GetDatabase().StringSetAsync(l3Key, serialized, expiry ?? L3_TTL);
         }
 
         /// <summary>
@@ -476,7 +492,7 @@ namespace YemenBooking.Infrastructure.Redis.Cache
         private async Task RemoveFromL2(string key)
         {
             var l2Key = GetL2Key(key);
-            await _db.KeyDeleteAsync(l2Key);
+            await GetDatabase().KeyDeleteAsync(l2Key);
         }
 
         /// <summary>
@@ -485,7 +501,7 @@ namespace YemenBooking.Infrastructure.Redis.Cache
         private async Task RemoveFromL3(string key)
         {
             var l3Key = GetL3Key(key);
-            await _db.KeyDeleteAsync(l3Key);
+            await GetDatabase().KeyDeleteAsync(l3Key);
         }
 
         /// <summary>
@@ -509,7 +525,7 @@ namespace YemenBooking.Infrastructure.Redis.Cache
         /// </summary>
         private void RecordCacheHit(string level)
         {
-            _ = _db.StringIncrementAsync($"stats:cache:{level.ToLower()}:hits");
+            _ = GetDatabase().StringIncrementAsync($"stats:cache:{level.ToLower()}:hits");
         }
 
         /// <summary>
@@ -517,7 +533,7 @@ namespace YemenBooking.Infrastructure.Redis.Cache
         /// </summary>
         private void RecordCacheMiss()
         {
-            _ = _db.StringIncrementAsync("stats:cache:misses");
+            _ = GetDatabase().StringIncrementAsync("stats:cache:misses");
         }
 
         /// <summary>

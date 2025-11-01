@@ -21,8 +21,9 @@ namespace YemenBooking.Infrastructure.Redis.Monitoring
     {
         private readonly IRedisConnectionManager _redisManager;
         private readonly ILogger<ErrorHandlingAndMonitoring> _logger;
-        private readonly IDatabase _db;
+        private IDatabase _db;
         private readonly IAsyncPolicy _retryPolicy;
+        private readonly object _dbLock = new object();
         private readonly IAsyncPolicy _circuitBreakerPolicy;
         
         // عدادات المراقبة
@@ -41,13 +42,28 @@ namespace YemenBooking.Infrastructure.Redis.Monitoring
         {
             _redisManager = redisManager;
             _logger = logger;
-            _db = _redisManager.GetDatabase();
+            _db = null; // تأجيل تهيئة Database
 
             // إعداد سياسة إعادة المحاولة
             _retryPolicy = BuildRetryPolicy();
             
             // إعداد قاطع الدائرة
             _circuitBreakerPolicy = BuildCircuitBreakerPolicy();
+        }
+
+        private IDatabase GetDatabase()
+        {
+            if (_db != null)
+                return _db;
+                
+            lock (_dbLock)
+            {
+                if (_db == null)
+                {
+                    _db = _redisManager.GetDatabase();
+                }
+            }
+            return _db;
         }
 
         #region سياسات المعالجة
@@ -258,16 +274,17 @@ namespace YemenBooking.Infrastructure.Redis.Monitoring
             };
 
             // جلب إحصائيات من Redis
-            var avgLatency = await _db.StringGetAsync("stats:avg_latency");
-            var p95Latency = await _db.StringGetAsync("stats:p95_latency");
-            var p99Latency = await _db.StringGetAsync("stats:p99_latency");
+            var db = GetDatabase();
+            var avgLatency = await db.StringGetAsync("stats:avg_latency");
+            var p95Latency = await db.StringGetAsync("stats:p95_latency");
+            var p99Latency = await db.StringGetAsync("stats:p99_latency");
 
             stats.AverageLatencyMs = avgLatency.HasValue ? (double)avgLatency : 0;
             stats.P95LatencyMs = p95Latency.HasValue ? (double)p95Latency : 0;
             stats.P99LatencyMs = p99Latency.HasValue ? (double)p99Latency : 0;
 
             // جلب أبطأ العمليات
-            var slowOps = await _db.SortedSetRangeByRankWithScoresAsync(
+            var slowOps = await db.SortedSetRangeByRankWithScoresAsync(
                 "stats:slow_operations",
                 0,
                 9,
@@ -284,7 +301,7 @@ namespace YemenBooking.Infrastructure.Redis.Monitoring
             }
 
             // جلب الأخطاء الأكثر تكراراً
-            var topErrors = await _db.SortedSetRangeByRankWithScoresAsync(
+            var topErrors = await db.SortedSetRangeByRankWithScoresAsync(
                 "stats:error_counts",
                 0,
                 9,
@@ -372,7 +389,7 @@ namespace YemenBooking.Infrastructure.Redis.Monitoring
             try
             {
                 var stopwatch = Stopwatch.StartNew();
-                await _db.PingAsync();
+                await GetDatabase().PingAsync();
                 stopwatch.Stop();
 
                 return new HealthCheck
@@ -480,7 +497,7 @@ namespace YemenBooking.Infrastructure.Redis.Monitoring
         /// </summary>
         private async Task<HealthCheck> CheckLatencyAsync()
         {
-            var avgLatency = await _db.StringGetAsync("stats:avg_latency");
+            var avgLatency = await GetDatabase().StringGetAsync("stats:avg_latency");
             
             if (!avgLatency.HasValue)
             {
@@ -534,7 +551,8 @@ namespace YemenBooking.Infrastructure.Redis.Monitoring
         {
             try
             {
-                var batch = _db.CreateBatch();
+                var db = GetDatabase();
+                var batch = db.CreateBatch();
                 _ = batch.StringIncrementAsync($"stats:success:{operationName}");
                 _ = batch.StringSetAsync($"stats:last_success:{operationName}", DateTime.UtcNow.Ticks);
                 _ = batch.SortedSetAddAsync("stats:latencies", operationName, latencyMs, SortedSetWhen.Always);
@@ -556,7 +574,8 @@ namespace YemenBooking.Infrastructure.Redis.Monitoring
         {
             try
             {
-                var batch = _db.CreateBatch();
+                var db = GetDatabase();
+                var batch = db.CreateBatch();
                 _ = batch.StringIncrementAsync($"stats:failure:{operationName}");
                 _ = batch.StringIncrementAsync($"stats:error:{errorType}");
                 _ = batch.StringSetAsync($"stats:last_failure:{operationName}", DateTime.UtcNow.Ticks);
@@ -576,7 +595,7 @@ namespace YemenBooking.Infrastructure.Redis.Monitoring
         {
             try
             {
-                await _db.StringIncrementAsync($"stats:retry:{operationName}:{retryCount}");
+                await GetDatabase().StringIncrementAsync($"stats:retry:{operationName}:{retryCount}");
             }
             catch { }
         }
@@ -595,12 +614,13 @@ namespace YemenBooking.Infrastructure.Redis.Monitoring
                     DurationSeconds = duration.TotalSeconds
                 };
 
-                await _db.ListRightPushAsync(
+                var db = GetDatabase();
+                await db.ListRightPushAsync(
                     "stats:circuit_breaker_trips",
                     System.Text.Json.JsonSerializer.Serialize(tripData));
 
                 // الاحتفاظ بآخر 100 حدث فقط
-                await _db.ListTrimAsync("stats:circuit_breaker_trips", -100, -1);
+                await db.ListTrimAsync("stats:circuit_breaker_trips", -100, -1);
             }
             catch { }
         }
@@ -615,7 +635,7 @@ namespace YemenBooking.Infrastructure.Redis.Monitoring
                 // تسجيل في Sorted Set للعمليات البطيئة
                 if (latencyMs > 1000)
                 {
-                    await _db.SortedSetAddAsync(
+                    await GetDatabase().SortedSetAddAsync(
                         "stats:slow_operations",
                         operationName,
                         latencyMs,
@@ -633,8 +653,9 @@ namespace YemenBooking.Infrastructure.Redis.Monitoring
             try
             {
                 // حساب المتوسط المتحرك
-                var currentAvg = await _db.StringGetAsync("stats:avg_latency");
-                var count = await _db.StringIncrementAsync("stats:request_count");
+                var db = GetDatabase();
+                var currentAvg = await db.StringGetAsync("stats:avg_latency");
+                var count = await db.StringIncrementAsync("stats:request_count");
                 
                 double newAvg;
                 if (currentAvg.HasValue)
@@ -647,7 +668,7 @@ namespace YemenBooking.Infrastructure.Redis.Monitoring
                     newAvg = latencyMs;
                 }
 
-                await _db.StringSetAsync("stats:avg_latency", newAvg);
+                await db.StringSetAsync("stats:avg_latency", newAvg);
             }
             catch { }
         }
@@ -664,18 +685,13 @@ namespace YemenBooking.Infrastructure.Redis.Monitoring
                     Level = level.ToString(),
                     Title = title,
                     Message = message,
-                    Timestamp = DateTime.UtcNow,
-                    Source = "Redis Indexing System"
+                    Timestamp = DateTime.UtcNow
                 };
 
                 // حفظ التنبيه في Redis
-                await _db.ListRightPushAsync(
+                await GetDatabase().ListRightPushAsync(
                     $"alerts:{level.ToString().ToLower()}",
                     System.Text.Json.JsonSerializer.Serialize(alert));
-
-                // يمكن إضافة إرسال بريد إلكتروني أو إشعارات أخرى هنا
-
-                _logger.LogWarning("🚨 Alert: {Level} - {Title}: {Message}", level, title, message);
             }
             catch (Exception ex)
             {
@@ -729,12 +745,12 @@ namespace YemenBooking.Infrastructure.Redis.Monitoring
                         var matchingKeys = server.Keys(pattern: pattern).ToArray();
                         if (matchingKeys.Any())
                         {
-                            await _db.KeyDeleteAsync(matchingKeys);
+                            await GetDatabase().KeyDeleteAsync(matchingKeys);
                         }
                     }
                     else
                     {
-                        await _db.KeyDeleteAsync(pattern);
+                        await GetDatabase().KeyDeleteAsync(pattern);
                     }
                 }
 

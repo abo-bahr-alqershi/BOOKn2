@@ -23,15 +23,17 @@ namespace YemenBooking.IndexingTests
     {
         private readonly TestFixture _fixture;
         private readonly ITestOutputHelper _output;
-        private readonly IIndexingService _indexingService;
-        private readonly ILogger<ComprehensiveIndexingTests> _logger;
 
         public ComprehensiveIndexingTests(TestFixture fixture, ITestOutputHelper output)
         {
             _fixture = fixture;
             _output = output;
-            _indexingService = _fixture.ServiceProvider.GetRequiredService<IIndexingService>();
-            _logger = _fixture.ServiceProvider.GetRequiredService<ILogger<ComprehensiveIndexingTests>>();
+        }
+        
+        private IIndexingService GetIndexingService()
+        {
+            using var scope = _fixture.ServiceProvider.CreateScope();
+            return scope.ServiceProvider.GetRequiredService<IIndexingService>();
         }
 
         #region اختبارات الاتصال الأساسية
@@ -44,13 +46,16 @@ namespace YemenBooking.IndexingTests
         {
             _output.WriteLine("🔍 اختبار الاتصال بـ Redis...");
             
+            using var scope = _fixture.ServiceProvider.CreateScope();
+            var indexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
+            
             var request = new PropertySearchRequest
             {
                 PageNumber = 1,
                 PageSize = 1
             };
 
-            var result = await _indexingService.SearchAsync(request);
+            var result = await indexingService.SearchAsync(request);
             
             Assert.NotNull(result);
             _output.WriteLine($"✅ Redis متصل - العدد الكلي: {result.TotalCount}");
@@ -68,13 +73,16 @@ namespace YemenBooking.IndexingTests
         {
             _output.WriteLine("🔍 اختبار البحث بدون فلاتر...");
             
+            using var scope = _fixture.ServiceProvider.CreateScope();
+            var indexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
+            
             var request = new PropertySearchRequest
             {
                 PageNumber = 1,
                 PageSize = 20
             };
 
-            var result = await _indexingService.SearchAsync(request);
+            var result = await indexingService.SearchAsync(request);
             
             Assert.NotNull(result);
             Assert.NotNull(result.Properties);
@@ -94,6 +102,9 @@ namespace YemenBooking.IndexingTests
         {
             _output.WriteLine($"🔍 اختبار البحث النصي: '{searchText}'");
             
+            using var scope = _fixture.ServiceProvider.CreateScope();
+            var indexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
+            
             var request = new PropertySearchRequest
             {
                 SearchText = searchText,
@@ -101,7 +112,7 @@ namespace YemenBooking.IndexingTests
                 PageSize = 20
             };
 
-            var result = await _indexingService.SearchAsync(request);
+            var result = await indexingService.SearchAsync(request);
             
             Assert.NotNull(result);
             _output.WriteLine($"✅ تم العثور على {result.TotalCount} نتيجة للبحث '{searchText}'");
@@ -119,7 +130,10 @@ namespace YemenBooking.IndexingTests
         [InlineData("عدن")]
         public async Task Test_004_SearchByCity(string city)
         {
-            _output.WriteLine($"🏙️ اختبار البحث في المدينة: {city}");
+            _output.WriteLine($"🏞️ اختبار البحث في المدينة: {city}");
+            
+            using var scope = _fixture.ServiceProvider.CreateScope();
+            var indexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
             
             var request = new PropertySearchRequest
             {
@@ -128,7 +142,7 @@ namespace YemenBooking.IndexingTests
                 PageSize = 20
             };
 
-            var result = await _indexingService.SearchAsync(request);
+            var result = await indexingService.SearchAsync(request);
             
             Assert.NotNull(result);
             
@@ -153,6 +167,9 @@ namespace YemenBooking.IndexingTests
         {
             _output.WriteLine("🔄 اختبار الفلاتر المركبة...");
             
+            using var scope = _fixture.ServiceProvider.CreateScope();
+            var indexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
+            
             var request = new PropertySearchRequest
             {
                 City = "صنعاء",
@@ -164,7 +181,7 @@ namespace YemenBooking.IndexingTests
                 PageSize = 20
             };
 
-            var result = await _indexingService.SearchAsync(request);
+            var result = await indexingService.SearchAsync(request);
             
             Assert.NotNull(result);
             _output.WriteLine($"✅ تم العثور على {result.TotalCount} عقار مع جميع الفلاتر");
@@ -182,6 +199,9 @@ namespace YemenBooking.IndexingTests
         {
             _output.WriteLine("⚡ اختبار أداء البحث البسيط...");
             
+            using var scope = _fixture.ServiceProvider.CreateScope();
+            var indexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
+            
             var request = new PropertySearchRequest
             {
                 PageNumber = 1,
@@ -189,7 +209,7 @@ namespace YemenBooking.IndexingTests
             };
 
             var stopwatch = Stopwatch.StartNew();
-            var result = await _indexingService.SearchAsync(request);
+            var result = await indexingService.SearchAsync(request);
             stopwatch.Stop();
             
             Assert.NotNull(result);
