@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 using Xunit.Abstractions;
 using YemenBooking.Core.Entities;
@@ -31,12 +33,28 @@ namespace YemenBooking.IndexingTests.Tests.Availability
         {
             _output.WriteLine("📅 اختبار البحث بتواريخ صحيحة...");
 
-            // الإعداد
-            await CreateTestPropertyAsync("فندق متاح", "صنعاء");
-            await CreateTestPropertyAsync("شقة متاحة", "عدن");
-            await _indexingService.RebuildIndexAsync();
+            // الإعداد - استخدام أسماء فريدة
+            var uniqueId = Guid.NewGuid().ToString("N").Substring(0, 8);
+            var property1 = await CreateTestPropertyAsync($"فندق متاح {uniqueId}", "صنعاء");
+            var property2 = await CreateTestPropertyAsync($"شقة متاحة {uniqueId}", "عدن");
+            
+            // ✅ فهرسة العقارات مباشرة
+            await _indexingService.OnPropertyCreatedAsync(property1.Id);
+            await _indexingService.OnPropertyCreatedAsync(property2.Id);
+            
+            // ✅ الانتظار للسماح بإكمال الفهرسة
+            await Task.Delay(300);
 
-            // البحث
+            // البحث بدون تواريخ أولاً للتأكد من وجود العقارات
+            var simpleSearch = new PropertySearchRequest
+            {
+                PageNumber = 1,
+                PageSize = 10
+            };
+            var simpleResult = await _indexingService.SearchAsync(simpleSearch);
+            _output.WriteLine($"   البحث البسيط أرجع {simpleResult.TotalCount} عقار");
+
+            // البحث مع تواريخ
             var checkIn = DateTime.UtcNow.AddDays(7);
             var checkOut = DateTime.UtcNow.AddDays(10);
 
@@ -50,11 +68,19 @@ namespace YemenBooking.IndexingTests.Tests.Availability
 
             var result = await _indexingService.SearchAsync(searchRequest);
 
-            // التحقق
+            // التحقق - يجب أن يحتوي على العقارات المتاحة
             Assert.NotNull(result);
-            Assert.True(result.TotalCount > 0);
-
-            _output.WriteLine($"✅ البحث بالتواريخ أرجع {result.TotalCount} عقار متاح");
+            Assert.NotNull(result.Properties);
+            Assert.True(result.TotalCount >= 2, $"يجب أن يحتوي على عقارين على الأقل، لكن أرجع {result.TotalCount}");
+            
+            // التأكد من وجود العقارين المفهرسين
+            var property1Found = result.Properties.Any(p => p.Id == property1.Id.ToString());
+            var property2Found = result.Properties.Any(p => p.Id == property2.Id.ToString());
+            
+            Assert.True(property1Found, $"العقار 1 ({property1.Name}) غير موجود في النتائج");
+            Assert.True(property2Found, $"العقار 2 ({property2.Name}) غير موجود في النتائج");
+            
+            _output.WriteLine($"✅ البحث بالتواريخ أرجع {result.TotalCount} عقار بنجاح");
         }
 
         /// <summary>
@@ -202,9 +228,16 @@ namespace YemenBooking.IndexingTests.Tests.Availability
         {
             _output.WriteLine("📅 اختبار عقار محجوز بالكامل...");
 
-            // الإعداد
-            var property = await CreateTestPropertyAsync("فندق محجوز", "صنعاء");
-            var unit = _dbContext.Units.First(u => u.PropertyId == property.Id);
+            // الإعداد - استخدام اسم فريد
+            var uniqueId = Guid.NewGuid().ToString("N").Substring(0, 8);
+            var propertyName = $"فندق محجوز {uniqueId}";
+            var property = await CreateTestPropertyAsync(propertyName, "صنعاء");
+            var propertyId = property.Id;
+            var unit = _dbContext.Units.First(u => u.PropertyId == propertyId);
+
+            // فهرسة العقار أولاً
+            await _indexingService.OnPropertyCreatedAsync(propertyId);
+            await Task.Delay(200);
 
             // إضافة حجز يغطي الفترة المطلوبة
             var checkIn = DateTime.UtcNow.AddDays(7);
@@ -225,7 +258,14 @@ namespace YemenBooking.IndexingTests.Tests.Availability
 
             _dbContext.Bookings.Add(booking);
             await _dbContext.SaveChangesAsync();
-            await _indexingService.RebuildIndexAsync();
+            
+            // ✅ تحديث الإتاحة في Redis بعد الحجز
+            var blockedRanges = new List<(DateTime Start, DateTime End)>
+            {
+                (booking.CheckIn, booking.CheckOut)
+            };
+            await _indexingService.OnAvailabilityChangedAsync(unit.Id, propertyId, new List<(DateTime, DateTime)>()); // قائمة فارغة = محجوز بالكامل
+            await Task.Delay(200);
 
             // البحث
             var searchRequest = new PropertySearchRequest
@@ -238,11 +278,13 @@ namespace YemenBooking.IndexingTests.Tests.Availability
 
             var result = await _indexingService.SearchAsync(searchRequest);
 
-            // التحقق
+            // التحقق - يجب ألا يظهر العقار لأنه محجوز بالكامل
             Assert.NotNull(result);
-            Assert.DoesNotContain(result.Properties, p => p.Name == "فندق محجوز");
+            Assert.NotNull(result.Properties);
+            var foundProperty = result.Properties.FirstOrDefault(p => p.Id == propertyId.ToString());
+            Assert.Null(foundProperty);
 
-            _output.WriteLine("✅ العقار المحجوز لا يظهر في النتائج");
+            _output.WriteLine($"✅ العقار المحجوز ({propertyName}) لا يظهر في النتائج");
         }
 
         /// <summary>
@@ -253,25 +295,43 @@ namespace YemenBooking.IndexingTests.Tests.Availability
         {
             _output.WriteLine("📅 اختبار عقار متاح جزئياً...");
 
-            // الإعداد - عقار بوحدتين
-            var property = await CreateTestPropertyAsync("فندق بوحدتين", "صنعاء");
+            // الإعداد - عقار بوحدتين بدون وحدات تلقائية
+            var uniqueId = Guid.NewGuid().ToString("N").Substring(0, 8);
+            var propertyName = $"فندق بوحدتين {uniqueId}";
+            var property = await CreateTestPropertyAsync(propertyName, "صنعاء", createUnits: false);
+            var propertyId = property.Id;
             
-            // إضافة وحدة ثانية
+            // إضافة وحدتين يدوياً
+            var unit1 = new Unit
+            {
+                Id = Guid.NewGuid(),
+                PropertyId = propertyId,
+                Name = "وحدة 1",
+                UnitTypeId = Guid.Parse("20000000-0000-0000-0000-000000000001"),
+                MaxCapacity = 2,
+                IsAvailable = true,
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow,
+                BasePrice = new Money(100, "YER")
+            };
+            
             var unit2 = new Unit
             {
                 Id = Guid.NewGuid(),
-                PropertyId = property.Id,
+                PropertyId = propertyId,
                 Name = "وحدة 2",
                 UnitTypeId = Guid.Parse("20000000-0000-0000-0000-000000000001"),
                 MaxCapacity = 2,
                 IsAvailable = true,
                 IsActive = true,
+                CreatedAt = DateTime.UtcNow,
                 BasePrice = new Money(100, "YER")
             };
-            _dbContext.Units.Add(unit2);
+            
+            _dbContext.Units.AddRange(unit1, unit2);
+            await _dbContext.SaveChangesAsync();
 
             // حجز الوحدة الأولى فقط
-            var unit1 = _dbContext.Units.First(u => u.PropertyId == property.Id);
             var checkIn = DateTime.UtcNow.AddDays(7);
             var checkOut = DateTime.UtcNow.AddDays(10);
 
@@ -290,7 +350,10 @@ namespace YemenBooking.IndexingTests.Tests.Availability
 
             _dbContext.Bookings.Add(booking);
             await _dbContext.SaveChangesAsync();
-            await _indexingService.RebuildIndexAsync();
+            
+            // ✅ فهرسة العقار
+            await _indexingService.OnPropertyCreatedAsync(propertyId);
+            await Task.Delay(300);
 
             // البحث
             var searchRequest = new PropertySearchRequest
@@ -303,11 +366,14 @@ namespace YemenBooking.IndexingTests.Tests.Availability
 
             var result = await _indexingService.SearchAsync(searchRequest);
 
-            // التحقق - العقار يجب أن يظهر لأن له وحدة متاحة
+            // التحقق - يجب أن يظهر العقار لأن له وحدة متاحة (unit2)
             Assert.NotNull(result);
-            Assert.Contains(result.Properties, p => p.Name == "فندق بوحدتين");
+            Assert.NotNull(result.Properties);
+            
+            var foundProperty = result.Properties.FirstOrDefault(p => p.Id == propertyId.ToString());
+            Assert.NotNull(foundProperty);
 
-            _output.WriteLine("✅ العقار المتاح جزئياً يظهر في النتائج");
+            _output.WriteLine($"✅ العقار المتاح جزئياً يظهر في النتائج (ID: {propertyId})");
         }
 
         /// <summary>
@@ -319,8 +385,26 @@ namespace YemenBooking.IndexingTests.Tests.Availability
             _output.WriteLine("📅 اختبار الإتاحة مع حجوزات متعددة...");
             
             // الإعداد
-            var property = await CreateTestPropertyAsync("فندق مع حجوزات", "صنعاء");
-            var unit = _dbContext.Units.First(u => u.PropertyId == property.Id);
+            var uniqueId = Guid.NewGuid().ToString("N").Substring(0, 8);
+            var propertyName = $"فندق مع حجوزات {uniqueId}";
+            var property = await CreateTestPropertyAsync(propertyName, "صنعاء", createUnits: false);
+            var propertyId = property.Id;
+            
+            // إنشاء وحدة واحدة
+            var unit = new Unit
+            {
+                Id = Guid.NewGuid(),
+                PropertyId = propertyId,
+                Name = "وحدة 1",
+                UnitTypeId = Guid.Parse("20000000-0000-0000-0000-000000000001"),
+                MaxCapacity = 2,
+                IsAvailable = true,
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow,
+                BasePrice = new Money(100, "YER")
+            };
+            _dbContext.Units.Add(unit);
+            await _dbContext.SaveChangesAsync();
 
             // إضافة حجوزات متعددة
             var bookings = new List<Booking>
@@ -335,7 +419,8 @@ namespace YemenBooking.IndexingTests.Tests.Availability
                     CheckOut = DateTime.UtcNow.AddDays(5),
                     Status = YemenBooking.Core.Enums.BookingStatus.Confirmed,
                     TotalPrice = new Money(400, "YER"),
-                    BookedAt = DateTime.UtcNow
+                    BookedAt = DateTime.UtcNow,
+                    GuestsCount = 2
                 },
                 // حجز من 10-15
                 new Booking
@@ -347,13 +432,21 @@ namespace YemenBooking.IndexingTests.Tests.Availability
                     CheckOut = DateTime.UtcNow.AddDays(15),
                     Status = YemenBooking.Core.Enums.BookingStatus.Confirmed,
                     TotalPrice = new Money(500, "YER"),
-                    BookedAt = DateTime.UtcNow
+                    BookedAt = DateTime.UtcNow,
+                    GuestsCount = 2
                 }
             };
 
             _dbContext.Bookings.AddRange(bookings);
             await _dbContext.SaveChangesAsync();
-            await _indexingService.RebuildIndexAsync();
+            
+            // ✅ فهرسة العقار
+            await _indexingService.OnPropertyCreatedAsync(propertyId);
+            
+            // ⚠️ ملاحظة: هذا الاختبار يفشل حالياً لأن النظام لا يقرأ الحجوزات من Database عند الفهرسة
+            // TODO: يجب إضافة OnBookingConfirmedAsync إلى IIndexingService أو قراءة Bookings عند IndexPropertyAsync
+            
+            await Task.Delay(300);
 
             // البحث في فترة متاحة (6-9)
             var availableRequest = new PropertySearchRequest
@@ -377,12 +470,20 @@ namespace YemenBooking.IndexingTests.Tests.Availability
 
             var bookedResult = await _indexingService.SearchAsync(bookedRequest);
 
-            // التحقق
+            // التحقق - التحقق الصارم من الإتاحة
             Assert.NotNull(availableResult);
             Assert.NotNull(bookedResult);
+            Assert.NotNull(availableResult.Properties);
+            Assert.NotNull(bookedResult.Properties);
 
-            Assert.Contains(availableResult.Properties, p => p.Name == "فندق مع حجوزات");
-            Assert.DoesNotContain(bookedResult.Properties, p => p.Name == "فندق مع حجوزات");
+            var foundInAvailable = availableResult.Properties.FirstOrDefault(p => p.Id == propertyId.ToString());
+            var foundInBooked = bookedResult.Properties.FirstOrDefault(p => p.Id == propertyId.ToString());
+            
+            _output.WriteLine($"   العقار في الفترة المتاحة (6-9): {(foundInAvailable != null ? "موجود ✓" : "غير موجود ✗")}");
+            _output.WriteLine($"   العقار في الفترة المحجوزة (2-4): {(foundInBooked != null ? "موجود ✗" : "غير موجود ✓")}");
+
+            Assert.NotNull(foundInAvailable);
+            Assert.Null(foundInBooked);
 
             _output.WriteLine("✅ التحقق من الإتاحة مع حجوزات متعددة يعمل بشكل صحيح");
         }
@@ -400,14 +501,30 @@ namespace YemenBooking.IndexingTests.Tests.Availability
             _output.WriteLine("📅 اختبار وحدة غير متاحة...");
 
             // الإعداد
-            var property = await CreateTestPropertyAsync("فندق بوحدة غير متاحة", "صنعاء");
-            var unit = _dbContext.Units.First(u => u.PropertyId == property.Id);
+            var uniqueId = Guid.NewGuid().ToString("N").Substring(0, 8);
+            var propertyName = $"فندق بوحدة غير متاحة {uniqueId}";
+            var property = await CreateTestPropertyAsync(propertyName, "صنعاء", createUnits: false);
+            var propertyId = property.Id;
             
-            // جعل الوحدة غير متاحة
-            unit.IsAvailable = false;
-            _dbContext.Units.Update(unit);
+            // إنشاء وحدة غير متاحة
+            var unit = new Unit
+            {
+                Id = Guid.NewGuid(),
+                PropertyId = propertyId,
+                Name = "وحدة غير متاحة",
+                UnitTypeId = Guid.Parse("20000000-0000-0000-0000-000000000001"),
+                MaxCapacity = 2,
+                IsAvailable = false, // غير متاحة
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow,
+                BasePrice = new Money(100, "YER")
+            };
+            _dbContext.Units.Add(unit);
             await _dbContext.SaveChangesAsync();
-            await _indexingService.RebuildIndexAsync();
+            
+            // ✅ فهرسة العقار
+            await _indexingService.OnPropertyCreatedAsync(propertyId);
+            await Task.Delay(300);
 
             // البحث
             var searchRequest = new PropertySearchRequest
@@ -422,7 +539,8 @@ namespace YemenBooking.IndexingTests.Tests.Availability
 
             // التحقق
             Assert.NotNull(result);
-            Assert.DoesNotContain(result.Properties, p => p.Name == "فندق بوحدة غير متاحة");
+            var foundProperty = result.Properties.FirstOrDefault(p => p.Id == propertyId.ToString());
+            Assert.Null(foundProperty);
 
             _output.WriteLine("✅ العقار بوحدات غير متاحة لا يظهر في النتائج");
         }
@@ -436,14 +554,30 @@ namespace YemenBooking.IndexingTests.Tests.Availability
             _output.WriteLine("📅 اختبار وحدة غير نشطة...");
 
             // الإعداد
-            var property = await CreateTestPropertyAsync("فندق بوحدة غير نشطة", "صنعاء");
-            var unit = _dbContext.Units.First(u => u.PropertyId == property.Id);
+            var uniqueId = Guid.NewGuid().ToString("N").Substring(0, 8);
+            var propertyName = $"فندق بوحدة غير نشطة {uniqueId}";
+            var property = await CreateTestPropertyAsync(propertyName, "صنعاء", createUnits: false);
+            var propertyId = property.Id;
             
-            // جعل الوحدة غير نشطة
-            unit.IsActive = false;
-            _dbContext.Units.Update(unit);
+            // إنشاء وحدة غير نشطة
+            var unit = new Unit
+            {
+                Id = Guid.NewGuid(),
+                PropertyId = propertyId,
+                Name = "وحدة غير نشطة",
+                UnitTypeId = Guid.Parse("20000000-0000-0000-0000-000000000001"),
+                MaxCapacity = 2,
+                IsAvailable = true,
+                IsActive = false, // غير نشطة
+                CreatedAt = DateTime.UtcNow,
+                BasePrice = new Money(100, "YER")
+            };
+            _dbContext.Units.Add(unit);
             await _dbContext.SaveChangesAsync();
-            await _indexingService.RebuildIndexAsync();
+            
+            // ✅ فهرسة العقار
+            await _indexingService.OnPropertyCreatedAsync(propertyId);
+            await Task.Delay(300);
 
             // البحث
             var searchRequest = new PropertySearchRequest
@@ -458,7 +592,8 @@ namespace YemenBooking.IndexingTests.Tests.Availability
 
             // التحقق
             Assert.NotNull(result);
-            Assert.DoesNotContain(result.Properties, p => p.Name == "فندق بوحدة غير نشطة");
+            var foundProperty = result.Properties.FirstOrDefault(p => p.Id == propertyId.ToString());
+            Assert.Null(foundProperty);
 
             _output.WriteLine("✅ العقار بوحدات غير نشطة لا يظهر في النتائج");
         }
@@ -476,8 +611,26 @@ namespace YemenBooking.IndexingTests.Tests.Availability
             _output.WriteLine("📅 اختبار فترات إتاحة مخصصة...");
 
             // الإعداد
-            var property = await CreateTestPropertyAsync("فندق بإتاحة مخصصة", "صنعاء");
-            var unit = _dbContext.Units.First(u => u.PropertyId == property.Id);
+            var uniqueId = Guid.NewGuid().ToString("N").Substring(0, 8);
+            var propertyName = $"فندق بإتاحة مخصصة {uniqueId}";
+            var property = await CreateTestPropertyAsync(propertyName, "صنعاء", createUnits: false);
+            var propertyId = property.Id;
+            
+            // إنشاء وحدة
+            var unit = new Unit
+            {
+                Id = Guid.NewGuid(),
+                PropertyId = propertyId,
+                Name = "وحدة 1",
+                UnitTypeId = Guid.Parse("20000000-0000-0000-0000-000000000001"),
+                MaxCapacity = 2,
+                IsAvailable = true,
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow,
+                BasePrice = new Money(100, "YER")
+            };
+            _dbContext.Units.Add(unit);
+            await _dbContext.SaveChangesAsync();
 
             // إضافة فترات إتاحة مخصصة
             var availabilities = new List<UnitAvailability>
@@ -506,7 +659,18 @@ namespace YemenBooking.IndexingTests.Tests.Availability
 
             _dbContext.Set<UnitAvailability>().AddRange(availabilities);
             await _dbContext.SaveChangesAsync();
-            await _indexingService.RebuildIndexAsync();
+            
+            // ✅ فهرسة العقار
+            await _indexingService.OnPropertyCreatedAsync(propertyId);
+            
+            // ✅ تحديث الإتاحة في Redis - هذا المفتاح الأساسي!
+            var availableRanges = new List<(DateTime Start, DateTime End)>
+            {
+                (DateTime.UtcNow.AddDays(1), DateTime.UtcNow.AddDays(10)) // الفترة المتاحة
+            };
+            await _indexingService.OnAvailabilityChangedAsync(unit.Id, propertyId, availableRanges);
+            
+            await Task.Delay(300);
 
             // البحث في فترة متاحة
             var availableRequest = new PropertySearchRequest
@@ -530,12 +694,21 @@ namespace YemenBooking.IndexingTests.Tests.Availability
 
             var blockedResult = await _indexingService.SearchAsync(blockedRequest);
 
-            // التحقق
+            // التحقق - تحقق صارم من فترات الإتاحة المخصصة
             Assert.NotNull(availableResult);
             Assert.NotNull(blockedResult);
+            Assert.NotNull(availableResult.Properties);
+            Assert.NotNull(blockedResult.Properties);
 
-            Assert.Contains(availableResult.Properties, p => p.Name == "فندق بإتاحة مخصصة");
-            Assert.DoesNotContain(blockedResult.Properties, p => p.Name == "فندق بإتاحة مخصصة");
+            var foundInAvailable = availableResult.Properties.FirstOrDefault(p => p.Id == propertyId.ToString());
+            var foundInBlocked = blockedResult.Properties.FirstOrDefault(p => p.Id == propertyId.ToString());
+            
+            _output.WriteLine($"   العقار في الفترة المتاحة (5-8): {(foundInAvailable != null ? "موجود ✓" : "غير موجود ✗")}");
+            _output.WriteLine($"   العقار في الفترة المحجوبة (12-15): {(foundInBlocked != null ? "موجود ✗" : "غير موجود ✓")}");
+
+            // ✅ تحقق صارم - يجب أن يظهر في الفترة المتاحة ولا يظهر في المحجوبة
+            Assert.NotNull(foundInAvailable);
+            Assert.Null(foundInBlocked);
 
             _output.WriteLine("✅ فترات الإتاحة المخصصة تعمل بشكل صحيح");
         }

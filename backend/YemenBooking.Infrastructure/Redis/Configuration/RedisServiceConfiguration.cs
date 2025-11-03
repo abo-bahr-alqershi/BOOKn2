@@ -77,10 +77,11 @@ namespace YemenBooking.Infrastructure.Redis.Configuration
                 var redisManager = provider.GetRequiredService<IRedisConnectionManager>();
                 var propertyRepository = provider.GetRequiredService<IPropertyRepository>();
                 var cacheManager = provider.GetRequiredService<MultiLevelCache>();
+                var availabilityProcessor = provider.GetRequiredService<AvailabilityProcessor>();
                 var logger = provider.GetRequiredService<ILogger<OptimizedSearchEngine>>();
                 var memoryCache = provider.GetRequiredService<Microsoft.Extensions.Caching.Memory.IMemoryCache>();
                 
-                return new OptimizedSearchEngine(redisManager, propertyRepository, cacheManager, logger, memoryCache);
+                return new OptimizedSearchEngine(redisManager, propertyRepository, cacheManager, availabilityProcessor, logger, memoryCache);
             });
 
             // 5. تسجيل معالج الإتاحة

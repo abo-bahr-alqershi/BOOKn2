@@ -8,6 +8,7 @@ using Microsoft.Extensions.Configuration;
 using Xunit;
 using YemenBooking.Infrastructure.Redis;
 using YemenBooking.Infrastructure.Redis.Core;
+using YemenBooking.Infrastructure.Redis.Availability;
 using YemenBooking.Infrastructure.Services;
 using YemenBooking.Application.Infrastructure.Services;
 using YemenBooking.Infrastructure.Redis.Indexing;
@@ -116,6 +117,7 @@ namespace YemenBooking.IndexingTests.Tests.Core
                 _redisManager,
                 _fixture.ServiceProvider.GetRequiredService<IPropertyRepository>(),
                 mockCache,
+                _fixture.ServiceProvider.GetRequiredService<AvailabilityProcessor>(),
                 _fixture.ServiceProvider.GetRequiredService<ILogger<OptimizedSearchEngine>>(),
                 memoryCache
             );
@@ -211,6 +213,7 @@ namespace YemenBooking.IndexingTests.Tests.Core
                 _redisManager,
                 mockPropertyRepo.Object,
                 cacheManager,
+                _fixture.ServiceProvider.GetRequiredService<AvailabilityProcessor>(),
                 _fixture.ServiceProvider.GetRequiredService<ILogger<OptimizedSearchEngine>>(),
                 memoryCache
             );

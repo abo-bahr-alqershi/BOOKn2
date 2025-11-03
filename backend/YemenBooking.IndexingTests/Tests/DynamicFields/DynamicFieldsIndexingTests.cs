@@ -40,7 +40,7 @@ namespace YemenBooking.IndexingTests.Tests.DynamicFields
             _logger = _scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger<DynamicFieldsIndexingTests>();
             
             // التأكد من تهيئة البيانات الأساسية
-            Task.Run(async () => await TestDataHelper.EnsureAllBaseDataAsync(_dbContext)).GetAwaiter().GetResult();
+            TestDataHelper.EnsureAllBaseDataAsync(_dbContext).GetAwaiter().GetResult();
         }
 
         #region اختبارات إضافة الحقول الديناميكية

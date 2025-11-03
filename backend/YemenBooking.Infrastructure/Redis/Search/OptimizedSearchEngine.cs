@@ -14,6 +14,7 @@ using YemenBooking.Infrastructure.Redis.Scripts;
 using YemenBooking.Infrastructure.Redis.Core;
 using YemenBooking.Infrastructure.Redis.Models;
 using YemenBooking.Infrastructure.Redis.Cache;
+using YemenBooking.Infrastructure.Redis.Availability;
 using YemenBooking.Core.Indexing.Models;
 using YemenBooking.Application.Infrastructure.Services;
 using YemenBooking.Core.Interfaces.Repositories;
@@ -29,6 +30,7 @@ namespace YemenBooking.Infrastructure.Redis.Search
         private readonly IRedisConnectionManager _redisManager;
         private readonly IPropertyRepository _propertyRepository;
         private readonly MultiLevelCache _cacheManager;
+        private readonly AvailabilityProcessor _availabilityProcessor;
         private readonly ILogger<OptimizedSearchEngine> _logger;
         private readonly IMemoryCache _memoryCache;
         private IDatabase _db;
@@ -42,12 +44,14 @@ namespace YemenBooking.Infrastructure.Redis.Search
             IRedisConnectionManager redisManager,
             IPropertyRepository propertyRepository,
             MultiLevelCache cacheManager,
+            AvailabilityProcessor availabilityProcessor,
             ILogger<OptimizedSearchEngine> logger,
             IMemoryCache memoryCache)
         {
             _redisManager = redisManager;
             _propertyRepository = propertyRepository;
             _cacheManager = cacheManager;
+            _availabilityProcessor = availabilityProcessor;
             _logger = logger;
             _memoryCache = memoryCache;
             _db = null; // تأجيل تهيئة Database
@@ -333,7 +337,7 @@ namespace YemenBooking.Infrastructure.Redis.Search
             var propertyIds = geoResults.Select(r => r.Member.ToString()).ToList();
             var properties = await GetPropertiesDetailsAsync(propertyIds);
 
-            properties = ApplyFilters(properties, request);
+            properties = await ApplyFiltersAsync(properties, request, cancellationToken);
 
             properties = ApplySorting(properties, request.SortBy);
             var pagedProperties = ApplyPaging(properties, request.PageNumber, request.PageSize);
@@ -647,76 +651,221 @@ namespace YemenBooking.Infrastructure.Redis.Search
         /// <summary>
         /// البحث النصي اليدوي (عندما RediSearch غير متاح)
         /// </summary>
+        /// <summary>
+        /// ✅ البحث باستخدام الفهارس - الفلرتة داخل Redis
+        /// يتم استخدام Sorted Sets و Sets للفلترة السريعة
+        /// </summary>
         private async Task<PropertySearchResult> ExecuteManualTextSearchAsync(
             PropertySearchRequest request,
             CancellationToken cancellationToken)
         {
-            var searchText = request.SearchText?.ToLowerInvariant();
-            var tokens = BuildPlainTokens(searchText);
-            var allProperties = await GetDatabase().SetMembersAsync(RedisKeySchemas.PROPERTIES_ALL_SET);
-            var matchedProperties = new List<PropertyIndexDocument>();
-
-            foreach (var propertyId in allProperties)
+            var db = GetDatabase();
+            
+            // ✅ نبدأ بالفهرس المناسب بدلاً من جلب كل شيء
+            HashSet<string> candidateIds = null;
+            
+            // 1. فلترة بالمدينة (أسرع فلتر)
+            if (!string.IsNullOrWhiteSpace(request.City))
             {
-                var propertyKey = RedisKeySchemas.GetPropertyKey(Guid.Parse(propertyId));
-                var propertyData = await GetDatabase().HashGetAllAsync(propertyKey);
+                var cityKey = RedisKeySchemas.GetCityKey(request.City);
+                var cityMembers = await db.SetMembersAsync(cityKey);
+                candidateIds = new HashSet<string>(cityMembers.Select(m => m.ToString()));
                 
-                if (propertyData.Length == 0) continue;
+                if (candidateIds.Count == 0)
+                    return new PropertySearchResult { Properties = new List<PropertySearchItem>(), TotalCount = 0 };
+            }
+            
+            // 2. فلترة بنوع العقار
+            if (!string.IsNullOrWhiteSpace(request.PropertyType))
+            {
+                Guid typeId;
+                RedisKey typeKey;
                 
-                var doc = PropertyIndexDocument.FromHashEntries(propertyData);
-                
-                // بحث في الاسم والوصف عبر التوكينات لتجاوز الفواصل/التطويل
-                bool textMatch = false;
-                if (tokens.Count == 0)
+                if (Guid.TryParse(request.PropertyType, out typeId))
                 {
-                    textMatch = string.IsNullOrWhiteSpace(searchText);
+                    typeKey = RedisKeySchemas.GetTypeKey(typeId);
                 }
                 else
                 {
-                    foreach (var tk in tokens)
-                    {
-                        if (doc.NameNormalized?.Contains(tk) == true ||
-                            doc.Description?.ToLowerInvariant().Contains(tk) == true ||
-                            doc.City?.ToLowerInvariant().Contains(tk) == true)
-                        {
-                            textMatch = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (textMatch)
-                {
-                    matchedProperties.Add(doc);
+                    // محاولة البحث بالاسم
+                    typeKey = $"type:{request.PropertyType.ToLowerInvariant()}";
                 }
                 
-                // البحث في الحقول الديناميكية أيضاً
-                if (doc.DynamicFields != null)
+                var typeMembers = await db.SetMembersAsync(typeKey);
+                var typeIds = new HashSet<string>(typeMembers.Select(m => m.ToString()));
+                
+                if (candidateIds == null)
+                    candidateIds = typeIds;
+                else
+                    candidateIds.IntersectWith(typeIds);
+                    
+                if (candidateIds.Count == 0)
+                    return new PropertySearchResult { Properties = new List<PropertySearchItem>(), TotalCount = 0 };
+            }
+            
+            // 3. فلترة بالسعر باستخدام Sorted Set
+            if (request.MinPrice.HasValue || request.MaxPrice.HasValue)
+            {
+                var minPrice = (double)(request.MinPrice ?? 0m);
+                var maxPrice = (double)(request.MaxPrice ?? decimal.MaxValue);
+                
+                var priceMembers = await db.SortedSetRangeByScoreAsync(
+                    RedisKeySchemas.INDEX_PRICE,
+                    minPrice,
+                    maxPrice
+                );
+                
+                var priceIds = new HashSet<string>(priceMembers.Select(m => m.ToString()));
+                
+                if (candidateIds == null)
+                    candidateIds = priceIds;
+                else
+                    candidateIds.IntersectWith(priceIds);
+                    
+                if (candidateIds.Count == 0)
+                    return new PropertySearchResult { Properties = new List<PropertySearchItem>(), TotalCount = 0 };
+            }
+            
+            // 4. فلترة بالتقييم
+            if (request.MinRating.HasValue)
+            {
+                var ratingMembers = await db.SortedSetRangeByScoreAsync(
+                    RedisKeySchemas.INDEX_RATING,
+                    (double)request.MinRating.Value,
+                    double.MaxValue
+                );
+                
+                var ratingIds = new HashSet<string>(ratingMembers.Select(m => m.ToString()));
+                
+                if (candidateIds == null)
+                    candidateIds = ratingIds;
+                else
+                    candidateIds.IntersectWith(ratingIds);
+                    
+                if (candidateIds.Count == 0)
+                    return new PropertySearchResult { Properties = new List<PropertySearchItem>(), TotalCount = 0 };
+            }
+            
+            // 5. إذا لم يكن هناك فلاتر
+            if (candidateIds == null)
+            {
+                // ✅ إذا كان هناك بحث نصي، نستخدم PROPERTIES_ALL_SET لكن بحد معقول
+                if (!string.IsNullOrWhiteSpace(request.SearchText))
                 {
-                    foreach (var field in doc.DynamicFields.Values)
+                    // للبحث النصي: نحصل على أحدث العقارات أو الأكثر شعبية
+                    var recentProperties = await db.SortedSetRangeByScoreAsync(
+                        RedisKeySchemas.INDEX_CREATED,
+                        double.NegativeInfinity,
+                        double.PositiveInfinity,
+                        Exclude.None,
+                        Order.Descending,
+                        0,
+                        1000 // حد معقول للبحث النصي
+                    );
+                    
+                    candidateIds = new HashSet<string>(recentProperties.Select(m => m.ToString()));
+                }
+                else
+                {
+                    // بدون فلاتر وبدون بحث: نحصل على الأكثر شعبية
+                    var topProperties = await db.SortedSetRangeByScoreAsync(
+                        RedisKeySchemas.INDEX_POPULARITY,
+                        double.NegativeInfinity,
+                        double.PositiveInfinity,
+                        Exclude.None,
+                        Order.Descending,
+                        0,
+                        request.PageSize * 3
+                    );
+                    
+                    candidateIds = new HashSet<string>(topProperties.Select(m => m.ToString()));
+                }
+            }
+            
+            // ✅ الآن نجلب فقط العقارات المرشحة (وليس كل شيء!)
+            var matchedProperties = new List<PropertyIndexDocument>();
+            
+            foreach (var propertyId in candidateIds.Take(1000)) // حد أقصى للأمان
+            {
+                try
+                {
+                    var propertyKey = RedisKeySchemas.GetPropertyKey(Guid.Parse(propertyId));
+                    var propertyData = await db.HashGetAllAsync(propertyKey);
+                    
+                    if (propertyData.Length == 0) continue;
+                    
+                    var doc = PropertyIndexDocument.FromHashEntries(propertyData);
+                    
+                    // فلترة البحث النصي إذا وجد
+                    if (!string.IsNullOrWhiteSpace(request.SearchText))
                     {
-                        if (string.IsNullOrWhiteSpace(field)) continue;
-                        var fval = field.ToLowerInvariant();
+                        var searchLower = request.SearchText.ToLowerInvariant();
+                        var tokens = BuildPlainTokens(searchLower);
+                        
+                        bool textMatch = false;
                         foreach (var tk in tokens)
                         {
-                            if (fval.Contains(tk))
+                            if (doc.NameNormalized?.Contains(tk) == true ||
+                                doc.Description?.ToLowerInvariant().Contains(tk) == true ||
+                                doc.City?.ToLowerInvariant().Contains(tk) == true)
                             {
-                                matchedProperties.Add(doc);
-                                goto AddedDoc;
+                                textMatch = true;
+                                break;
                             }
                         }
+                        
+                        if (!textMatch) continue;
                     }
+                    
+                    // فلاتر إضافية في الذاكرة (على العقارات المرشحة فقط)
+                    if (!PassesAdvancedFilters(doc, request)) continue;
+                    
+                    matchedProperties.Add(doc);
                 }
-            AddedDoc:
-                ;
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "خطأ في جلب عقار {PropertyId}", propertyId);
+                }
             }
-
-            // تطبيق الفلاتر والترتيب
-            matchedProperties = ApplyFilters(matchedProperties, request);
+            
+            // ترتيب وتقسيم
             matchedProperties = ApplySorting(matchedProperties, request.SortBy);
             var pagedProperties = ApplyPaging(matchedProperties, request.PageNumber, request.PageSize);
-
+            
             return BuildSearchResult(pagedProperties, matchedProperties.Count, request);
+        }
+        
+        /// <summary>
+        /// فلاتر متقدمة إضافية
+        /// </summary>
+        private bool PassesAdvancedFilters(PropertyIndexDocument doc, PropertySearchRequest request)
+        {
+            // فلتر السعة
+            if (request.GuestsCount.HasValue && doc.MaxCapacity < request.GuestsCount.Value)
+                return false;
+                
+            // فلتر نوع الوحدة
+            if (!string.IsNullOrWhiteSpace(request.UnitTypeId))
+            {
+                if (Guid.TryParse(request.UnitTypeId, out var unitTypeId))
+                {
+                    if (!doc.UnitTypeIds.Contains(unitTypeId))
+                        return false;
+                }
+            }
+            
+            // فلتر المرافق
+            if (request.RequiredAmenityIds?.Any() == true)
+            {
+                if (!request.RequiredAmenityIds.All(amenityId => doc.AmenityIds.Contains(Guid.Parse(amenityId))))
+                    return false;
+            }
+            
+            // فقط العقارات النشطة والمعتمدة
+            if (!doc.IsActive || !doc.IsApproved)
+                return false;
+                
+            return true;
         }
 
         #endregion
@@ -880,9 +1029,10 @@ namespace YemenBooking.Infrastructure.Redis.Search
         /// <summary>
         /// تطبيق الفلاتر على النتائج
         /// </summary>
-        private List<PropertyIndexDocument> ApplyFilters(
+        private async Task<List<PropertyIndexDocument>> ApplyFiltersAsync(
             List<PropertyIndexDocument> properties,
-            PropertySearchRequest request)
+            PropertySearchRequest request,
+            CancellationToken cancellationToken = default)
         {
             // دائماً فلتر بحسب حالة النشاط والاعتماد
             properties = properties.Where(p => p.IsActive && p.IsApproved).ToList();
@@ -1016,21 +1166,46 @@ namespace YemenBooking.Infrastructure.Redis.Search
                     request.CheckIn.Value.ToString("yyyy-MM-dd"), 
                     request.CheckOut.Value.ToString("yyyy-MM-dd"));
                 
-                // مؤقتاً: نعرض فقط العقارات المتاحة
-                // في المستقبل، سيتم التحقق من الإتاحة الفعلية للتواريخ المحددة
-                var beforeAvailability = properties.Count;
+                // ✅ استخدام AvailabilityProcessor للتحقق الفعلي من الإتاحة
+                var availableProperties = new List<PropertyIndexDocument>();
+                var guestsCount = request.GuestsCount ?? 1;
                 
-                // نفلتر العقارات غير المتاحة بالكامل
-                properties = properties.Where(p => 
-                    p.IsActive && // العقار نشط
-                    p.TotalUnits > 0 // لديه وحدات
-                ).ToList();
-                
-                if (beforeAvailability != properties.Count)
+                foreach (var property in properties)
                 {
-                    _logger.LogInformation("✅ تم فلتر {Count} عقار غير متاح", 
-                        beforeAvailability - properties.Count);
+                    try
+                    {
+                        // فحص الإتاحة الفعلية للعقار
+                        var availabilityResult = await _availabilityProcessor.CheckPropertyAvailabilityAsync(
+                            property.Id,
+                            request.CheckIn.Value,
+                            request.CheckOut.Value,
+                            guestsCount,
+                            cancellationToken: cancellationToken); // تجاهل unitTypeId
+                        
+                        if (availabilityResult.IsAvailable)
+                        {
+                            availableProperties.Add(property);
+                            _logger.LogDebug("✓ العقار {PropertyId} متاح ({UnitsCount} وحدة)", 
+                                property.Id, availabilityResult.TotalAvailableUnits);
+                        }
+                        else
+                        {
+                            _logger.LogDebug("✗ العقار {PropertyId} غير متاح: {Message}", 
+                                property.Id, availabilityResult.Message);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "⚠️ فشل فحص إتاحة العقار {PropertyId}", property.Id);
+                        // في حالة الخطأ، نستبعد العقار من النتائج
+                    }
                 }
+                
+                var beforeAvailability = properties.Count;
+                properties = availableProperties;
+                
+                _logger.LogInformation("✅ فلتر الإتاحة: {Before} → {After} عقار متاح", 
+                    beforeAvailability, properties.Count);
             }
 
             // فلتر الحالة - يجب أن يكون دائماً في النهاية
@@ -1363,16 +1538,24 @@ namespace YemenBooking.Infrastructure.Redis.Search
                 using var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
                 var total = root.GetProperty("total_count").GetInt32();
-                var results = root.GetProperty("results");
+                
                 var ids = new List<string>();
-
-                foreach (var item in results.EnumerateArray())
+                
+                // التعامل مع results سواء كان object فارغ أو array
+                if (root.TryGetProperty("results", out var results))
                 {
-                    if (item.ValueKind == JsonValueKind.Array && item.GetArrayLength() >= 1)
+                    if (results.ValueKind == JsonValueKind.Array)
                     {
-                        var id = item[0].GetString();
-                        if (!string.IsNullOrWhiteSpace(id)) ids.Add(id);
+                        foreach (var item in results.EnumerateArray())
+                        {
+                            if (item.ValueKind == JsonValueKind.Array && item.GetArrayLength() >= 1)
+                            {
+                                var id = item[0].GetString();
+                                if (!string.IsNullOrWhiteSpace(id)) ids.Add(id);
+                            }
+                        }
                     }
+                    // else: results = {} (object فارغ) - لا نفعل شيء، ids ستبقى فارغة
                 }
 
                 var docs = await GetPropertiesDetailsAsync(ids);

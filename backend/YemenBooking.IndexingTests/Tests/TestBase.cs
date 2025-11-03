@@ -36,6 +36,10 @@ namespace YemenBooking.IndexingTests.Tests
         protected readonly Random _random = new Random();
         private static bool _baseDataInitialized = false;
         private static readonly SemaphoreSlim _initLock = new SemaphoreSlim(1, 1);
+        
+        // ✅ عداد للتتبع الذكي للتنظيف
+        private int _entityCount = 0;
+        private const int MAX_ENTITIES_BEFORE_CLEANUP = 50; // رفع العدد إلى 50 بدلاً من 5
 
         /// <summary>
         /// منشئ الاختبار الأساسي
@@ -50,6 +54,7 @@ namespace YemenBooking.IndexingTests.Tests
             _logger = _scope.ServiceProvider.GetRequiredService<ILogger<TestBase>>();
             
             // ✅ التهيئة الآمنة بدون حلقات - يتم مرة واحدة فقط
+            // ✅ تنفيذ متزامن لتجنب مشاكل DbContext concurrency
             EnsureBaseDataInitializedAsync().GetAwaiter().GetResult();
         }
         
@@ -83,7 +88,8 @@ namespace YemenBooking.IndexingTests.Tests
             Guid? typeId = null,
             decimal minPrice = 100,
             bool isActive = true,
-            bool isApproved = true)
+            bool isApproved = true,
+            bool createUnits = true)
         {
             // استخدام TestDataHelper لإنشاء عقار صحيح
             var property = TestDataHelper.CreateValidProperty(
@@ -110,8 +116,11 @@ namespace YemenBooking.IndexingTests.Tests
             _dbContext.Properties.Add(property);
             await _dbContext.SaveChangesAsync();
 
-            // إنشاء وحدات للعقار - عدد محدود (1-2 فقط) لتجنب التراكم
-            await CreateTestUnitsForPropertyAsync(property.Id, _random.Next(1, 3));
+            // ✅ إنشاء وحدات فقط إذا طُلِب ذلك
+            if (createUnits)
+            {
+                await CreateTestUnitsForPropertyAsync(property.Id, _random.Next(1, 3));
+            }
 
             // ✅ العقار جاهز للاستخدام مباشرة - متتبع في DbContext
             return property;
@@ -194,18 +203,26 @@ namespace YemenBooking.IndexingTests.Tests
                     properties.Add(property);
                     
                     propertyCount++;
-                    // ✅ تنظيف ChangeTracker كل 5 عقارات لتجنب التراكم
-                    if (propertyCount % 5 == 0)
+                    _entityCount++;
+                    
+                    // ✅ تنظيف ChangeTracker بشكل ذكي فقط عند الضرورة
+                    if (_entityCount >= MAX_ENTITIES_BEFORE_CLEANUP)
                     {
-                        _dbContext.ChangeTracker.Clear();
+                        await SmartCleanupAsync();
+                        _entityCount = 0;
                     }
                 }
             }
 
-            // ✅ تنظيف نهائي
-            _dbContext.ChangeTracker.Clear();
+            // ✅ تنظيف نهائي ذكي
+            await SmartCleanupAsync();
             
-            return properties;
+            // ✅ إعادة تحميل العقارات بدون تتبع
+            var propertyIds = properties.Select(p => p.Id).ToList();
+            return await _dbContext.Properties
+                .AsNoTracking()
+                .Where(p => propertyIds.Contains(p.Id))
+                .ToListAsync();
         }
 
         /// <summary>
@@ -334,9 +351,37 @@ namespace YemenBooking.IndexingTests.Tests
 
         #endregion
 
+        /// <summary>
+        /// تنظيف ذكي لـ ChangeTracker مع الحفاظ على البيانات المهمة
+        /// </summary>
+        private async Task SmartCleanupAsync()
+        {
+            // حفظ التغييرات المعلقة أولاً
+            if (_dbContext.ChangeTracker.HasChanges())
+            {
+                await _dbContext.SaveChangesAsync();
+            }
+            
+            // تنظيف الكيانات غير المعدلة فقط
+            var entriesToClear = _dbContext.ChangeTracker.Entries()
+                .Where(e => e.State == EntityState.Unchanged || e.State == EntityState.Detached)
+                .ToList();
+                
+            foreach (var entry in entriesToClear)
+            {
+                entry.State = EntityState.Detached;
+            }
+        }
+        
         public virtual void Dispose()
         {
-            // التنظيف والتخلص من الـ scope
+            // التنظيف النهائي
+            try
+            {
+                _dbContext?.ChangeTracker?.Clear();
+            }
+            catch { /* تجاهل الأخطاء عند التنظيف */ }
+            
             _scope?.Dispose();
         }
     }

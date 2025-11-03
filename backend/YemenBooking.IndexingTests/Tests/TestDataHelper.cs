@@ -14,24 +14,32 @@ namespace YemenBooking.IndexingTests.Tests
     /// </summary>
     public static class TestDataHelper
     {
-        private static readonly object _lock = new object();
-        private static Task? _initializationTask = null;
+        private static readonly SemaphoreSlim _initLock = new SemaphoreSlim(1, 1);
+        private static bool _isInitialized = false;
+        private static readonly Dictionary<string, bool> _dbInitialized = new Dictionary<string, bool>();
 
         /// <summary>
         /// تهيئة جميع البيانات الأساسية المطلوبة
         /// </summary>
         public static async Task EnsureAllBaseDataAsync(YemenBookingDbContext dbContext)
         {
-            Task initTask;
-            lock (_lock)
+            // التحقق من التهيئة باستخدام معرف فريد للسياق
+            var contextId = dbContext.ContextId.InstanceId.ToString();
+            
+            await _initLock.WaitAsync();
+            try
             {
-                if (_initializationTask == null)
-                {
-                    _initializationTask = InitializeAllAsync(dbContext);
-                }
-                initTask = _initializationTask;
+                // التحقق إذا كان هذا السياق قد تمت تهيئته
+                if (_dbInitialized.ContainsKey(contextId) && _dbInitialized[contextId])
+                    return;
+
+                await InitializeAllAsync(dbContext);
+                _dbInitialized[contextId] = true;
             }
-            await initTask;
+            finally
+            {
+                _initLock.Release();
+            }
         }
 
         private static async Task InitializeAllAsync(YemenBookingDbContext dbContext)
@@ -50,7 +58,10 @@ namespace YemenBooking.IndexingTests.Tests
         /// </summary>
         private static async Task EnsureCitiesAsync(YemenBookingDbContext dbContext)
         {
-            var existing = await dbContext.Cities.Select(c => c.Name).ToListAsync();
+            var existing = await dbContext.Cities
+                .AsNoTracking()  // ✅ عدم تتبع الاستعلام
+                .Select(c => c.Name)
+                .ToListAsync();
             var needed = new[] { "صنعاء", "عدن", "تعز", "الحديدة", "إب", "ذمار", "المكلا" };
             var toAdd = needed.Where(n => !existing.Contains(n))
                 .Select(n => new YemenBooking.Core.Entities.City { Name = n, Country = "اليمن" })
@@ -59,6 +70,7 @@ namespace YemenBooking.IndexingTests.Tests
             {
                 dbContext.Cities.AddRange(toAdd);
                 await dbContext.SaveChangesAsync();
+                dbContext.ChangeTracker.Clear();  // ✅ تنظيف بعد الحفظ
             }
         }
 
@@ -68,6 +80,7 @@ namespace YemenBooking.IndexingTests.Tests
         private static async Task EnsurePropertyTypesAsync(YemenBookingDbContext dbContext)
         {
             var existingTypes = await dbContext.PropertyTypes
+                .AsNoTracking()  // ✅ عدم تتبع الاستعلام
                 .Select(pt => pt.Id)
                 .ToListAsync();
 
@@ -128,6 +141,7 @@ namespace YemenBooking.IndexingTests.Tests
             {
                 dbContext.PropertyTypes.AddRange(typesToAdd);
                 await dbContext.SaveChangesAsync();
+                dbContext.ChangeTracker.Clear();  // ✅ تنظيف بعد الحفظ
             }
         }
 
@@ -138,7 +152,9 @@ namespace YemenBooking.IndexingTests.Tests
         {
             // التحقق أولاً من وجود PropertyType المطلوب
             var propertyTypeId = Guid.Parse("30000000-0000-0000-0000-000000000003"); // فندق
-            var propertyTypeExists = await dbContext.PropertyTypes.AnyAsync(pt => pt.Id == propertyTypeId);
+            var propertyTypeExists = await dbContext.PropertyTypes
+                .AsNoTracking()  // ✅ عدم تتبع الاستعلام
+                .AnyAsync(pt => pt.Id == propertyTypeId);
             if (!propertyTypeExists)
             {
                 // PropertyTypes يجب أن تكون موجودة بالفعل من EnsurePropertyTypesAsync
@@ -146,6 +162,7 @@ namespace YemenBooking.IndexingTests.Tests
             }
             
             var existingTypes = await dbContext.UnitTypes
+                .AsNoTracking()  // ✅ عدم تتبع الاستعلام
                 .Select(ut => ut.Id)
                 .ToListAsync();
             
@@ -201,6 +218,7 @@ namespace YemenBooking.IndexingTests.Tests
             {
                 dbContext.UnitTypes.AddRange(typesToAdd);
                 await dbContext.SaveChangesAsync();
+                dbContext.ChangeTracker.Clear();  // ✅ تنظيف بعد الحفظ
             }
         }
 
@@ -212,6 +230,7 @@ namespace YemenBooking.IndexingTests.Tests
             var testUserId = Guid.Parse("10000000-0000-0000-0000-000000000001");
             
             var existingUser = await dbContext.Users
+                .AsNoTracking()  // ✅ عدم تتبع الاستعلام
                 .AnyAsync(u => u.Id == testUserId);
 
             if (!existingUser)
@@ -230,6 +249,7 @@ namespace YemenBooking.IndexingTests.Tests
                 
                 dbContext.Users.Add(testUser);
                 await dbContext.SaveChangesAsync();
+                dbContext.ChangeTracker.Clear();  // ✅ تنظيف بعد الحفظ
             }
         }
 
@@ -239,6 +259,7 @@ namespace YemenBooking.IndexingTests.Tests
         private static async Task EnsureAmenitiesAsync(YemenBookingDbContext dbContext)
         {
             var existingAmenities = await dbContext.Amenities
+                .AsNoTracking()  // ✅ عدم تتبع الاستعلام
                 .Select(a => a.Name)
                 .ToListAsync();
 
@@ -294,6 +315,7 @@ namespace YemenBooking.IndexingTests.Tests
             {
                 dbContext.Amenities.AddRange(amenitiesToAdd);
                 await dbContext.SaveChangesAsync();
+                dbContext.ChangeTracker.Clear();  // ✅ تنظيف بعد الحفظ
             }
         }
 

@@ -347,12 +347,20 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                     _ = tran.SetAddAsync(RedisKeySchemas.TAG_PROPERTY_HAS_CHILDREN, unit.PropertyId.ToString());
                 }
 
-                // إضافة فترة تسعير افتراضية تغطي كل الزمن بناءً على السعر الأساسي
+                // ✅ إضافة فترة تسعير افتراضية محدودة (سنتان من الآن - نهج الإنتاج الأمثل)
                 var priceZKey = RedisKeySchemas.GetUnitPricingZKey(unit.Id);
-                var startTicks = 0L; // من البداية
-                var endTicks = DateTime.MaxValue.Ticks; // إلى أقصى تاريخ
+                var startTicks = DateTime.UtcNow.Ticks; // من الآن
+                var endTicks = DateTime.UtcNow.AddYears(2).Ticks; // سنتان فقط - لتقليل استهلاك الذاكرة
                 var priceElement = $"{startTicks}:{endTicks}:{unitDoc.BasePrice}:{unitDoc.Currency}";
                 _ = tran.SortedSetAddAsync(priceZKey, priceElement, startTicks);
+
+                // ✅ إضافة فترة إتاحة افتراضية محدودة (سنتان من الآن)
+                if (unit.IsAvailable && unit.IsActive)
+                {
+                    var availKey = RedisKeySchemas.GetUnitAvailabilityKey(unit.Id);
+                    var availElement = $"{startTicks}:{endTicks}:available";
+                    _ = tran.SortedSetAddAsync(availKey, availElement, startTicks);
+                }
 
                 var result = await tran.ExecuteAsync();
 
@@ -959,12 +967,20 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                     _ = tran.SetAddAsync(RedisKeySchemas.TAG_PROPERTY_HAS_CHILDREN, property.Id.ToString());
                 }
 
-                // إضافة فترة تسعير افتراضية تغطي كل الزمن بناءً على السعر الأساسي
+                // ✅ إضافة فترة تسعير افتراضية محدودة (سنتان من الآن - نهج الإنتاج الأمثل)
                 var priceZKey2 = RedisKeySchemas.GetUnitPricingZKey(unit.Id);
-                var startTicks2 = 0L;
-                var endTicks2 = DateTime.MaxValue.Ticks;
+                var startTicks2 = DateTime.UtcNow.Ticks; // من الآن
+                var endTicks2 = DateTime.UtcNow.AddYears(2).Ticks; // سنتان فقط
                 var priceElement2 = $"{startTicks2}:{endTicks2}:{unitDoc.BasePrice}:{unitDoc.Currency}";
                 _ = tran.SortedSetAddAsync(priceZKey2, priceElement2, startTicks2);
+                
+                // ✅ إضافة فترة إتاحة افتراضية محدودة (سنتان من الآن)
+                if (unitDoc.IsAvailable && unitDoc.IsActive)
+                {
+                    var availKey = RedisKeySchemas.GetUnitAvailabilityKey(unit.Id);
+                    var availElement = $"{startTicks2}:{endTicks2}:available";
+                    _ = tran.SortedSetAddAsync(availKey, availElement, startTicks2);
+                }
             }
             
             await Task.CompletedTask; // للحفاظ على التوقيع async

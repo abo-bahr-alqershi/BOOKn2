@@ -309,8 +309,12 @@ namespace YemenBooking.Infrastructure.Redis.Cache
             {
                 _logger.LogWarning("بدء مسح جميع مستويات الكاش");
 
-                // مسح L1 (Memory Cache) - لا يمكن مسحه بالكامل بسهولة
-                // يحتاج إلى تنفيذ مخصص
+                // ✅ مسح L1 (Memory Cache) باستخدام Compact
+                if (_memoryCache is Microsoft.Extensions.Caching.Memory.MemoryCache mc)
+                {
+                    mc.Compact(1.0); // إزالة 100% من الكاش
+                    _logger.LogDebug("✅ تم مسح L1 Cache");
+                }
 
                 // مسح L2 و L3 من Redis
                 var server = _redisManager.GetServer();

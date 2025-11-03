@@ -98,7 +98,19 @@ namespace YemenBooking.Infrastructure.Redis
             if (_isInitialized)
                 return true;
 
-            await _initializationLock.WaitAsync();
+            // ✅ استخدام timeout لمنع التعليق اللانهائي
+            var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            
+            try
+            {
+                await _initializationLock.WaitAsync(timeoutCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning("⚠️ انتهت مهلة الانتظار للتهيئة");
+                return false;
+            }
+            
             try
             {
                 // تحقق مرة أخرى بعد الحصول على القفل
@@ -111,8 +123,22 @@ namespace YemenBooking.Infrastructure.Redis
                     _initializationTask = InitializeSystemAsync();
                 }
 
-                _isInitialized = await _initializationTask;
-                return _isInitialized;
+                // انتظار التهيئة مع timeout
+                var completedTask = await Task.WhenAny(
+                    _initializationTask,
+                    Task.Delay(TimeSpan.FromSeconds(30))
+                );
+                
+                if (completedTask == _initializationTask)
+                {
+                    _isInitialized = await _initializationTask;
+                    return _isInitialized;
+                }
+                else
+                {
+                    _logger.LogWarning("⚠️ انتهت مهلة تهيئة نظام الفهرسة");
+                    return false;
+                }
             }
             finally
             {
@@ -364,7 +390,7 @@ namespace YemenBooking.Infrastructure.Redis
             // التأكد من التهيئة أولاً
             if (!await EnsureInitializedAsync())
             {
-                _logger.LogWarning("النظام غير مُهيأ، تخطي فهرسة العقار {PropertyId}", propertyId);
+                _logger.LogWarning("فشل فهرسة العقار {PropertyId} - النظام غير مُهيأ", propertyId);
                 return;
             }
 
@@ -374,7 +400,12 @@ namespace YemenBooking.Infrastructure.Redis
                     var property = await GetPropertyByIdAsync(propertyId, cancellationToken);
                     if (property != null)
                     {
-                        return await _indexingLayer.IndexPropertyAsync(property, cancellationToken);
+                        var result = await _indexingLayer.IndexPropertyAsync(property, cancellationToken);
+                        
+                        // ✅ تنظيف الكاش بعد الإضافة
+                        await InvalidateSearchCacheAsync();
+                        
+                        return result;
                     }
                     return false;
                 },
@@ -391,7 +422,7 @@ namespace YemenBooking.Infrastructure.Redis
             // التأكد من التهيئة أولاً
             if (!await EnsureInitializedAsync())
             {
-                _logger.LogWarning("النظام غير مُهيأ، تخطي تحديث العقار {PropertyId}", propertyId);
+                _logger.LogWarning("فشل تحديث فهرسة العقار {PropertyId} - النظام غير مُهيأ", propertyId);
                 return;
             }
 
@@ -401,7 +432,12 @@ namespace YemenBooking.Infrastructure.Redis
                     var property = await GetPropertyByIdAsync(propertyId, cancellationToken);
                     if (property != null)
                     {
-                        return await _indexingLayer.UpdatePropertyIndexAsync(property, cancellationToken);
+                        var result = await _indexingLayer.UpdatePropertyIndexAsync(property, cancellationToken);
+                        
+                        // ✅ تنظيف الكاش بعد التحديث
+                        await InvalidateSearchCacheAsync();
+                        
+                        return result;
                     }
                     return false;
                 },
@@ -418,7 +454,12 @@ namespace YemenBooking.Infrastructure.Redis
             await _errorHandler.ExecuteWithErrorHandlingAsync(
                 async () =>
                 {
-                    return await _indexingLayer.RemovePropertyFromIndexesAsync(propertyId, cancellationToken);
+                    var result = await _indexingLayer.RemovePropertyFromIndexesAsync(propertyId, cancellationToken);
+                    
+                    // ✅ تنظيف الكاش بعد تحديث الوحدة
+                    await InvalidateSearchCacheAsync();
+                    
+                    return result;
                 },
                 $"DeleteProperty_{propertyId}",
                 new Dictionary<string, object> { ["PropertyId"] = propertyId }
@@ -550,32 +591,23 @@ namespace YemenBooking.Infrastructure.Redis
             await _errorHandler.ExecuteWithErrorHandlingAsync(
                 async () =>
                 {
-                    var unit = await GetUnitByIdAsync(unitId, cancellationToken);
-                    if (unit != null)
+                    // تحديث فهرسة العقار بعد إضافة وحدة
+                    var property = await GetPropertyByIdAsync(propertyId, cancellationToken);
+                    if (property != null)
                     {
-                        var indexed = await _indexingLayer.IndexUnitAsync(unit, cancellationToken);
-                        try
-                        {
-                            // تحديث فهرس العقار ليعكس التغييرات على مستوى الوحدات (units_count, max_capacity, الأسعار)
-                            var prop = await GetPropertyByIdAsync(propertyId, cancellationToken);
-                            if (prop != null)
-                            {
-                                await _indexingLayer.UpdatePropertyIndexAsync(prop, cancellationToken);
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogDebug(ex, "فشل تحديث فهرس العقار بعد إضافة وحدة {UnitId}", unitId);
-                        }
-                        return indexed;
+                        await _indexingLayer.UpdatePropertyIndexAsync(property, cancellationToken);
                     }
-                    return false;
+                    
+                    // ✅ تنظيف الكاش بعد إضافة الوحدة
+                    await InvalidateSearchCacheAsync();
+                    
+                    return true;
                 },
-                $"IndexUnit_{unitId}",
-                new Dictionary<string, object>
-                {
-                    ["UnitId"] = unitId,
-                    ["PropertyId"] = propertyId
+                $"CreateUnit_{unitId}",
+                new Dictionary<string, object> 
+                { 
+                    ["UnitId"] = unitId, 
+                    ["PropertyId"] = propertyId 
                 }
             );
         }
@@ -1119,6 +1151,28 @@ namespace YemenBooking.Infrastructure.Redis
             catch (Exception ex)
             {
                 _logger.LogError(ex, "خطأ في تحديث فهرس البحث للعقار {PropertyId}", propertyId);
+            }
+        }
+
+        #endregion
+
+        #region تنظيف الكاش
+
+        /// <summary>
+        /// تنظيف كاش البحث بعد التعديلات
+        /// </summary>
+        private async Task InvalidateSearchCacheAsync()
+        {
+            try
+            {
+                // ✅ تنظيف كل كاش البحث (L1, L2, L3)
+                // هذا يضمن أن أي بحث جديد سيحصل على بيانات محدثة
+                await _cacheManager.FlushAsync();
+                _logger.LogDebug("✅ تم تنظيف كاش البحث");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "⚠️ فشل تنظيف الكاش");
             }
         }
 

@@ -40,13 +40,13 @@ namespace YemenBooking.IndexingTests.Tests
         /// </summary>
         public TestDatabaseFixture()
         {
-            Initialize();
+            InitializeAsync().GetAwaiter().GetResult();
         }
 
         /// <summary>
-        /// تهيئة البيئة الاختبارية بشكل متزامن
+        /// تهيئة البيئة الاختبارية
         /// </summary>
-        private void Initialize()
+        private async Task InitializeAsync()
         {
             // بناء التكوين
             var builder = new ConfigurationBuilder()
@@ -60,6 +60,8 @@ namespace YemenBooking.IndexingTests.Tests
                     new KeyValuePair<string, string>("Monitoring:Enabled", "false"), // تعطيل مراقبة الخلفية
                     new KeyValuePair<string, string>("Redis:EnableScheduledMaintenance", "false"), // تعطيل خدمة الصيانة الدورية
                     new KeyValuePair<string, string>("Redis:ResetStatsOnStartup", "false"),
+                    new KeyValuePair<string, string>("Redis:MaintenanceIntervalHours", "999999"), // تعطيل الصيانة الدورية
+                    new KeyValuePair<string, string>("Testing:UseInMemoryDatabase", "true"), // استخدام قاعدة بيانات في الذاكرة
                     // ✅ إعدادات Circuit Breaker أكثر تساهلاً للاختبارات
                     new KeyValuePair<string, string>("CircuitBreaker:FailureThreshold", "100"), // زيادة عتبة الفشل
                     new KeyValuePair<string, string>("CircuitBreaker:BreakDurationSeconds", "5"), // تقليل مدة الفتح
@@ -94,9 +96,9 @@ namespace YemenBooking.IndexingTests.Tests
                 {
                     options.UseInMemoryDatabase($"TestDb_{Guid.NewGuid()}")
                           .EnableSensitiveDataLogging()
-                          .EnableDetailedErrors();
-                    // ✅ تعطيل ChangeTracker التلقائي لتجنب الحلقات اللانهائية
-                    options.UseQueryTrackingBehavior(QueryTrackingBehavior.TrackAll);
+                          .EnableDetailedErrors()
+                          // ✅ استخدام NoTracking كقيمة افتراضية لتحسين الأداء
+                          .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
                 });
             }
             else
@@ -105,9 +107,9 @@ namespace YemenBooking.IndexingTests.Tests
                 {
                     options.UseNpgsql(Configuration.GetConnectionString("DefaultConnection"))
                           .EnableSensitiveDataLogging()
-                          .EnableDetailedErrors();
-                    // ✅ تعطيل ChangeTracker التلقائي لتجنب الحلقات اللانهائية
-                    options.UseQueryTrackingBehavior(QueryTrackingBehavior.TrackAll);
+                          .EnableDetailedErrors()
+                          // ✅ استخدام NoTracking كقيمة افتراضية لتحسين الأداء
+                          .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
                 });
             }
 
@@ -124,7 +126,7 @@ namespace YemenBooking.IndexingTests.Tests
             ServiceProvider = services.BuildServiceProvider();
 
             // تهيئة قاعدة البيانات فقط - تجاهل الفهرسة في التهيئة
-            Task.Run(async () => await InitializeDatabaseOnlyAsync()).Wait(TimeSpan.FromSeconds(10));
+            await InitializeDatabaseOnlyAsync();
         }
 
         /// <summary>
@@ -412,6 +414,7 @@ namespace YemenBooking.IndexingTests.Tests
         {
             // التحقق من التعارض مع الحجوزات
             var query = _dbContext.Bookings
+                .AsNoTracking()  // ✅ عدم تتبع الاستعلامات
                 .Where(b => b.UnitId == unitId && b.CheckIn < checkOut && b.CheckOut > checkIn);
             
             if (excludeBookingId.HasValue)
@@ -457,7 +460,6 @@ namespace YemenBooking.IndexingTests.Tests
             System.Threading.CancellationToken cancellationToken = default)
         {
             var units = await _dbContext.Units
-                .AsNoTracking()  // ✅ عدم التتبع لتحسين الأداء
                 .Where(u => u.PropertyId == propertyId && 
                            u.IsAvailable && 
                            u.MaxCapacity >= guestCount)

@@ -80,7 +80,8 @@ local function check_availability(property_id)
                     table.insert(parts, part)
                 end
                 
-                if #parts == 2 then
+                -- دعم format قديم {start:end} وجديد {start:end:status}
+                if #parts >= 2 then
                     local start_date = tonumber(parts[1])
                     local end_date = tonumber(parts[2])
                     
@@ -318,7 +319,8 @@ for _, unit_id in ipairs(unit_ids) do
                         table.insert(parts, part)
                     end
                     
-                    if #parts == 2 then
+                    -- دعم format قديم {start:end} وجديد {start:end:status}
+                    if #parts >= 2 then
                         local start_date = tonumber(parts[1])
                         local end_date = tonumber(parts[2])
                         

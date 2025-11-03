@@ -12,6 +12,7 @@ using Moq;
 using StackExchange.Redis;
 using YemenBooking.Infrastructure.Redis;
 using YemenBooking.Infrastructure.Redis.Core;
+using YemenBooking.Infrastructure.Redis.Availability;
 using YemenBooking.Infrastructure.Services;
 using YemenBooking.Application.Infrastructure.Services;
 using YemenBooking.Infrastructure.Redis.Indexing;
@@ -245,6 +246,7 @@ namespace YemenBooking.IndexingTests.Tests.Core
                 _mockRedisManager.Object,
                 new Mock<IPropertyRepository>().Object,
                 mockCacheManager,
+                _fixture.ServiceProvider.GetRequiredService<AvailabilityProcessor>(),
                 _fixture.ServiceProvider.GetRequiredService<ILogger<OptimizedSearchEngine>>(),
                 _memoryCache
             );
