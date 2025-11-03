@@ -231,7 +231,7 @@ namespace YemenBooking.IndexingTests.Tests.Indexing
             await _indexingService.OnPropertyCreatedAsync(propertyId);
 
             // ✅ تنظيف التتبع قبل التحديث
-            _dbContext.ChangeTracker.Clear();
+            await SmartCleanupAsync();
 
             // التحديث - جلب العقار مجدداً
             var propertyToUpdate = await _dbContext.Properties.FindAsync(propertyId);
@@ -454,7 +454,7 @@ namespace YemenBooking.IndexingTests.Tests.Indexing
             await _indexingService.OnPropertyCreatedAsync(propertyId);
 
             // ✅ تنظيف التتبع قبل التحديث
-            _dbContext.ChangeTracker.Clear();
+            await SmartCleanupAsync();
 
             // التحديث - جلب مع tracking
             var unitToUpdate = await _dbContext.Units
@@ -465,7 +465,7 @@ namespace YemenBooking.IndexingTests.Tests.Indexing
             unitToUpdate.BasePrice = new Money(200, "YER");
             
             await _dbContext.SaveChangesAsync();
-            _dbContext.ChangeTracker.Clear();
+            await SmartCleanupAsync();
 
             await _indexingService.OnUnitUpdatedAsync(unitId, propertyId);
 
@@ -540,7 +540,7 @@ namespace YemenBooking.IndexingTests.Tests.Indexing
             
             _dbContext.Units.Remove(unitToDelete);
             await _dbContext.SaveChangesAsync();
-            _dbContext.ChangeTracker.Clear(); // تنظيف التتبع
+            await SmartCleanupAsync(); // تنظيف تتبع آمن
 
             await _indexingService.OnUnitDeletedAsync(deletedUnitId, property.Id);
 
@@ -679,7 +679,8 @@ namespace YemenBooking.IndexingTests.Tests.Indexing
             _output.WriteLine($"  تم إنشاء {propertyCount} عقار في {testCity}");
 
             // ✅ الحل الاحترافي: فهرسة متوازية controlled مع error handling
-            var semaphore = new SemaphoreSlim(3, 3);
+            var maxConcurrent = Math.Min(16, Math.Max(4, Environment.ProcessorCount * 2));
+            var semaphore = new SemaphoreSlim(maxConcurrent, maxConcurrent);
             var indexingTasks = new List<Task<bool>>();
             
             foreach (var propertyId in propertyIds)
@@ -833,7 +834,8 @@ namespace YemenBooking.IndexingTests.Tests.Indexing
 
             // ✅ التحديثات المتزامنة - كل تحديث يستخدم scope منفصل
             var updateTasks = new List<Task>();
-            var semaphore = new SemaphoreSlim(3, 3); // تحديد 3 عمليات متزامنة كحد أقصى
+            var maxConcurrent = Math.Min(16, Math.Max(4, Environment.ProcessorCount * 2));
+            var semaphore = new SemaphoreSlim(maxConcurrent, maxConcurrent); // حد متزامن ديناميكي وآمن
             
             for (int i = 0; i < 5; i++)
             {

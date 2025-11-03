@@ -66,7 +66,7 @@ namespace YemenBooking.Infrastructure.Redis.Availability
             DateTime checkIn,
             DateTime checkOut,
             int guestsCount,
-            string unitTypeId = null,
+            string? unitTypeId = null,
             CancellationToken cancellationToken = default)
         {
             try
@@ -101,8 +101,14 @@ namespace YemenBooking.Infrastructure.Redis.Availability
 
                 foreach (var unitId in unitIds)
                 {
-                    var availKey = RedisKeySchemas.GetUnitAvailabilityKey(Guid.Parse(unitId));
-                    availabilityTasks[unitId] = pipeline.SortedSetRangeByScoreWithScoresAsync(
+                    var unitIdStr = unitId.ToString();
+                    if (!Guid.TryParse(unitIdStr, out var unitGuid))
+                    {
+                        _logger.LogWarning("تجاوز معرف وحدة غير صالح في مجموعة وحدات العقار: {UnitId}", unitIdStr);
+                        continue;
+                    }
+                    var availKey = RedisKeySchemas.GetUnitAvailabilityKey(unitGuid);
+                    availabilityTasks[unitIdStr] = pipeline.SortedSetRangeByScoreWithScoresAsync(
                         availKey, 
                         0, 
                         checkOut.Ticks);
@@ -114,7 +120,11 @@ namespace YemenBooking.Infrastructure.Redis.Availability
                 // 3. معالجة النتائج
                 foreach (var kvp in availabilityTasks)
                 {
-                    var unitId = Guid.Parse(kvp.Key);
+                    if (!Guid.TryParse(kvp.Key, out var unitId))
+                    {
+                        _logger.LogWarning("تجاوز معرف وحدة غير صالح في نتائج الإتاحة: {UnitId}", kvp.Key);
+                        continue;
+                    }
                     var ranges = await kvp.Value;
                     
                     // فحص الوحدة
@@ -166,12 +176,12 @@ namespace YemenBooking.Infrastructure.Redis.Availability
         /// <summary>
         /// فحص إتاحة وحدة محددة
         /// </summary>
-        private async Task<AvailableUnit> CheckUnitAvailabilityAsync(
+        private async Task<AvailableUnit?> CheckUnitAvailabilityAsync(
             Guid unitId,
             DateTime checkIn,
             DateTime checkOut,
             int guestsCount,
-            string requestedUnitTypeId,
+            string? requestedUnitTypeId,
             SortedSetEntry[] availabilityRanges)
         {
             try
@@ -226,13 +236,13 @@ namespace YemenBooking.Infrastructure.Redis.Availability
                 return new AvailableUnit
                 {
                     UnitId = unitId,
-                    UnitName = unitInfo.Name,
-                    UnitTypeId = unitInfo.UnitTypeId,
-                    UnitTypeName = unitInfo.UnitTypeName,
+                    UnitName = unitInfo.Name ?? string.Empty,
+                    UnitTypeId = unitInfo.UnitTypeId ?? string.Empty,
+                    UnitTypeName = unitInfo.UnitTypeName ?? string.Empty,
                     MaxCapacity = unitInfo.MaxCapacity,
                     TotalPrice = totalPrice,
                     PricePerNight = pricePerNight,
-                    Currency = unitInfo.Currency,
+                    Currency = unitInfo.Currency ?? "YER",
                     Nights = nights
                 };
             }
@@ -586,7 +596,7 @@ namespace YemenBooking.Infrastructure.Redis.Availability
                 // البحث عن الفترة التي تحتوي على التواريخ المطلوبة
                 foreach (var range in ranges)
                 {
-                    var rangeData = AvailabilityRange.FromRedisFormat(range.Element);
+                    var rangeData = AvailabilityRange.FromRedisFormat(range.Element.ToString());
                     
                     if (rangeData.StartDate <= checkIn && rangeData.EndDate >= checkOut)
                     {
@@ -674,7 +684,7 @@ namespace YemenBooking.Infrastructure.Redis.Availability
         {
             foreach (var range in ranges)
             {
-                var rangeData = AvailabilityRange.FromRedisFormat(range.Element);
+                var rangeData = AvailabilityRange.FromRedisFormat(range.Element.ToString());
                 
                 // إذا وجدت فترة تحتوي على التواريخ المطلوبة بالكامل
                 if (rangeData.StartDate <= checkIn && rangeData.EndDate >= checkOut)
@@ -695,15 +705,15 @@ namespace YemenBooking.Infrastructure.Redis.Availability
             
             return new UnitInfo
             {
-                Id = Guid.Parse(dict.GetValueOrDefault("id", Guid.Empty.ToString())),
-                Name = dict.GetValueOrDefault("name"),
-                UnitTypeId = dict.GetValueOrDefault("unit_type_id"),
-                UnitTypeName = dict.GetValueOrDefault("unit_type"),
-                MaxCapacity = int.Parse(dict.GetValueOrDefault("max_capacity", "0")),
-                BasePrice = decimal.Parse(dict.GetValueOrDefault("base_price", "0")),
-                Currency = dict.GetValueOrDefault("currency", "YER"),
-                IsActive = dict.GetValueOrDefault("is_active") == "1",
-                IsAvailable = dict.GetValueOrDefault("is_available") == "1"
+                Id = Guid.TryParse(dict.TryGetValue("id", out var idVal) ? idVal.ToString() : Guid.Empty.ToString(), out var gid) ? gid : Guid.Empty,
+                Name = dict.TryGetValue("name", out var nameVal) ? nameVal.ToString() : string.Empty,
+                UnitTypeId = dict.TryGetValue("unit_type_id", out var utid) ? utid.ToString() : string.Empty,
+                UnitTypeName = dict.TryGetValue("unit_type", out var utname) ? utname.ToString() : string.Empty,
+                MaxCapacity = int.TryParse(dict.TryGetValue("max_capacity", out var cap) ? cap.ToString() : "0", out var capInt) ? capInt : 0,
+                BasePrice = decimal.TryParse(dict.TryGetValue("base_price", out var bp) ? bp.ToString() : "0", out var bpDec) ? bpDec : 0,
+                Currency = dict.TryGetValue("currency", out var curr) ? curr.ToString() : "YER",
+                IsActive = (dict.TryGetValue("is_active", out var act) ? act.ToString() : "0") == "1",
+                IsAvailable = (dict.TryGetValue("is_available", out var avail) ? avail.ToString() : "0") == "1"
             };
         }
 
@@ -717,12 +727,12 @@ namespace YemenBooking.Infrastructure.Redis.Availability
         private class UnitInfo
         {
             public Guid Id { get; set; }
-            public string Name { get; set; }
-            public string UnitTypeId { get; set; }
-            public string UnitTypeName { get; set; }
+            public string? Name { get; set; }
+            public string? UnitTypeId { get; set; }
+            public string? UnitTypeName { get; set; }
             public int MaxCapacity { get; set; }
             public decimal BasePrice { get; set; }
-            public string Currency { get; set; }
+            public string? Currency { get; set; }
             public bool IsActive { get; set; }
             public bool IsAvailable { get; set; }
         }
@@ -742,11 +752,11 @@ namespace YemenBooking.Infrastructure.Redis.Availability
         public DateTime CheckOut { get; set; }
         public int RequestedGuests { get; set; }
         public bool IsAvailable { get; set; }
-        public string Message { get; set; }
+        public string Message { get; set; } = string.Empty;
         public List<AvailableUnit> AvailableUnits { get; set; } = new();
         public int TotalAvailableUnits { get; set; }
         public decimal? LowestPricePerNight { get; set; }
-        public string Currency { get; set; }
+        public string Currency { get; set; } = string.Empty;
     }
 
     /// <summary>
@@ -755,13 +765,13 @@ namespace YemenBooking.Infrastructure.Redis.Availability
     public class AvailableUnit
     {
         public Guid UnitId { get; set; }
-        public string UnitName { get; set; }
-        public string UnitTypeId { get; set; }
-        public string UnitTypeName { get; set; }
+        public string UnitName { get; set; } = string.Empty;
+        public string UnitTypeId { get; set; } = string.Empty;
+        public string UnitTypeName { get; set; } = string.Empty;
         public int MaxCapacity { get; set; }
         public decimal TotalPrice { get; set; }
         public decimal PricePerNight { get; set; }
-        public string Currency { get; set; }
+        public string Currency { get; set; } = string.Empty;
         public int Nights { get; set; }
     }
 
@@ -774,7 +784,7 @@ namespace YemenBooking.Infrastructure.Redis.Availability
         public DateTime CheckIn { get; set; }
         public DateTime CheckOut { get; set; }
         public int GuestsCount { get; set; }
-        public string UnitTypeId { get; set; }
+        public string UnitTypeId { get; set; } = string.Empty;
     }
 
     /// <summary>

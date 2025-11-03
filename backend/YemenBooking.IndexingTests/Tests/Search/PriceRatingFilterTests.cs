@@ -417,7 +417,7 @@ namespace YemenBooking.IndexingTests.Tests.Search
             _output.WriteLine($"👥 اختبار فلتر عدد الضيوف: {guestsCount}");
 
             // ✅ الحل الاحترافي: تنظيف ChangeTracker قبل كل اختبار
-            _dbContext.ChangeTracker.Clear();
+            await SmartCleanupAsync();
 
             // الإعداد
             for (int capacity = 2; capacity <= 10; capacity += 2)
@@ -425,7 +425,7 @@ namespace YemenBooking.IndexingTests.Tests.Search
                 var prop = await CreateTestPropertyAsync($"عقار سعة {capacity}", "صنعاء");
                 
                 // ✅ تنظيف التتبع بعد إنشاء Property
-                _dbContext.ChangeTracker.Clear();
+                await SmartCleanupAsync();
                 
                 // ✅ الحل الأمثل: جلب مع tracking ثم تحديث
                 var units = await _dbContext.Units
@@ -439,7 +439,7 @@ namespace YemenBooking.IndexingTests.Tests.Search
                 
                 // حفظ وتنظيف فوري بعد كل iteration
                 await _dbContext.SaveChangesAsync();
-                _dbContext.ChangeTracker.Clear();
+                await SmartCleanupAsync();
             }
             
             await _indexingService.RebuildIndexAsync();
@@ -580,29 +580,29 @@ namespace YemenBooking.IndexingTests.Tests.Search
             _output.WriteLine("🔄 اختبار دمج فلتر السعر والسعة...");
 
             // ✅ الحل الاحترافي: تنظيف ChangeTracker قبل الاختبار
-            _dbContext.ChangeTracker.Clear();
+            await SmartCleanupAsync();
 
             // الإعداد
             var prop1 = await CreateTestPropertyAsync("عقار صغير رخيص", "صنعاء", minPrice: 100);
-            _dbContext.ChangeTracker.Clear();
+            await SmartCleanupAsync();
             var unit1 = await _dbContext.Units.FirstAsync(u => u.PropertyId == prop1.Id);
             unit1.MaxCapacity = 2;
             await _dbContext.SaveChangesAsync();
-            _dbContext.ChangeTracker.Clear();
+            await SmartCleanupAsync();
 
             var prop2 = await CreateTestPropertyAsync("عقار كبير رخيص", "صنعاء", minPrice: 150);
-            _dbContext.ChangeTracker.Clear();
+            await SmartCleanupAsync();
             var unit2 = await _dbContext.Units.FirstAsync(u => u.PropertyId == prop2.Id);
             unit2.MaxCapacity = 8;
             await _dbContext.SaveChangesAsync();
-            _dbContext.ChangeTracker.Clear();
+            await SmartCleanupAsync();
 
             var prop3 = await CreateTestPropertyAsync("عقار كبير غالي", "صنعاء", minPrice: 500);
-            _dbContext.ChangeTracker.Clear();
+            await SmartCleanupAsync();
             var unit3 = await _dbContext.Units.FirstAsync(u => u.PropertyId == prop3.Id);
             unit3.MaxCapacity = 8;
             await _dbContext.SaveChangesAsync();
-            _dbContext.ChangeTracker.Clear();
+            await SmartCleanupAsync();
             
             await _indexingService.RebuildIndexAsync();
 
@@ -641,11 +641,11 @@ namespace YemenBooking.IndexingTests.Tests.Search
             _output.WriteLine("🔥 اختبار دمج السعر والتقييم والسعة...");
 
             // ✅ الحل الاحترافي: تنظيف ChangeTracker قبل الاختبار
-            _dbContext.ChangeTracker.Clear();
+            await SmartCleanupAsync();
 
             // الإعداد
             var targetProp = await CreateTestPropertyAsync("العقار المثالي", "صنعاء", minPrice: 150);
-            _dbContext.ChangeTracker.Clear();
+            await SmartCleanupAsync();
             
             // جلب العقار بدون tracking للتحديث
             var targetPropToUpdate = await _dbContext.Properties.FindAsync(targetProp.Id);
@@ -655,12 +655,12 @@ namespace YemenBooking.IndexingTests.Tests.Search
                 _dbContext.Properties.Update(targetPropToUpdate);
                 await _dbContext.SaveChangesAsync();
             }
-            _dbContext.ChangeTracker.Clear();
+            await SmartCleanupAsync();
             
             var targetUnit = await _dbContext.Units.FirstAsync(u => u.PropertyId == targetProp.Id);
             targetUnit.MaxCapacity = 4;
             await _dbContext.SaveChangesAsync();
-            _dbContext.ChangeTracker.Clear();
+            await SmartCleanupAsync();
 
             var otherProp = await CreateTestPropertyAsync("عقار آخر", "صنعاء", minPrice: 100);
             _dbContext.ChangeTracker.Clear();

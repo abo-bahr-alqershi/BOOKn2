@@ -497,7 +497,7 @@ namespace YemenBooking.IndexingTests.Tests
         /// <summary>
         /// تنظيف ذكي لـ ChangeTracker مع الحفاظ على البيانات المهمة
         /// </summary>
-        private async Task SmartCleanupAsync()
+        protected async Task SmartCleanupAsync()
         {
             // حفظ التغييرات المعلقة أولاً
             if (_dbContext.ChangeTracker.HasChanges())

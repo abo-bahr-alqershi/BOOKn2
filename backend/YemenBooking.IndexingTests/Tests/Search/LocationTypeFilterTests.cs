@@ -326,27 +326,27 @@ namespace YemenBooking.IndexingTests.Tests.Search
             _output.WriteLine("🛏️ اختبار فلتر نوع الوحدة...");
 
             // ✅ الحل الاحترافي: تنظيف ChangeTracker قبل الاختبار
-            _dbContext.ChangeTracker.Clear();
+            await SmartCleanupAsync();
 
             // الإعداد
             var singleRoomType = Guid.Parse("20000000-0000-0000-0000-000000000001");
             var doubleRoomType = Guid.Parse("20000000-0000-0000-0000-000000000002");
 
             var hotel1 = await CreateTestPropertyAsync("فندق بغرف مفردة", "صنعاء");
-            _dbContext.ChangeTracker.Clear();
+            await SmartCleanupAsync();
             
             var unit1 = await _dbContext.Units.FirstAsync(u => u.PropertyId == hotel1.Id);
             unit1.UnitTypeId = singleRoomType;
             await _dbContext.SaveChangesAsync();
-            _dbContext.ChangeTracker.Clear();
+            await SmartCleanupAsync();
 
             var hotel2 = await CreateTestPropertyAsync("فندق بغرف مزدوجة", "صنعاء");
-            _dbContext.ChangeTracker.Clear();
+            await SmartCleanupAsync();
             
             var unit2 = await _dbContext.Units.FirstAsync(u => u.PropertyId == hotel2.Id);
             unit2.UnitTypeId = doubleRoomType;
             await _dbContext.SaveChangesAsync();
-            _dbContext.ChangeTracker.Clear();
+            await SmartCleanupAsync();
             
             await _indexingService.RebuildIndexAsync();
 

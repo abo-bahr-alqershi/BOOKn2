@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using YemenBooking.Infrastructure.Redis;
+using System.Linq;
 using YemenBooking.Infrastructure.Redis.Core;
 using YemenBooking.Infrastructure.Redis.Indexing;
 using YemenBooking.Infrastructure.Redis.Search;
@@ -49,14 +50,23 @@ namespace YemenBooking.Infrastructure.Redis.Configuration
             });
 
             // 2. تسجيل طبقة الفهرسة الذكية
-            services.AddScoped<SmartIndexingLayer>(provider =>
-            {
-                var redisManager = provider.GetRequiredService<IRedisConnectionManager>();
-                var propertyRepo = provider.GetRequiredService<IPropertyRepository>();
-                var logger = provider.GetRequiredService<ILogger<SmartIndexingLayer>>();
+                services.AddScoped<SmartIndexingLayer>(provider =>
+                {
+                    var redisManager = provider.GetRequiredService<IRedisConnectionManager>();
+                    var propertyRepo = provider.GetRequiredService<IPropertyRepository>();
+                    var unitAvailabilityRepo = provider.GetRequiredService<IUnitAvailabilityRepository>();
+                    var bookingRepo = provider.GetRequiredService<IBookingRepository>();
+                    var configuration = provider.GetRequiredService<IConfiguration>();
+                    var logger = provider.GetRequiredService<ILogger<SmartIndexingLayer>>();
                 
-                return new SmartIndexingLayer(redisManager, propertyRepo, logger);
-            });
+                    return new SmartIndexingLayer(
+                        redisManager,
+                        propertyRepo,
+                        unitAvailabilityRepo,
+                        bookingRepo,
+                        configuration,
+                        logger);
+                });
 
             // 3. تسجيل نظام الكاش متعدد المستويات
             services.AddSingleton<MultiLevelCache>(provider =>
@@ -208,7 +218,7 @@ namespace YemenBooking.Infrastructure.Redis.Configuration
                 ["LuaScripts:UseEvalSha"] = "true"
             };
 
-            builder.AddInMemoryCollection(defaultSettings);
+            builder.AddInMemoryCollection(defaultSettings.Select(kv => new KeyValuePair<string, string?>(kv.Key, kv.Value)));
             return builder;
         }
     }

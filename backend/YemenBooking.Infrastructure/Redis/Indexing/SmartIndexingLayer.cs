@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
 using StackExchange.Redis;
 using MessagePack;
 using YemenBooking.Infrastructure.Redis.Core;
@@ -20,10 +21,13 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
     /// </summary>
     public class SmartIndexingLayer
     {
-        private readonly IRedisConnectionManager _redisManager;
-        private readonly IPropertyRepository _propertyRepository;
-        private readonly ILogger<SmartIndexingLayer> _logger;
-        private IDatabase _db;
+    private readonly IRedisConnectionManager _redisManager;
+    private readonly IPropertyRepository _propertyRepository;
+    private readonly IUnitAvailabilityRepository _unitAvailabilityRepository;
+    private readonly IBookingRepository _bookingRepository;
+    private readonly IConfiguration _configuration;
+    private readonly ILogger<SmartIndexingLayer> _logger;
+    private IDatabase? _db;
         private readonly SemaphoreSlim _indexingLock;
         private readonly object _dbLock = new object();
         
@@ -33,14 +37,21 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
         public SmartIndexingLayer(
             IRedisConnectionManager redisManager,
             IPropertyRepository propertyRepository,
+            IUnitAvailabilityRepository unitAvailabilityRepository,
+            IBookingRepository bookingRepository,
+            IConfiguration configuration,
             ILogger<SmartIndexingLayer> logger)
         {
             _redisManager = redisManager;
             _propertyRepository = propertyRepository;
+            _unitAvailabilityRepository = unitAvailabilityRepository;
+            _bookingRepository = bookingRepository;
+            _configuration = configuration;
             _logger = logger;
             // تأجيل الحصول على Database لتجنب مشاكل التزامن
             _db = null;
-            _indexingLock = new SemaphoreSlim(3, 3); // حد أقصى 3 عمليات فهرسة متزامنة لتحسين الاستقرار
+            var maxConcurrent = Math.Max(1, _configuration.GetValue<int>("Performance:MaxConcurrentIndexing", 5));
+            _indexingLock = new SemaphoreSlim(maxConcurrent, maxConcurrent); // قابل للتهيئة عبر الإعدادات
         }
 
         private IDatabase GetDatabase()
@@ -169,7 +180,7 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 var db = GetDatabase();
                 var propertyKey = RedisKeySchemas.GetPropertyKey(property.Id);
                 var oldData = await db.HashGetAllAsync(propertyKey);
-                PropertyIndexDocument oldDoc = null;
+                PropertyIndexDocument? oldDoc = null;
                 
                 if (oldData.Length > 0)
                 {
@@ -261,13 +272,17 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 // 5. حذف وحدات العقار
                 var unitsKey = RedisKeySchemas.GetPropertyUnitsKey(propertyId);
                 var unitIds = await db.SetMembersAsync(unitsKey);
-                
+
                 foreach (var unitId in unitIds)
                 {
-                    _ = tran.KeyDeleteAsync(RedisKeySchemas.GetUnitKey(Guid.Parse(unitId)));
-                    _ = tran.KeyDeleteAsync(RedisKeySchemas.GetUnitAvailabilityKey(Guid.Parse(unitId)));
-                    _ = tran.KeyDeleteAsync(RedisKeySchemas.GetUnitPricingKey(Guid.Parse(unitId)));
-                    _ = tran.KeyDeleteAsync(RedisKeySchemas.GetUnitPricingZKey(Guid.Parse(unitId)));
+                    var unitIdStr = unitId.ToString();
+                    if (Guid.TryParse(unitIdStr, out var unitGuid))
+                    {
+                        _ = tran.KeyDeleteAsync(RedisKeySchemas.GetUnitKey(unitGuid));
+                        _ = tran.KeyDeleteAsync(RedisKeySchemas.GetUnitAvailabilityKey(unitGuid));
+                        _ = tran.KeyDeleteAsync(RedisKeySchemas.GetUnitPricingKey(unitGuid));
+                        _ = tran.KeyDeleteAsync(RedisKeySchemas.GetUnitPricingZKey(unitGuid));
+                    }
                 }
                 
                 _ = tran.KeyDeleteAsync(unitsKey);
@@ -415,7 +430,7 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 // الخصائص الأساسية
                 Id = property.Id,
                 Name = property.Name,
-                NameNormalized = property.Name?.ToLowerInvariant(),
+                NameNormalized = property.Name?.ToLowerInvariant() ?? "",
                 Description = property.Description,
 
                 // بيانات الموقع
@@ -427,7 +442,7 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
 
                 // بيانات التصنيف
                 PropertyTypeId = property.TypeId,
-                PropertyTypeName = property.PropertyType?.Name,
+                PropertyTypeName = property.PropertyType?.Name ?? "",
                 StarRating = property.StarRating,
 
                 // بيانات التسعير (محسوبة من فهرس تسعير الوحدات)
@@ -450,7 +465,11 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 
                 // أنواع الوحدات المتوفرة
                 UnitTypeIds = unitsList.Select(u => u.UnitTypeId).Distinct().ToList(),
-                UnitTypeNames = unitsList.Select(u => u.UnitType?.Name).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().ToList(),
+                UnitTypeNames = unitsList
+                    .Select(u => u.UnitType?.Name ?? "")
+                    .Where(n => !string.IsNullOrWhiteSpace(n))
+                    .Distinct()
+                    .ToList(),
 
                 // الحد الأقصى للبالغين/الأطفال عبر وحدات العقار
                 MaxAdults = unitsList.Any() ? unitsList.Max(u => (u.AdultsCapacity ?? u.MaxCapacity)) : 0,
@@ -464,7 +483,7 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
 
                 // الصور
                 ImageUrls = property.Images?.Select(i => i.Url).ToList() ?? new List<string>(),
-                MainImageUrl = property.Images?.FirstOrDefault(i => i.IsMain)?.Url,
+                MainImageUrl = property.Images?.FirstOrDefault(i => i.IsMain)?.Url ?? "",
                 ImagesCount = property.Images?.Count ?? 0,
 
                 // بيانات الحالة
@@ -475,7 +494,7 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
 
                 // بيانات المالك
                 OwnerId = property.OwnerId,
-                OwnerName = property.Owner?.Name,
+                OwnerName = property.Owner?.Name ?? "",
                 OwnerRating = 0, // غير متوفر في User
 
                 // الطوابع الزمنية
@@ -571,7 +590,7 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 PropertyId = unit.PropertyId,
                 Name = unit.Name,
                 UnitTypeId = unit.UnitTypeId,
-                UnitTypeName = unit.UnitType?.Name,
+                UnitTypeName = unit.UnitType?.Name ?? "",
                 MaxCapacity = unit.MaxCapacity,
                 MaxAdults = unit.AdultsCapacity ?? unit.MaxCapacity, // استخدم السعة الكلية إذا لم تحدد سعة البالغين
                 MaxChildren = unit.ChildrenCapacity ?? 0,
@@ -654,7 +673,10 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
             _ = tran.SortedSetAddAsync(RedisKeySchemas.INDEX_MAX_CAPACITY, propId, doc.MaxCapacity);
 
             // فهارس التصنيف
-            _ = tran.SetAddAsync(RedisKeySchemas.GetCityKey(doc.City), propId);
+            if (!string.IsNullOrWhiteSpace(doc.City))
+            {
+                _ = tran.SetAddAsync(RedisKeySchemas.GetCityKey(doc.City), propId);
+            }
             
             // إضافة لفهرس نوع العقار بالمعرف GUID
             _ = tran.SetAddAsync(RedisKeySchemas.GetTypeKey(doc.PropertyTypeId), propId);
@@ -974,16 +996,153 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 var priceElement2 = $"{startTicks2}:{endTicks2}:{unitDoc.BasePrice}:{unitDoc.Currency}";
                 _ = tran.SortedSetAddAsync(priceZKey2, priceElement2, startTicks2);
                 
-                // ✅ إضافة فترة إتاحة افتراضية محدودة (سنتان من الآن)
-                if (unitDoc.IsAvailable && unitDoc.IsActive)
-                {
-                    var availKey = RedisKeySchemas.GetUnitAvailabilityKey(unit.Id);
-                    var availElement = $"{startTicks2}:{endTicks2}:available";
-                    _ = tran.SortedSetAddAsync(availKey, availElement, startTicks2);
-                }
+                // ✅ فهرسة الإتاحة الفعلية من قاعدة البيانات (الحجوزات + جدول الإتاحة)
+                await IndexUnitAvailabilityFromDatabaseAsync(tran, unit, cancellationToken);
             }
             
             await Task.CompletedTask; // للحفاظ على التوقيع async
+        }
+
+        /// <summary>
+        /// بناء فترات الإتاحة للوحدة من قاعدة البيانات (UnitAvailability + Bookings)
+        /// ثم كتابتها إلى Redis كـ ZSET للفترات المتاحة فقط
+        /// </summary>
+        private async Task IndexUnitAvailabilityFromDatabaseAsync(
+            ITransaction tran,
+            Unit unit,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                var now = DateTime.UtcNow.Date;
+                var horizon = now.AddYears(2);
+                var availKey = RedisKeySchemas.GetUnitAvailabilityKey(unit.Id);
+
+                // ابدأ بحذف أي بيانات قديمة للإتاحة لهذه الوحدة
+                _ = tran.KeyDeleteAsync(availKey);
+
+                // اجلب سجلات الإتاحة من الجدول
+                var records = await _unitAvailabilityRepository.GetByUnitIdAsync(unit.Id, now, horizon);
+
+                // ابنِ فترات "متاحة" مبدئية من السجلات التي حالتها Available
+                var availableRanges = new List<(DateTime Start, DateTime End)>();
+
+                foreach (var rec in records)
+                {
+                    var status = (rec.Status ?? string.Empty).Trim().ToLowerInvariant();
+                    if (status == "available")
+                    {
+                        var start = rec.StartDate.Date;
+                        var end = rec.EndDate.Date;
+                        if (end < start) continue;
+                        availableRanges.Add((start, end));
+                    }
+                }
+
+                // إذا لم تكن هناك سجلات إتاحة، واﻟوحدة نشطة ومتاحة، فنفترض إتاحة كاملة ضمن الأفق
+                if (availableRanges.Count == 0 && unit.IsActive && unit.IsAvailable)
+                {
+                    availableRanges.Add((now, horizon));
+                }
+
+                // خصم فترات الحجز المؤكدة/المعلقة من فترات الإتاحة
+                var bookings = await _bookingRepository.GetBookingsByUnitAsync(unit.Id, now, horizon, cancellationToken);
+                var blockingBookings = bookings
+                    .Where(b => b.Status != YemenBooking.Core.Enums.BookingStatus.Cancelled)
+                    .Select(b => (Start: b.CheckIn.Date, End: b.CheckOut.Date))
+                    .ToList();
+
+                // أيضاً، عالج أي سجلات إتاحة غير متاحة (Blocked/Booked/Maintenance)
+                var blockingAvailabilities = records
+                    .Where(rec => !string.Equals(rec.Status, "available", StringComparison.OrdinalIgnoreCase))
+                    .Select(rec => (Start: rec.StartDate.Date, End: rec.EndDate.Date))
+                    .ToList();
+
+                // وظيفة مساعدة لطرح الفترات المحجوبة من فترات الإتاحة
+                List<(DateTime Start, DateTime End)> SubtractRanges(List<(DateTime Start, DateTime End)> sources, (DateTime Start, DateTime End) block)
+                {
+                    var result = new List<(DateTime Start, DateTime End)>();
+                    foreach (var src in sources)
+                    {
+                        if (block.End < src.Start || block.Start > src.End)
+                        {
+                            // لا يوجد تداخل
+                            result.Add(src);
+                            continue;
+                        }
+
+                        // هناك تداخل: قد ينتج قسمان
+                        if (block.Start > src.Start)
+                        {
+                            var leftEnd = block.Start.AddDays(-1);
+                            if (leftEnd >= src.Start)
+                                result.Add((src.Start, leftEnd));
+                        }
+                        if (block.End < src.End)
+                        {
+                            var rightStart = block.End.AddDays(1);
+                            if (rightStart <= src.End)
+                                result.Add((rightStart, src.End));
+                        }
+                    }
+                    return result;
+                }
+
+                // طبق خصم جميع الفترات المحجوبة (الحجوزات + حالات عدم الإتاحة)
+                foreach (var blk in blockingBookings)
+                {
+                    availableRanges = SubtractRanges(availableRanges, blk);
+                    if (availableRanges.Count == 0) break;
+                }
+                foreach (var blk in blockingAvailabilities)
+                {
+                    availableRanges = SubtractRanges(availableRanges, blk);
+                    if (availableRanges.Count == 0) break;
+                }
+
+                // دمج الفترات المتجاورة لتقليل حجم البيانات
+                availableRanges = availableRanges
+                    .OrderBy(r => r.Start)
+                    .Aggregate(new List<(DateTime Start, DateTime End)>(), (acc, cur) =>
+                    {
+                        if (!acc.Any()) { acc.Add(cur); return acc; }
+                        var last = acc[^1];
+                        if (cur.Start <= last.End.AddDays(1))
+                        {
+                            // دمج
+                            acc[^1] = (last.Start, cur.End > last.End ? cur.End : last.End);
+                        }
+                        else
+                        {
+                            acc.Add(cur);
+                        }
+                        return acc;
+                    });
+
+                // اكتب الفترات المتاحة إلى Redis كقيم في ZSET
+                foreach (var (Start, End) in availableRanges)
+                {
+                    var element = $"{Start.Ticks}:{End.Ticks}:available";
+                    _ = tran.SortedSetAddAsync(availKey, element, Start.Ticks);
+                }
+
+                // ضع علامة في مجموعة توفر التاريخ اليومية لتسريع الاستعلامات بالتاريخ
+                foreach (var (Start, End) in availableRanges)
+                {
+                    var current = Start.Date;
+                    while (current <= End.Date)
+                    {
+                        var dateKey = string.Format(RedisKeySchemas.AVAILABILITY_DATE, current);
+                        _ = tran.SetAddAsync(dateKey, unit.Id.ToString());
+                        current = current.AddDays(1);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // لا نفشل الفهرسة بسبب أخطاء الإتاحة؛ نسجل تحذيراً فقط
+                _logger.LogWarning(ex, "فشل حساب إتاحة الوحدة {UnitId} من قاعدة البيانات", unit.Id);
+            }
         }
 
         /// <summary>
@@ -1016,7 +1175,8 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
             try
             {
                 var subscriber = _redisManager.GetSubscriber();
-                await subscriber.PublishAsync($"indexing:{eventType}", entityId.ToString());
+                var channel = RedisChannel.Literal($"indexing:{eventType}");
+                await subscriber.PublishAsync(channel, entityId.ToString());
             }
             catch (Exception ex)
             {

@@ -101,7 +101,7 @@ namespace YemenBooking.IndexingTests.Tests.Core
             _logger.LogInformation("اختبار فشل الاتصال بـ Redis مع تكوين خاطئ");
             
             var invalidConfig = new ConfigurationBuilder()
-                .AddInMemoryCollection(new Dictionary<string, string>
+                .AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     {"Redis:EndPoint", "invalid-host:9999"},
                     {"Redis:ConnectTimeout", "1000"},
@@ -210,7 +210,7 @@ namespace YemenBooking.IndexingTests.Tests.Core
             _logger.LogInformation("اختبار الاتصال مع كلمة مرور");
             
             var configWithPassword = new ConfigurationBuilder()
-                .AddInMemoryCollection(new Dictionary<string, string>
+                .AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     {"Redis:EndPoint", _configuration["Redis:EndPoint"] ?? "127.0.0.1:6379"},
                     {"Redis:Password", "test_password_123"},
@@ -496,29 +496,35 @@ namespace YemenBooking.IndexingTests.Tests.Core
                 _fixture.ServiceProvider.GetRequiredService<ILogger<RedisConnectionManager>>());
             
             var subscriber = _redisManager.GetSubscriber();
-            var publisher = _redisManager.GetDatabase();
+            var publisher = _redisManager.GetSubscriber();
             var channel = $"test:channel:{Guid.NewGuid()}";
             var receivedMessages = new List<string>();
-            var tcs = new TaskCompletionSource<bool>();
             
             // Act - الاشتراك في القناة
-            await subscriber.SubscribeAsync(channel, (ch, message) =>
-            {
-                receivedMessages.Add(message.ToString());
-                if (receivedMessages.Count >= 3)
-                {
-                    tcs.TrySetResult(true);
-                }
-            });
+            var literalChannel = new StackExchange.Redis.RedisChannel(channel, StackExchange.Redis.RedisChannel.PatternMode.Literal);
+            var queue = await subscriber.SubscribeAsync(literalChannel);
             
             // نشر رسائل
             await Task.Delay(100); // انتظار قليل للتأكد من الاشتراك
-            await publisher.PublishAsync(channel, "رسالة_1");
-            await publisher.PublishAsync(channel, "رسالة_2");
-            await publisher.PublishAsync(channel, "رسالة_3");
+            await publisher.PublishAsync(literalChannel, "رسالة_1");
+            await publisher.PublishAsync(literalChannel, "رسالة_2");
+            await publisher.PublishAsync(literalChannel, "رسالة_3");
             
             // انتظار استلام الرسائل
-            var received = await Task.WhenAny(tcs.Task, Task.Delay(5000)) == tcs.Task;
+            var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            try
+            {
+                for (int i = 0; i < 3; i++)
+                {
+                    var item = await queue.ReadAsync(cts.Token);
+                    receivedMessages.Add(item.Message.ToString());
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // timeout
+            }
+            var received = receivedMessages.Count >= 3;
             
             // Assert
             Assert.True(received, "يجب استلام الرسائل");
@@ -528,7 +534,7 @@ namespace YemenBooking.IndexingTests.Tests.Core
             Assert.Contains("رسالة_3", receivedMessages);
             
             // إلغاء الاشتراك
-            await subscriber.UnsubscribeAsync(channel);
+            await subscriber.UnsubscribeAsync(literalChannel);
             
             _logger.LogInformation("✅ نظام Pub/Sub يعمل بشكل صحيح");
         }

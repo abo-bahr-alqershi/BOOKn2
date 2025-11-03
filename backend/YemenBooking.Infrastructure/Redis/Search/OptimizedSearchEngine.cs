@@ -246,7 +246,8 @@ namespace YemenBooking.Infrastructure.Redis.Search
                 // الحقول المطلوبة فقط لتقليل الحمولة
                 var returnFields = new[]
                 {
-                    "id","name","city","property_type","min_price","currency",
+                    // نعيد كل الحقول اللازمة لبناء العنصر بشكل متسق مع مسارات البحث الأخرى
+                    "id","name","city","property_type_id","property_type","min_price","currency",
                     "average_rating","star_rating","max_capacity","units_count","latitude","longitude"
                 };
 
@@ -1320,7 +1321,8 @@ namespace YemenBooking.Infrastructure.Redis.Search
                 Id = p.Id.ToString(),
                 Name = p.Name,
                 City = p.City,
-                PropertyType = p.PropertyTypeName,
+                // إرجاع المعرف GUID لنوع العقار لضمان الاتساق مع الاختبارات ومتطلبات الواجهة
+                PropertyType = p.PropertyTypeId.ToString(),
                 MinPrice = p.MinPrice,
                 Currency = p.BaseCurrency,
                 AverageRating = p.AverageRating,
@@ -1434,7 +1436,9 @@ namespace YemenBooking.Infrastructure.Redis.Search
                         Id = dict.GetValueOrDefault("id", key.Replace("property:", string.Empty)),
                         Name = dict.GetValueOrDefault("name", string.Empty),
                         City = dict.GetValueOrDefault("city", string.Empty),
-                        PropertyType = dict.GetValueOrDefault("property_type", string.Empty),
+                        // استخدم المعرف GUID لنوع العقار إن توفر، وإلا fallback إلى الاسم
+                        PropertyType = dict.GetValueOrDefault("property_type_id", 
+                            dict.GetValueOrDefault("property_type", string.Empty)),
                         MinPrice = decimal.TryParse(dict.GetValueOrDefault("min_price", "0"), out var mp) ? mp : 0,
                         Currency = dict.GetValueOrDefault("currency", "YER"),
                         AverageRating = decimal.TryParse(dict.GetValueOrDefault("average_rating", "0"), out var ar) ? ar : 0,

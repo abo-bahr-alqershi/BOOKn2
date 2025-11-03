@@ -41,7 +41,7 @@ namespace YemenBooking.Infrastructure.Redis
         private readonly IConfiguration _configuration;
         private bool _isInitialized = false;
         private readonly SemaphoreSlim _initializationLock = new SemaphoreSlim(1, 1);
-        private Task<bool> _initializationTask = null;
+    private Task<bool>? _initializationTask = null;
         private readonly CancellationTokenSource _monitoringCts = new();
 
         /// <summary>
@@ -503,8 +503,8 @@ namespace YemenBooking.Infrastructure.Redis
                 "SearchProperties",
                 new Dictionary<string, object>
                 {
-                    ["SearchText"] = request.SearchText,
-                    ["City"] = request.City,
+                    ["SearchText"] = request.SearchText ?? string.Empty,
+                    ["City"] = request.City ?? string.Empty,
                     ["PageNumber"] = request.PageNumber,
                     ["PageSize"] = request.PageSize
                 }
@@ -733,55 +733,134 @@ namespace YemenBooking.Infrastructure.Redis
             await _errorHandler.ExecuteWithErrorHandlingAsync(
                 async () =>
                 {
-                    // مسح الفهارس القديمة
-                    await ClearAllIndexesAsync();
+                    var db = _redisManager.GetDatabase();
+                    var lockKey = "index:rebuild:lock";
+                    var progressKey = "index:rebuild:progress";
+                    var lockId = Guid.NewGuid().ToString();
 
-                    // جلب جميع العقارات النشطة
-                    var properties = await GetAllActivePropertiesAsync(cancellationToken);
-                    var totalCount = properties.Count();
-
-                    _logger.LogInformation("معالجة {Count} عقار", totalCount);
-
-                    var processed = 0;
-                    var failed = 0;
-
-                    // معالجة على دفعات صغيرة لتجنب مشاكل DbContext
-                    foreach (var batch in properties.Chunk(10)) // تقليل حجم الدفعة من 50 إلى 10
+                    // ✅ قفل موزع لمنع التشغيل المتوازي لإعادة البناء
+                    var acquired = await db.StringSetAsync(lockKey, lockId, TimeSpan.FromMinutes(15), When.NotExists);
+                    if (!acquired)
                     {
-                        cancellationToken.ThrowIfCancellationRequested();
+                        _logger.LogWarning("⏸️ توجد عملية إعادة بناء أخرى قيد التنفيذ. سيتم الإنهاء بدون انتظار.");
+                        return false;
+                    }
 
-                        // معالجة كل عقار في الدفعة بالتسلسل لتجنب مشاكل التزامن
-                        foreach (var property in batch)
+                    try
+                    {
+                        // كتابة معلومات البداية
+                        await db.HashSetAsync(progressKey, new HashEntry[]
                         {
-                            try
+                            new("started_at", DateTime.UtcNow.Ticks),
+                            new("processed", 0),
+                            new("failed", 0),
+                            new("total", 0),
+                            new("status", "running")
+                        });
+
+                        // مسح الفهارس القديمة
+                        await ClearAllIndexesAsync();
+
+                        var processed = 0;
+                        var failed = 0;
+                        var total = 0;
+
+                        // ✅ بث الصفحات بدلاً من تحميل كل العقارات في الذاكرة
+                        var pageSize = 100;
+                        var pageNumber = 1;
+                        while (!cancellationToken.IsCancellationRequested)
+                        {
+                            // تمديد القفل كنبض (heartbeat)
+                            await db.KeyExpireAsync(lockKey, TimeSpan.FromMinutes(15));
+
+                            var (items, totalCount) = await _propertyRepository.GetPagedAsync(
+                                pageNumber,
+                                pageSize,
+                                predicate: p => p.IsActive && p.IsApproved,
+                                cancellationToken: cancellationToken);
+
+                            total = totalCount;
+                            if (items == null || !items.Any())
+                                break;
+
+                            foreach (var property in items)
                             {
-                                var result = await _indexingLayer.IndexPropertyAsync(
-                                    property,
-                                    cancellationToken);
-                                
-                                if (result)
-                                    processed++;
-                                else
+                                cancellationToken.ThrowIfCancellationRequested();
+                                try
+                                {
+                                    var ok = await _indexingLayer.IndexPropertyAsync(property, cancellationToken);
+                                    if (ok) processed++; else failed++;
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogError(ex, "فشل فهرسة العقار {PropertyId}", property.Id);
                                     failed++;
+                                }
                             }
-                            catch (Exception ex)
+
+                            // تحديث التقدم
+                            await db.HashSetAsync(progressKey, new HashEntry[]
                             {
-                                _logger.LogError(ex, "فشل فهرسة العقار {PropertyId}", property.Id);
-                                failed++;
-                            }
+                                new("last_batch", pageNumber),
+                                new("processed", processed),
+                                new("failed", failed),
+                                new("total", total)
+                            });
+
+                            _logger.LogInformation("التقدم: {Processed}/{Total} (فشل: {Failed}) - صفحة {Page}", processed, total, failed, pageNumber);
+
+                            // إذا كانت الصفحة أقل من الحجم، لا مزيد من الصفحات
+                            if (items.Count() < pageSize)
+                                break;
+
+                            pageNumber++;
+                            // ✅ حماية إضافية: توقف بعد عدد صفحات معقول حتى لو كان total خاطئاً
+                            if (pageNumber > (int)Math.Ceiling(Math.Max(total, 1) / (double)pageSize) + 2)
+                                break;
+                        }
+
+                        stopwatch.Stop();
+                        await db.HashSetAsync(progressKey, new HashEntry[]
+                        {
+                            new("finished_at", DateTime.UtcNow.Ticks),
+                            new("duration_seconds", stopwatch.Elapsed.TotalSeconds.ToString("F2")),
+                            new("status", "completed")
+                        });
+
+                        // ✅ تحديث نسخة نتائج البحث لكسر الكاش القديم بعد إعادة البناء
+                        try
+                        {
+                            await db.StringSetAsync("search:version", DateTime.UtcNow.Ticks.ToString());
+                            // تفريغ الكاش متعدد المستويات لضمان نظافة النتائج فوراً
+                            await _cacheManager.FlushAsync();
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogDebug(ex, "تعذر تحديث نسخة البحث أو مسح الكاش بعد إعادة البناء");
                         }
 
                         _logger.LogInformation(
-                            "التقدم: {Processed}/{Total} (فشل: {Failed})",
-                            processed, totalCount, failed);
+                            "✅ اكتملت إعادة بناء الفهرس في {Seconds} ثانية. نجح: {Processed}, فشل: {Failed}",
+                            stopwatch.Elapsed.TotalSeconds, processed, failed);
+
+                        return true;
                     }
-
-                    stopwatch.Stop();
-                    _logger.LogInformation(
-                        "✅ اكتملت إعادة بناء الفهرس في {Seconds} ثانية. نجح: {Processed}, فشل: {Failed}",
-                        stopwatch.Elapsed.TotalSeconds, processed, failed);
-
-                    return true;
+                    finally
+                    {
+                        // تحرير القفل بأمان (قارن القيمة قبل الحذف)
+                        try
+                        {
+                            var currentVal = await db.StringGetAsync(lockKey);
+                            if (currentVal == lockId)
+                            {
+                                await db.KeyDeleteAsync(lockKey);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "تعذر تحرير قفل إعادة البناء - سيتم انتهاء صلاحيته تلقائياً");
+                        }
+                    }
                 },
                 "RebuildIndex"
             );
@@ -867,7 +946,7 @@ namespace YemenBooking.Infrastructure.Redis
         /// <summary>
         /// جلب عقار من قاعدة البيانات
         /// </summary>
-        private async Task<Property> GetPropertyByIdAsync(Guid propertyId, CancellationToken cancellationToken)
+    private async Task<Property?> GetPropertyByIdAsync(Guid propertyId, CancellationToken cancellationToken)
         {
             try
             {
@@ -892,7 +971,7 @@ namespace YemenBooking.Infrastructure.Redis
         /// <summary>
         /// جلب وحدة من قاعدة البيانات
         /// </summary>
-        private async Task<Unit> GetUnitByIdAsync(Guid unitId, CancellationToken cancellationToken)
+    private async Task<Unit?> GetUnitByIdAsync(Guid unitId, CancellationToken cancellationToken)
         {
             try
             {
@@ -1197,6 +1276,6 @@ namespace YemenBooking.Infrastructure.Redis
         public long L3Hits { get; set; }
         public long TotalProperties { get; set; }
         public long TotalIndexedProperties { get; set; }
-        public string SystemHealth { get; set; }
+        public string SystemHealth { get; set; } = string.Empty;
     }
 }

@@ -85,6 +85,9 @@ namespace YemenBooking.IndexingTests.Tests.Core
             var indexingLayer = new SmartIndexingLayer(
                 _redisManager,
                 mockPropertyRepo.Object,
+                _fixture.ServiceProvider.GetRequiredService<IUnitAvailabilityRepository>(),
+                _fixture.ServiceProvider.GetRequiredService<IBookingRepository>(),
+                _configuration,
                 _fixture.ServiceProvider.GetRequiredService<ILogger<SmartIndexingLayer>>()
             );
 
@@ -200,6 +203,9 @@ namespace YemenBooking.IndexingTests.Tests.Core
             var indexingLayer = new SmartIndexingLayer(
                 _redisManager,
                 mockPropertyRepo.Object,
+                _fixture.ServiceProvider.GetRequiredService<IUnitAvailabilityRepository>(),
+                _fixture.ServiceProvider.GetRequiredService<IBookingRepository>(),
+                _configuration,
                 _fixture.ServiceProvider.GetRequiredService<ILogger<SmartIndexingLayer>>()
             );
             
@@ -279,7 +285,7 @@ namespace YemenBooking.IndexingTests.Tests.Core
             var searchModuleAvailable = await db.StringGetAsync("search:module:available");
             
             // Assert
-            Assert.NotNull(searchModuleAvailable);
+            Assert.False(searchModuleAvailable.IsNull);
             _logger.LogInformation($"حالة RediSearch: {(searchModuleAvailable == "1" ? "متاح" : "غير متاح")}");
             
             // التحقق من إمكانية إنشاء فهارس يدوية
@@ -356,7 +362,7 @@ namespace YemenBooking.IndexingTests.Tests.Core
 
             // Assert
             Assert.True(settings.Enabled);
-            Assert.NotEmpty(settings.EndPoint);
+            Assert.False(string.IsNullOrEmpty(settings.EndPoint));
             Assert.True(settings.Database >= 0);
             Assert.True(settings.ConnectTimeout > 0);
             Assert.True(settings.SyncTimeout > 0);
@@ -380,10 +386,7 @@ namespace YemenBooking.IndexingTests.Tests.Core
             _logger.LogInformation("اختبار التعامل مع Redis المعطل");
             
             var disabledConfig = new ConfigurationBuilder()
-                .AddInMemoryCollection(new Dictionary<string, string>
-                {
-                    {"Redis:Enabled", "false"}
-                })
+                .AddInMemoryCollection(new Dictionary<string, string> { {"Redis:Enabled", "false"} }.Select(kv => new KeyValuePair<string, string?>(kv.Key, kv.Value)))
                 .Build();
             
             // Act
@@ -478,7 +481,7 @@ namespace YemenBooking.IndexingTests.Tests.Core
                     {"Redis:ConnectTimeout", "1000"},
                     {"Redis:SyncTimeout", "1000"},
                     {"Redis:Database", "1"}
-                })
+                }.Select(kv => new KeyValuePair<string, string?>(kv.Key, kv.Value)))
                 .Build();
             
             var manager = new RedisConnectionManager(quickTimeoutConfig,
@@ -529,7 +532,7 @@ namespace YemenBooking.IndexingTests.Tests.Core
                 {
                     {"Redis:EndPoint", ""},  // endpoint فارغ
                     {"Redis:Database", "-1"} // database غير صالح
-                })
+                }.Select(kv => new KeyValuePair<string, string?>(kv.Key, kv.Value)))
                 .Build();
             
             // Act & Assert

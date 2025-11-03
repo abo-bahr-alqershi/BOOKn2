@@ -93,6 +93,9 @@ namespace YemenBooking.IndexingTests.Tests.Core
             var indexingLayer = new SmartIndexingLayer(
                 _mockRedisManager.Object,
                 _mockPropertyRepo.Object,
+                _fixture.ServiceProvider.GetRequiredService<IUnitAvailabilityRepository>(),
+                _fixture.ServiceProvider.GetRequiredService<IBookingRepository>(),
+                _configuration,
                 _fixture.ServiceProvider.GetRequiredService<ILogger<SmartIndexingLayer>>()
             );
 
@@ -343,6 +346,9 @@ namespace YemenBooking.IndexingTests.Tests.Core
             var indexingLayer = new SmartIndexingLayer(
                 _mockRedisManager.Object,
                 _mockPropertyRepo.Object,
+                _fixture.ServiceProvider.GetRequiredService<IUnitAvailabilityRepository>(),
+                _fixture.ServiceProvider.GetRequiredService<IBookingRepository>(),
+                _configuration,
                 _fixture.ServiceProvider.GetRequiredService<ILogger<SmartIndexingLayer>>()
             );
 
@@ -552,9 +558,9 @@ namespace YemenBooking.IndexingTests.Tests.Core
                 It.IsAny<LogLevel>(),
                 It.IsAny<EventId>(),
                 It.IsAny<object>(),
-                It.IsAny<Exception>(),
-                It.IsAny<Func<object, Exception, string>>()
-            )).Callback<LogLevel, EventId, object, Exception, Func<object, Exception, string>>(
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<object, Exception?, string>>()
+            )).Callback<LogLevel, EventId, object, Exception?, Func<object, Exception?, string>>(
                 (level, eventId, state, exception, formatter) =>
                 {
                     if (level == LogLevel.Error || level == LogLevel.Warning)
@@ -588,13 +594,13 @@ namespace YemenBooking.IndexingTests.Tests.Core
 
         #region Helper Methods
 
-        private Property CreateTestProperty(Guid? id = null, string name = null, string city = null)
+    private Property CreateTestProperty(Guid? id = null, string? name = null, string? city = null)
         {
             return new Property
             {
                 Id = id ?? Guid.NewGuid(),
-                Name = name ?? "فندق اختباري",
-                City = city ?? "صنعاء",
+        Name = name ?? "فندق اختباري",
+        City = city ?? "صنعاء",
                 Currency = "YER",
                 OwnerId = Guid.Parse("10000000-0000-0000-0000-000000000001"),
                 TypeId = Guid.Parse("30000000-0000-0000-0000-000000000003"),

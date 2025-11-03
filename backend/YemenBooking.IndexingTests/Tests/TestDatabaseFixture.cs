@@ -79,6 +79,9 @@ namespace YemenBooking.IndexingTests.Tests
             // بناء حاوي الخدمات
             var services = new ServiceCollection();
 
+            // إضافة IConfiguration إلى DI
+            services.AddSingleton<IConfiguration>(Configuration);
+
             // إضافة خدمات التسجيل
             services.AddLogging(logging =>
             {

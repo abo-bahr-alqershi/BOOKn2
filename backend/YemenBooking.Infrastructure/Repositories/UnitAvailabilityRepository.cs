@@ -84,6 +84,8 @@ using YemenBooking.Infrastructure.Data.Context;
 using YemenBooking.Core.Interfaces.Repositories;
 using System;
 using System.Linq;
+using System.Collections.Generic;
+using System.Threading;
 
 
 namespace YemenBooking.Infrastructure.Repositories;
@@ -269,5 +271,111 @@ public class UnitAvailabilityRepository : BaseRepository<UnitAvailability>, IUni
         }
 
         return calendar;
+    }
+
+    public async Task<List<(DateTime Start, DateTime End)>> ComputeAvailableRangesAsync(
+        Guid unitId,
+        DateTime startDate,
+        DateTime endDate,
+        CancellationToken cancellationToken = default)
+    {
+        // Normalize to dates (inclusive window)
+        var windowStart = startDate.Date;
+        var windowEnd = endDate.Date;
+        if (windowEnd < windowStart)
+            return new List<(DateTime, DateTime)>();
+
+        // If unit is inactive or not available, return empty
+        var unit = await _context.Units.FirstOrDefaultAsync(u => u.Id == unitId, cancellationToken);
+        if (unit == null || !unit.IsActive || !unit.IsAvailable)
+        {
+            return new List<(DateTime, DateTime)>();
+        }
+
+        // Load availability schedule records overlapping the window
+        var availabilityRecords = await _dbSet
+            .Where(ua => ua.UnitId == unitId
+                && !ua.IsDeleted
+                && ua.StartDate.Date <= windowEnd
+                && ua.EndDate.Date >= windowStart)
+            .ToListAsync(cancellationToken);
+
+        // Load bookings overlapping the window (non-cancelled)
+        var bookings = await _context.Bookings
+            .Where(b => b.UnitId == unitId
+                && b.Status != YemenBooking.Core.Enums.BookingStatus.Cancelled
+                && b.CheckIn.Date <= windowEnd
+                && b.CheckOut.Date >= windowStart)
+            .Select(b => new { b.CheckIn, b.CheckOut })
+            .ToListAsync(cancellationToken);
+
+        // Build a daily availability map: default available, then subtract blocks and bookings
+        var dayAvailable = new Dictionary<DateTime, bool>();
+        for (var d = windowStart; d <= windowEnd; d = d.AddDays(1))
+        {
+            dayAvailable[d] = true;
+        }
+
+        // Apply blocking statuses (anything not Available is blocking)
+        foreach (var rec in availabilityRecords)
+        {
+            var isBlocking = !string.Equals(rec.Status, AvailabilityStatus.Available, StringComparison.OrdinalIgnoreCase);
+            if (!isBlocking) continue;
+
+            var from = rec.StartDate.Date < windowStart ? windowStart : rec.StartDate.Date;
+            var to = rec.EndDate.Date > windowEnd ? windowEnd : rec.EndDate.Date;
+            for (var d = from; d <= to; d = d.AddDays(1))
+            {
+                dayAvailable[d] = false;
+            }
+        }
+
+        // Apply bookings as blocks
+        foreach (var b in bookings)
+        {
+            var from = b.CheckIn.Date < windowStart ? windowStart : b.CheckIn.Date;
+            var to = b.CheckOut.Date > windowEnd ? windowEnd : b.CheckOut.Date;
+            for (var d = from; d <= to; d = d.AddDays(1))
+            {
+                dayAvailable[d] = false;
+            }
+        }
+
+        // Merge contiguous available days into inclusive ranges
+        var ranges = new List<(DateTime Start, DateTime End)>();
+        DateTime? currentStart = null;
+        DateTime? currentEnd = null;
+
+        for (var d = windowStart; d <= windowEnd; d = d.AddDays(1))
+        {
+            if (dayAvailable.TryGetValue(d, out var ok) && ok)
+            {
+                if (!currentStart.HasValue)
+                {
+                    currentStart = d;
+                    currentEnd = d;
+                }
+                else
+                {
+                    currentEnd = d;
+                }
+            }
+            else
+            {
+                if (currentStart.HasValue)
+                {
+                    ranges.Add((currentStart.Value, currentEnd!.Value));
+                    currentStart = null;
+                    currentEnd = null;
+                }
+            }
+        }
+
+        if (currentStart.HasValue)
+        {
+            ranges.Add((currentStart.Value, currentEnd!.Value));
+        }
+
+        return ranges;
     }
 }

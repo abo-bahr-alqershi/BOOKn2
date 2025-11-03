@@ -30,8 +30,8 @@ using Google.Apis.Auth.OAuth2;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.AspNetCore.Hosting;
 using System.IO;
-using YemenBooking.Infrastructure.Services;
 using YemenBooking.Infrastructure.Redis.Configuration;
+using YemenBooking.Infrastructure.Configuration;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Http;
 using YemenBooking.Application.Features.Properties.Queries.GetPropertyDetails;
@@ -296,6 +296,9 @@ builder.Services.AddHostedService<ScheduledNotificationsDispatcher>();
 
 // تسجيل نظام Redis الجديد للفهرسة والبحث
 builder.Services.AddRedisIndexingSystem(builder.Configuration);
+
+// تسجيل نظام أحداث المجال ومعالجات الفهرسة
+builder.Services.AddDomainEventsForIndexing();
 
 // IMPORTANT: IIndexingService depends on scoped repositories/services, so register it as Scoped
 // builder.Services.AddScoped<IIndexingService>(provider =>

@@ -87,4 +87,14 @@ public interface IUnitAvailabilityRepository : IRepository<UnitAvailability>
     Task BulkUpdateAsync(IEnumerable<UnitAvailability> availabilities);
     Task DeleteRangeAsync(Guid unitId, DateTime startDate, DateTime endDate);
     Task<Dictionary<DateTime, string>> GetAvailabilityCalendarAsync(Guid unitId, int year, int month);
+
+    /// <summary>
+    /// احسب فترات الإتاحة القابلة للحجز ضمن نافذة زمنية محددة بدمج الجدولة والحجوزات
+    /// Compute bookable availability ranges between start and end, merging schedules and bookings
+    /// </summary>
+    Task<List<(DateTime Start, DateTime End)>> ComputeAvailableRangesAsync(
+        Guid unitId,
+        DateTime startDate,
+        DateTime endDate,
+        CancellationToken cancellationToken = default);
 }

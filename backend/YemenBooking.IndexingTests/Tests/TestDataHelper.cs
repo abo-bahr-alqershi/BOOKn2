@@ -70,7 +70,7 @@ namespace YemenBooking.IndexingTests.Tests
             {
                 dbContext.Cities.AddRange(toAdd);
                 await dbContext.SaveChangesAsync();
-                dbContext.ChangeTracker.Clear();  // ✅ تنظيف بعد الحفظ
+                SafeDetachUnchanged(dbContext);
             }
         }
 
@@ -141,7 +141,7 @@ namespace YemenBooking.IndexingTests.Tests
             {
                 dbContext.PropertyTypes.AddRange(typesToAdd);
                 await dbContext.SaveChangesAsync();
-                dbContext.ChangeTracker.Clear();  // ✅ تنظيف بعد الحفظ
+                SafeDetachUnchanged(dbContext);
             }
         }
 
@@ -249,7 +249,7 @@ namespace YemenBooking.IndexingTests.Tests
                 
                 dbContext.Users.Add(testUser);
                 await dbContext.SaveChangesAsync();
-                dbContext.ChangeTracker.Clear();  // ✅ تنظيف بعد الحفظ
+                SafeDetachUnchanged(dbContext);
             }
         }
 
@@ -315,7 +315,21 @@ namespace YemenBooking.IndexingTests.Tests
             {
                 dbContext.Amenities.AddRange(amenitiesToAdd);
                 await dbContext.SaveChangesAsync();
-                dbContext.ChangeTracker.Clear();  // ✅ تنظيف بعد الحفظ
+                SafeDetachUnchanged(dbContext);
+            }
+        }
+
+        /// <summary>
+        /// فصل التتبع عن الكيانات غير المعدلة لتجنب فقدان التغييرات غير المحفوظة
+        /// </summary>
+        private static void SafeDetachUnchanged(YemenBookingDbContext dbContext)
+        {
+            var entriesToClear = dbContext.ChangeTracker.Entries()
+                .Where(e => e.State == EntityState.Unchanged || e.State == EntityState.Detached)
+                .ToList();
+            foreach (var entry in entriesToClear)
+            {
+                entry.State = EntityState.Detached;
             }
         }
 
