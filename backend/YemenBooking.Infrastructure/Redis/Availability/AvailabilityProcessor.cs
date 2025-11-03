@@ -23,7 +23,8 @@ namespace YemenBooking.Infrastructure.Redis.Availability
         private readonly IAvailabilityService _availabilityService;
         private readonly IPricingService _pricingService;
         private readonly ILogger<AvailabilityProcessor> _logger;
-        private readonly IDatabase _db;
+        private IDatabase? _db;
+        private readonly object _dbLock = new object();
 
         /// <summary>
         /// مُنشئ معالج الإتاحة
@@ -38,7 +39,21 @@ namespace YemenBooking.Infrastructure.Redis.Availability
             _availabilityService = availabilityService;
             _pricingService = pricingService;
             _logger = logger;
-            _db = _redisManager.GetDatabase();
+            _db = null;
+        }
+
+        private IDatabase GetDatabase()
+        {
+            if (_db != null)
+                return _db;
+            lock (_dbLock)
+            {
+                if (_db == null)
+                {
+                    _db = _redisManager.GetDatabase();
+                }
+            }
+            return _db;
         }
 
         #region فحص الإتاحة
@@ -70,7 +85,7 @@ namespace YemenBooking.Infrastructure.Redis.Availability
 
                 // 1. جلب جميع وحدات العقار
                 var unitsKey = RedisKeySchemas.GetPropertyUnitsKey(propertyId);
-                var unitIds = await _db.SetMembersAsync(unitsKey);
+                var unitIds = await GetDatabase().SetMembersAsync(unitsKey);
 
                 if (!unitIds.Any())
                 {
@@ -81,7 +96,7 @@ namespace YemenBooking.Infrastructure.Redis.Availability
 
                 // 2. فحص كل وحدة
                 var availableUnits = new List<AvailableUnit>();
-                var pipeline = _db.CreateBatch();
+                var pipeline = GetDatabase().CreateBatch();
                 var availabilityTasks = new Dictionary<string, Task<SortedSetEntry[]>>();
 
                 foreach (var unitId in unitIds)
@@ -163,7 +178,7 @@ namespace YemenBooking.Infrastructure.Redis.Availability
             {
                 // 1. جلب معلومات الوحدة
                 var unitKey = RedisKeySchemas.GetUnitKey(unitId);
-                var unitData = await _db.HashGetAllAsync(unitKey);
+                var unitData = await GetDatabase().HashGetAllAsync(unitKey);
                 
                 if (unitData.Length == 0)
                 {
@@ -290,39 +305,67 @@ namespace YemenBooking.Infrastructure.Redis.Availability
                     checkIn, 
                     checkOut);
                 
-                var cachedPrice = await _db.StringGetAsync(cacheKey);
+                var cachedPrice = await GetDatabase().StringGetAsync(cacheKey);
                 if (!cachedPrice.IsNullOrEmpty && decimal.TryParse(cachedPrice, out var cached))
                 {
                     _logger.LogDebug("إرجاع السعر من الكاش للوحدة {UnitId}", unitId);
                     return cached;
                 }
 
-                // 2. جلب قواعد التسعير
-                var pricingKey = RedisKeySchemas.GetUnitPricingKey(unitId);
-                var pricingData = await _db.StringGetAsync(pricingKey);
-                
-                decimal totalPrice;
-                
-                if (!pricingData.IsNullOrEmpty)
+                // 2. تفضيل فهرس التسعير كفترات (ZSET)
+                decimal totalPrice = 0;
+                var priceZKey = RedisKeySchemas.GetUnitPricingZKey(unitId);
+                var priceRanges = await GetDatabase().SortedSetRangeByScoreAsync(priceZKey, 0, checkOut.Ticks);
+                if (priceRanges != null && priceRanges.Length > 0)
                 {
-                    // حساب السعر باستخدام القواعد المخزنة
-                    totalPrice = await CalculatePriceWithRulesAsync(
-                        unitId,
-                        pricingData,
-                        checkIn,
-                        checkOut);
+                    // حساب السعر لليالي المطلوبة بالاعتماد على أول فترة تغطي التاريخ (سعر لكل ليلة)
+                    var nights = (int)(checkOut.Date - checkIn.Date).TotalDays;
+                    for (var d = 0; d < nights; d++)
+                    {
+                        var dayTicks = checkIn.AddDays(d).Ticks;
+                        decimal dayPrice = 0;
+                        foreach (var rv in priceRanges)
+                        {
+                            var parts = rv.ToString().Split(':');
+                            if (parts.Length >= 4)
+                            {
+                                var start = long.Parse(parts[0]);
+                                var finish = long.Parse(parts[1]);
+                                var price = decimal.Parse(parts[2]);
+                                if (start <= dayTicks && finish >= dayTicks)
+                                {
+                                    dayPrice = price;
+                                    break;
+                                }
+                            }
+                        }
+                        totalPrice += dayPrice;
+                    }
                 }
                 else
                 {
-                    // استخدام خدمة التسعير الأساسية
-                    totalPrice = await _pricingService.CalculatePriceAsync(
-                        unitId, 
-                        checkIn, 
-                        checkOut);
+                    // 3. fallback: جلب قواعد التسعير القديمة (MessagePack) أو خدمة التسعير الأساسية
+                    var pricingKey = RedisKeySchemas.GetUnitPricingKey(unitId);
+                    var pricingData = await GetDatabase().StringGetAsync(pricingKey);
+                    if (!pricingData.IsNullOrEmpty)
+                    {
+                        totalPrice = await CalculatePriceWithRulesAsync(
+                            unitId,
+                            pricingData,
+                            checkIn,
+                            checkOut);
+                    }
+                    else
+                    {
+                        totalPrice = await _pricingService.CalculatePriceAsync(
+                            unitId,
+                            checkIn,
+                            checkOut);
+                    }
                 }
 
                 // 3. حفظ في الكاش
-                await _db.StringSetAsync(
+                await GetDatabase().StringSetAsync(
                     cacheKey, 
                     totalPrice.ToString(), 
                     TimeSpan.FromHours(1));
@@ -445,7 +488,7 @@ namespace YemenBooking.Infrastructure.Redis.Availability
         private async Task<decimal> GetBasePriceAsync(Guid unitId)
         {
             var unitKey = RedisKeySchemas.GetUnitKey(unitId);
-            var basePrice = await _db.HashGetAsync(unitKey, "base_price");
+            var basePrice = await GetDatabase().HashGetAsync(unitKey, "base_price");
             
             if (!basePrice.IsNullOrEmpty && decimal.TryParse(basePrice, out var price))
             {
@@ -474,7 +517,7 @@ namespace YemenBooking.Infrastructure.Redis.Availability
                     unitId, availableRanges.Count);
 
                 var availKey = RedisKeySchemas.GetUnitAvailabilityKey(unitId);
-                var batch = _db.CreateBatch();
+                var batch = GetDatabase().CreateBatch();
 
                 // حذف الإتاحة القديمة
                 _ = batch.KeyDeleteAsync(availKey);
@@ -524,7 +567,7 @@ namespace YemenBooking.Infrastructure.Redis.Availability
 
                 // 1. التحقق من الإتاحة مرة أخرى
                 var availKey = RedisKeySchemas.GetUnitAvailabilityKey(unitId);
-                var ranges = await _db.SortedSetRangeByScoreWithScoresAsync(
+                var ranges = await GetDatabase().SortedSetRangeByScoreWithScoresAsync(
                     availKey,
                     0,
                     checkOut.Ticks);
@@ -538,7 +581,7 @@ namespace YemenBooking.Infrastructure.Redis.Availability
                 }
 
                 // 2. تحديث الإتاحة (إزالة الفترة المحجوزة)
-                var tran = _db.CreateTransaction();
+                var tran = GetDatabase().CreateTransaction();
                 
                 // البحث عن الفترة التي تحتوي على التواريخ المطلوبة
                 foreach (var range in ranges)

@@ -59,7 +59,7 @@ public class Unit : BaseEntity<Guid>
     /// Custom features of the unit (JSON)
     /// </summary>
     [Display(Name = "الميزات المخصصة للوحدة")]
-    public string CustomFeatures { get; set; }
+    public string CustomFeatures { get; set; } = "{}";
     
     /// <summary>
     /// حالة توفر الوحدة

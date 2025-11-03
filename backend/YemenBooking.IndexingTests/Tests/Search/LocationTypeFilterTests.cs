@@ -374,7 +374,8 @@ namespace YemenBooking.IndexingTests.Tests.Search
                 UnitTypeId = singleRoomType,
                 MaxCapacity = 1,
                 IsAvailable = true,
-                IsActive = true
+                IsActive = true,
+                BasePrice = new YemenBooking.Core.ValueObjects.Money(100, "YER")
             };
 
             var unit2 = new Unit
@@ -385,7 +386,8 @@ namespace YemenBooking.IndexingTests.Tests.Search
                 UnitTypeId = doubleRoomType,
                 MaxCapacity = 2,
                 IsAvailable = true,
-                IsActive = true
+                IsActive = true,
+                BasePrice = new YemenBooking.Core.ValueObjects.Money(150, "YER")
             };
 
             var unit3 = new Unit
@@ -396,7 +398,8 @@ namespace YemenBooking.IndexingTests.Tests.Search
                 UnitTypeId = suiteType,
                 MaxCapacity = 4,
                 IsAvailable = true,
-                IsActive = true
+                IsActive = true,
+                BasePrice = new YemenBooking.Core.ValueObjects.Money(250, "YER")
             };
 
             _dbContext.Units.AddRange(unit1, unit2, unit3);

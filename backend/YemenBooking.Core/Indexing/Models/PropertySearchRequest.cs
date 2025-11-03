@@ -28,6 +28,8 @@ namespace YemenBooking.Core.Indexing.Models
         [Key(17)] public string? SortBy { get; set; }
         [Key(18)] public int PageNumber { get; set; } = 1;
         [Key(19)] public int PageSize { get; set; } = 20;
+        [Key(20)] public int? MinAdults { get; set; }
+        [Key(21)] public int? MinChildren { get; set; }
     }
 
     /// <summary>

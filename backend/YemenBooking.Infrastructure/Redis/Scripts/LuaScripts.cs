@@ -28,11 +28,28 @@ local sort_by = ARGV[10] or 'popularity'
 local page_number = tonumber(ARGV[11]) or 1
 local page_size = tonumber(ARGV[12]) or 20
 local amenity_ids = cjson.decode(ARGV[13] or '[]')
+local preferred_currency = ARGV[14] or ''
 
 -- متغيرات محلية
 local results = {}
 local property_scores = {}
 local total_count = 0
+
+-- دالة تحويل العملة (تقريبية)
+local function convert_currency(amount, from_currency, to_currency)
+    if to_currency == '' or from_currency == '' or from_currency == to_currency then
+        return amount
+    end
+    local fx_key = 'cache:fx:' .. from_currency .. ':' .. to_currency
+    local rate = redis.call('GET', fx_key)
+    if rate then
+        local r = tonumber(rate)
+        if r and r > 0 then
+            return amount * r
+        end
+    end
+    return amount -- fallback بدون تحويل
+end
 
 -- دالة فحص الإتاحة
 local function check_availability(property_id)
@@ -46,8 +63,13 @@ local function check_availability(property_id)
     for _, unit_id in ipairs(unit_ids) do
         -- فحص السعة
         local unit_key = 'unit:' .. unit_id
-        local max_capacity = redis.call('HGET', unit_key, 'max_capacity')
-        if tonumber(max_capacity or 0) >= guests_count then
+        local unit_data = redis.call('HMGET', unit_key, 'max_capacity','base_price','currency','is_active','is_available')
+        local max_capacity = tonumber(unit_data[1] or 0)
+        local base_price = tonumber(unit_data[2] or 0)
+        local unit_currency = unit_data[3] or 'YER'
+        local is_active = unit_data[4] == '1'
+        local is_available_flag = unit_data[5] == '1'
+        if is_active and is_available_flag and max_capacity >= guests_count then
             -- فحص الإتاحة
             local avail_key = 'avail:unit:' .. unit_id
             local ranges = redis.call('ZRANGEBYSCORE', avail_key, 0, check_out)
@@ -63,7 +85,39 @@ local function check_availability(property_id)
                     local end_date = tonumber(parts[2])
                     
                     if start_date <= check_in and end_date >= check_out then
-                        return true -- وحدة متاحة
+                        -- فحص التسعير
+                        local passes_price = true
+                        if min_price > 0 or max_price < 999999999 then
+                            local price_key = 'price:unit:' .. unit_id
+                            local price_ranges = redis.call('ZRANGEBYSCORE', price_key, 0, check_out)
+                            local found_cover = false
+                            local price_nightly = base_price
+                            local price_currency = unit_currency
+                            for _, pr in ipairs(price_ranges) do
+                                local p = {}
+                                for x in string.gmatch(pr, '([^:]+)') do table.insert(p, x) end
+                                if #p >= 4 then
+                                    local p_start = tonumber(p[1])
+                                    local p_end = tonumber(p[2])
+                                    local p_price = tonumber(p[3]) or 0
+                                    local p_curr = p[4]
+                                    if p_start <= check_in and p_end >= check_out then
+                                        found_cover = true
+                                        price_nightly = p_price
+                                        price_currency = p_curr
+                                        break
+                                    end
+                                end
+                            end
+                            -- تحويل العملة إذا لزم
+                            local price_eval = convert_currency(price_nightly, price_currency, preferred_currency)
+                            if price_eval < min_price or price_eval > max_price then
+                                passes_price = false
+                            end
+                        end
+                        if passes_price then
+                            return true -- وحدة متاحة وتحقق السعر
+                        end
                     end
                 end
             end
@@ -148,13 +202,8 @@ for _, property_id in ipairs(property_ids) do
             end
         end
         
-        -- فحص السعر
-        if passes_filters then
-            local price = tonumber(prop['min_price'] or 0)
-            if price < min_price or price > max_price then
-                passes_filters = false
-            end
-        end
+        -- فحص السعر (الحد الأدنى/الأقصى) سيتم التحقق بشكل أدق داخل فحص الإتاحة/التسعير للوحدات
+        -- تم نقله داخل check_availability بالاعتماد على فترات التسعير للوحدات
         
         -- فحص التقييم
         if passes_filters then

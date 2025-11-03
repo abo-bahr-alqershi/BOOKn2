@@ -325,20 +325,26 @@ namespace YemenBooking.IndexingTests.Tests.Search
         {
             _output.WriteLine("⭐ اختبار فلتر تقييم صفر...");
 
-            // الإعداد
-            var unratedProp = await CreateTestPropertyAsync("عقار بدون تقييم", "صنعاء");
+            // الإعداد - استخدام مدينة فريدة لعزل الاختبار
+            var uniqueCity = $"TestCity_{Guid.NewGuid():N}";
+            
+            var unratedProp = await CreateTestPropertyAsync("عقار بدون تقييم", uniqueCity);
             unratedProp.AverageRating = 0;
 
-            var ratedProp = await CreateTestPropertyAsync("عقار بتقييم", "صنعاء");
+            var ratedProp = await CreateTestPropertyAsync("عقار بتقييم", uniqueCity);
             ratedProp.AverageRating = 4;
 
             _dbContext.Properties.UpdateRange(unratedProp, ratedProp);
             await _dbContext.SaveChangesAsync();
-            await _indexingService.RebuildIndexAsync();
+            
+            // فهرسة العقارين فقط
+            await _indexingService.OnPropertyUpdatedAsync(unratedProp.Id);
+            await _indexingService.OnPropertyUpdatedAsync(ratedProp.Id);
 
             // البحث
             var searchRequest = new PropertySearchRequest
             {
+                City = uniqueCity, // فلتر بالمدينة الفريدة
                 MinRating = 0,
                 PageNumber = 1,
                 PageSize = 10

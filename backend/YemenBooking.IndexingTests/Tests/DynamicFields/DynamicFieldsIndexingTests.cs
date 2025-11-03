@@ -210,6 +210,9 @@ namespace YemenBooking.IndexingTests.Tests.DynamicFields
                 newValue,
                 isAdd: false // تحديث وليس إضافة
             );
+            
+            // تأخير لضمان تحديث الفهرس
+            await Task.Delay(100);
 
             // Assert
             var searchRequest = new PropertySearchRequest

@@ -1,0 +1,16 @@
+[Unit]
+Description=Oracle Cloud A1.Flex Instance Creator
+After=network.target
+
+[Service]
+Type=simple
+User=ameen
+WorkingDirectory=/home/ameen/Desktop/BOOKIN/BOOKIN/oci-arm-host-capacity
+ExecStart=/home/ameen/Desktop/BOOKIN/BOOKIN/run-instance-creator.sh
+Restart=on-failure
+RestartSec=300
+StandardOutput=append:/home/ameen/Desktop/BOOKIN/BOOKIN/instance-creator.log
+StandardError=append:/home/ameen/Desktop/BOOKIN/BOOKIN/instance-creator.log
+
+[Install]
+WantedBy=multi-user.target

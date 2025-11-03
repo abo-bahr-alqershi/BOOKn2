@@ -72,6 +72,22 @@ namespace YemenBooking.Infrastructure.Redis.Core
         /// فهرس الشعبية: idx:popularity → Sorted Set
         /// </summary>
         public const string INDEX_POPULARITY = "idx:popularity";
+
+        /// <summary>
+        /// فهرس الحد الأقصى للبالغين على مستوى العقار: idx:max_adults → Sorted Set
+        /// </summary>
+        public const string INDEX_MAX_ADULTS = "idx:max_adults";
+
+        /// <summary>
+        /// فهرس الحد الأقصى للأطفال على مستوى العقار: idx:max_children → Sorted Set
+        /// </summary>
+        public const string INDEX_MAX_CHILDREN = "idx:max_children";
+
+        /// <summary>
+        /// فهرس السعة القصوى على مستوى العقار: idx:max_capacity → Sorted Set
+        /// يستخدم لدعم فلتر GuestsCount في البحث البسيط
+        /// </summary>
+        public const string INDEX_MAX_CAPACITY = "idx:max_capacity";
         
         #endregion
 
@@ -101,6 +117,26 @@ namespace YemenBooking.Infrastructure.Redis.Core
         /// فهرس العقارات المميزة: tag:featured → Set
         /// </summary>
         public const string TAG_FEATURED = "tag:featured";
+
+        /// <summary>
+        /// عقارات تحتوي وحداتها على عدد بالغين (>0): tag:property:has_adults → Set
+        /// </summary>
+        public const string TAG_PROPERTY_HAS_ADULTS = "tag:property:has_adults";
+
+        /// <summary>
+        /// عقارات تحتوي وحداتها على عدد أطفال (>0): tag:property:has_children → Set
+        /// </summary>
+        public const string TAG_PROPERTY_HAS_CHILDREN = "tag:property:has_children";
+        
+        #endregion
+
+        #region فهارس الحقول الديناميكية
+        
+        /// <summary>
+        /// فهرس قيمة حقل ديناميكي: dynamic_value:{field}:{value} → Set
+        /// يستخدم لدعم الفلترة المباشرة عبر Redis دون جلب كل البيانات للذاكرة
+        /// </summary>
+        public const string DYNAMIC_FIELD_VALUE = "dynamic_value:{0}:{1}";
         
         #endregion
 
@@ -120,6 +156,36 @@ namespace YemenBooking.Infrastructure.Redis.Core
         /// فهرس نوع الوحدة: tag:unittype:{typeId} → Set
         /// </summary>
         public const string TAG_UNIT_TYPE = "tag:unittype:{0}";
+
+        /// <summary>
+        /// فهرس نوع الوحدة الذي يدعم عدد بالغين: tag:unittype:has_adults → Set (قائمة أنواع)
+        /// </summary>
+        public const string TAG_UNIT_TYPE_HAS_ADULTS = "tag:unittype:has_adults";
+
+        /// <summary>
+        /// فهرس نوع الوحدة الذي يدعم عدد أطفال: tag:unittype:has_children → Set (قائمة أنواع)
+        /// </summary>
+        public const string TAG_UNIT_TYPE_HAS_CHILDREN = "tag:unittype:has_children";
+
+        /// <summary>
+        /// فهرس وجود عدد بالغين على مستوى الوحدات: tag:unit:has_adults → Set (قائمة وحدات)
+        /// </summary>
+        public const string TAG_UNIT_HAS_ADULTS = "tag:unit:has_adults";
+
+        /// <summary>
+        /// فهرس وجود عدد أطفال على مستوى الوحدات: tag:unit:has_children → Set (قائمة وحدات)
+        /// </summary>
+        public const string TAG_UNIT_HAS_CHILDREN = "tag:unit:has_children";
+
+        /// <summary>
+        /// فهرس عدد البالغين للوحدة: idx:unit:max_adults → Sorted Set (member=unitId, score=maxAdults)
+        /// </summary>
+        public const string INDEX_UNIT_MAX_ADULTS = "idx:unit:max_adults";
+
+        /// <summary>
+        /// فهرس عدد الأطفال للوحدة: idx:unit:max_children → Sorted Set (member=unitId, score=maxChildren)
+        /// </summary>
+        public const string INDEX_UNIT_MAX_CHILDREN = "idx:unit:max_children";
         
         #endregion
 
@@ -148,6 +214,17 @@ namespace YemenBooking.Infrastructure.Redis.Core
         /// قواعد تسعير الوحدة: pricing:unit:{unitId} → Hash
         /// </summary>
         public const string PRICING_UNIT = "pricing:unit:{0}";
+
+        /// <summary>
+        /// فهرس تسعير الوحدة كفترات مثل الإتاحة: price:unit:{unitId} → Sorted Set
+        /// العنصر: "startTicks:endTicks:price:currency"، الدرجة = startTicks
+        /// </summary>
+        public const string PRICING_UNIT_ZSET = "price:unit:{0}";
+
+        /// <summary>
+        /// فهرس حسب التاريخ للتسعير (اختياري للاستخدامات المستقبلية): price:date:{YYYYMMDD} → Set
+        /// </summary>
+        public const string PRICING_DATE = "price:date:{0:yyyyMMdd}";
         
         /// <summary>
         /// كاش الأسعار المحسوبة: pricing:cache:{unitId}:{checkIn}:{checkOut} → String
@@ -312,6 +389,12 @@ namespace YemenBooking.Infrastructure.Redis.Core
         /// </summary>
         public static string GetUnitPricingKey(Guid unitId) 
             => string.Format(PRICING_UNIT, unitId);
+
+        /// <summary>
+        /// بناء مفتاح فهرس ZSET لتسعير الوحدة
+        /// </summary>
+        public static string GetUnitPricingZKey(Guid unitId)
+            => string.Format(PRICING_UNIT_ZSET, unitId);
         
         /// <summary>
         /// بناء مفتاح كاش البحث L2
@@ -324,6 +407,14 @@ namespace YemenBooking.Infrastructure.Redis.Core
         /// </summary>
         public static string GetLockKey(string resource, string id) 
             => string.Format(LOCK_RESOURCE, resource, id);
+        
+        /// <summary>
+        /// بناء مفتاح فهرس لقيمة حقل ديناميكي
+        /// </summary>
+        public static string GetDynamicFieldValueKey(string field, string value)
+            => string.Format(DYNAMIC_FIELD_VALUE,
+                field?.ToLowerInvariant() ?? "unknown",
+                value?.ToLowerInvariant() ?? "unknown");
         
         #endregion
     }

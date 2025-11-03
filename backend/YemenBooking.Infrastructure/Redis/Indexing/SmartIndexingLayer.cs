@@ -93,7 +93,17 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
 
                 // 2. إنشاء معاملة Pipeline لضمان الذرية
                 var db = GetDatabase();
+                if (db == null)
+                {
+                    _logger.LogWarning("تعذر الحصول على اتصال Redis للفهرسة");
+                    return false;
+                }
                 var tran = db.CreateTransaction();
+                if (tran == null)
+                {
+                    _logger.LogWarning("تعذر إنشاء معاملة Redis للفهرسة");
+                    return false;
+                }
 
                 // 3. حفظ البيانات الأساسية في Hash
                 var propertyKey = RedisKeySchemas.GetPropertyKey(property.Id);
@@ -134,7 +144,7 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
             catch (Exception ex)
             {
                 _logger.LogError(ex, "خطأ في فهرسة العقار: {PropertyId}", property.Id);
-                throw;
+                return false;
             }
             finally
             {
@@ -257,6 +267,7 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                     _ = tran.KeyDeleteAsync(RedisKeySchemas.GetUnitKey(Guid.Parse(unitId)));
                     _ = tran.KeyDeleteAsync(RedisKeySchemas.GetUnitAvailabilityKey(Guid.Parse(unitId)));
                     _ = tran.KeyDeleteAsync(RedisKeySchemas.GetUnitPricingKey(Guid.Parse(unitId)));
+                    _ = tran.KeyDeleteAsync(RedisKeySchemas.GetUnitPricingZKey(Guid.Parse(unitId)));
                 }
                 
                 _ = tran.KeyDeleteAsync(unitsKey);
@@ -315,6 +326,34 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 var unitTypeKey = string.Format(RedisKeySchemas.TAG_UNIT_TYPE, unit.UnitTypeId);
                 _ = tran.SetAddAsync(unitTypeKey, unit.Id.ToString());
 
+                // فهارس وجود وعدد البالغين/الأطفال للوحدة
+                if (unitDoc.MaxAdults > 0)
+                {
+                    _ = tran.SetAddAsync(RedisKeySchemas.TAG_UNIT_HAS_ADULTS, unit.Id.ToString());
+                    _ = tran.SortedSetAddAsync(RedisKeySchemas.INDEX_UNIT_MAX_ADULTS, unit.Id.ToString(), unitDoc.MaxAdults);
+                    // تمييز نوع الوحدة بأنه يدعم عدد بالغين
+                    _ = tran.SetAddAsync(RedisKeySchemas.TAG_UNIT_TYPE_HAS_ADULTS, unit.UnitTypeId.ToString());
+                    // تمييز العقار بأنه يحتوي وحدات ببالغين
+                    _ = tran.SetAddAsync(RedisKeySchemas.TAG_PROPERTY_HAS_ADULTS, unit.PropertyId.ToString());
+                }
+
+                if (unitDoc.MaxChildren > 0)
+                {
+                    _ = tran.SetAddAsync(RedisKeySchemas.TAG_UNIT_HAS_CHILDREN, unit.Id.ToString());
+                    _ = tran.SortedSetAddAsync(RedisKeySchemas.INDEX_UNIT_MAX_CHILDREN, unit.Id.ToString(), unitDoc.MaxChildren);
+                    // تمييز نوع الوحدة بأنه يدعم عدد أطفال
+                    _ = tran.SetAddAsync(RedisKeySchemas.TAG_UNIT_TYPE_HAS_CHILDREN, unit.UnitTypeId.ToString());
+                    // تمييز العقار بأنه يحتوي وحدات بأطفال
+                    _ = tran.SetAddAsync(RedisKeySchemas.TAG_PROPERTY_HAS_CHILDREN, unit.PropertyId.ToString());
+                }
+
+                // إضافة فترة تسعير افتراضية تغطي كل الزمن بناءً على السعر الأساسي
+                var priceZKey = RedisKeySchemas.GetUnitPricingZKey(unit.Id);
+                var startTicks = 0L; // من البداية
+                var endTicks = DateTime.MaxValue.Ticks; // إلى أقصى تاريخ
+                var priceElement = $"{startTicks}:{endTicks}:{unitDoc.BasePrice}:{unitDoc.Currency}";
+                _ = tran.SortedSetAddAsync(priceZKey, priceElement, startTicks);
+
                 var result = await tran.ExecuteAsync();
 
                 if (result)
@@ -344,6 +383,24 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
         {
             // جلب البيانات الإضافية - سيتم الحصول على الوحدات من property.Units إذا كانت محملة
             var unitsList = property.Units?.ToList() ?? new List<Unit>();
+            if (unitsList.Count == 0)
+            {
+                try
+                {
+                    var withUnits = await _propertyRepository.GetPropertyWithUnitsAsync(property.Id, cancellationToken);
+                    if (withUnits?.Units != null)
+                    {
+                        unitsList = withUnits.Units.ToList();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "تعذر جلب الوحدات من قاعدة البيانات للعقار {PropertyId}", property.Id);
+                }
+            }
+
+            // حساب أقل سعر ومرجعية العملة من فهارس تسعير الوحدات (ZSET)
+            var (computedMinPrice, computedCurrency) = await ComputeMinPriceFromUnitPricingAsync(unitsList, cancellationToken);
 
             var doc = new PropertyIndexDocument
             {
@@ -365,11 +422,11 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 PropertyTypeName = property.PropertyType?.Name,
                 StarRating = property.StarRating,
 
-                // بيانات التسعير (محسوبة من الوحدات)
-                MinPrice = unitsList.Any() ? unitsList.Min(u => u.BasePrice.Amount) : 0,
+                // بيانات التسعير (محسوبة من فهرس تسعير الوحدات)
+                MinPrice = computedMinPrice,
                 MaxPrice = unitsList.Any() ? unitsList.Max(u => u.BasePrice.Amount) : 0,
                 AveragePrice = unitsList.Any() ? unitsList.Average(u => u.BasePrice.Amount) : 0,
-                BaseCurrency = unitsList.FirstOrDefault()?.BasePrice.Currency ?? "YER",
+                BaseCurrency = computedCurrency,
 
                 // بيانات التقييم والشعبية
                 AverageRating = property.AverageRating,
@@ -386,6 +443,10 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 // أنواع الوحدات المتوفرة
                 UnitTypeIds = unitsList.Select(u => u.UnitTypeId).Distinct().ToList(),
                 UnitTypeNames = unitsList.Select(u => u.UnitType?.Name).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().ToList(),
+
+                // الحد الأقصى للبالغين/الأطفال عبر وحدات العقار
+                MaxAdults = unitsList.Any() ? unitsList.Max(u => (u.AdultsCapacity ?? u.MaxCapacity)) : 0,
+                MaxChildren = unitsList.Any() ? unitsList.Max(u => (u.ChildrenCapacity ?? 0)) : 0,
 
                 // المرافق والخدمات
                 AmenityIds = property.Amenities?.Select(a => a.Id).ToList() ?? new List<Guid>(),
@@ -424,6 +485,71 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
             doc.CalculatePopularityScore();
 
             return doc;
+        }
+
+        /// <summary>
+        /// حساب أقل سعر عبر جميع وحدات العقار من ZSET التسعير
+        /// </summary>
+        private async Task<(decimal minPrice, string currency)> ComputeMinPriceFromUnitPricingAsync(
+            List<Unit> units,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                if (units == null || units.Count == 0)
+                    return (0m, "YER");
+
+                var db = GetDatabase();
+                decimal globalMin = decimal.MaxValue;
+                string currency = "YER";
+
+                foreach (var unit in units)
+                {
+                    var zkey = RedisKeySchemas.GetUnitPricingZKey(unit.Id);
+                    var ranges = await db.SortedSetRangeByRankAsync(zkey, 0, -1);
+                    if (ranges != null && ranges.Length > 0)
+                    {
+                        foreach (var rv in ranges)
+                        {
+                            var parts = rv.ToString().Split(':');
+                            if (parts.Length >= 4)
+                            {
+                                if (decimal.TryParse(parts[2], out var price))
+                                {
+                                    if (price < globalMin)
+                                    {
+                                        globalMin = price;
+                                        currency = parts[3];
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // fallback للسعر الأساسي للوحدة
+                        var price = unit.BasePrice.Amount;
+                        if (price < globalMin)
+                        {
+                            globalMin = price;
+                            currency = unit.BasePrice.Currency ?? "YER";
+                        }
+                    }
+                }
+
+                if (globalMin == decimal.MaxValue)
+                {
+                    return (0m, "YER");
+                }
+                return (globalMin, currency);
+            }
+            catch
+            {
+                // fallback عند أي خطأ
+                var fallbackMin = units.Any() ? units.Min(u => u.BasePrice.Amount) : 0m;
+                var fallbackCurr = units.FirstOrDefault()?.BasePrice.Currency ?? "YER";
+                return (fallbackMin, fallbackCurr);
+            }
         }
 
         /// <summary>
@@ -495,8 +621,11 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
         {
             var propId = doc.Id.ToString();
 
-            // مجموعة جميع العقارات
-            _ = tran.SetAddAsync(RedisKeySchemas.PROPERTIES_ALL_SET, propId);
+            // مجموعة جميع العقارات النشطة والمعتمدة فقط
+            if (doc.IsActive && doc.IsApproved)
+            {
+                _ = tran.SetAddAsync(RedisKeySchemas.PROPERTIES_ALL_SET, propId);
+            }
 
             // الفهارس الجغرافية
             _ = tran.GeoAddAsync(
@@ -512,6 +641,9 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
             _ = tran.SortedSetAddAsync(RedisKeySchemas.INDEX_CREATED, propId, doc.CreatedAt.Ticks);
             _ = tran.SortedSetAddAsync(RedisKeySchemas.INDEX_BOOKINGS, propId, doc.TotalBookings);
             _ = tran.SortedSetAddAsync(RedisKeySchemas.INDEX_POPULARITY, propId, doc.PopularityScore);
+            _ = tran.SortedSetAddAsync(RedisKeySchemas.INDEX_MAX_ADULTS, propId, doc.MaxAdults);
+            _ = tran.SortedSetAddAsync(RedisKeySchemas.INDEX_MAX_CHILDREN, propId, doc.MaxChildren);
+            _ = tran.SortedSetAddAsync(RedisKeySchemas.INDEX_MAX_CAPACITY, propId, doc.MaxCapacity);
 
             // فهارس التصنيف
             _ = tran.SetAddAsync(RedisKeySchemas.GetCityKey(doc.City), propId);
@@ -539,6 +671,19 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
             if (doc.IsFeatured)
             {
                 _ = tran.SetAddAsync(RedisKeySchemas.TAG_FEATURED, propId);
+            }
+
+            // فهارس الحقول الديناميكية: dynamic_value:{field}:{value} → Set
+            if (doc.DynamicFields != null && doc.DynamicFields.Count > 0)
+            {
+                foreach (var kv in doc.DynamicFields)
+                {
+                    if (!string.IsNullOrWhiteSpace(kv.Key) && !string.IsNullOrWhiteSpace(kv.Value))
+                    {
+                        var dynKey = RedisKeySchemas.GetDynamicFieldValueKey(kv.Key, kv.Value);
+                        _ = tran.SetAddAsync(dynKey, propId);
+                    }
+                }
             }
         }
 
@@ -620,6 +765,12 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 newDoc.TotalBookings, SortedSetWhen.Always);
             _ = tran.SortedSetAddAsync(RedisKeySchemas.INDEX_POPULARITY, propId, 
                 newDoc.PopularityScore, SortedSetWhen.Always);
+            _ = tran.SortedSetAddAsync(RedisKeySchemas.INDEX_MAX_ADULTS, propId,
+                newDoc.MaxAdults, SortedSetWhen.Always);
+            _ = tran.SortedSetAddAsync(RedisKeySchemas.INDEX_MAX_CHILDREN, propId,
+                newDoc.MaxChildren, SortedSetWhen.Always);
+            _ = tran.SortedSetAddAsync(RedisKeySchemas.INDEX_MAX_CAPACITY, propId,
+                newDoc.MaxCapacity, SortedSetWhen.Always);
 
             // تحديث الموقع
             _ = tran.GeoAddAsync(
@@ -638,6 +789,53 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                     _ = tran.SetRemoveAsync(RedisKeySchemas.TAG_FEATURED, propId);
                 }
             }
+
+            // تحديث حالة الإدراج في مجموعة جميع العقارات النشطة
+            var oldActiveApproved = oldDoc.IsActive && oldDoc.IsApproved;
+            var newActiveApproved = newDoc.IsActive && newDoc.IsApproved;
+            if (oldActiveApproved != newActiveApproved)
+            {
+                if (newActiveApproved)
+                {
+                    _ = tran.SetAddAsync(RedisKeySchemas.PROPERTIES_ALL_SET, propId);
+                }
+                else
+                {
+                    _ = tran.SetRemoveAsync(RedisKeySchemas.PROPERTIES_ALL_SET, propId);
+                }
+            }
+
+            // تحديث فهارس الحقول الديناميكية
+            var oldDyn = oldDoc.DynamicFields ?? new Dictionary<string, string>();
+            var newDyn = newDoc.DynamicFields ?? new Dictionary<string, string>();
+
+            // الحقول المحذوفة أو التي تغيرت قيمها
+            foreach (var kv in oldDyn)
+            {
+                var key = kv.Key;
+                var oldVal = kv.Value;
+                var hasNew = newDyn.TryGetValue(key, out var newVal);
+                if (!hasNew || !string.Equals(oldVal, newVal, StringComparison.OrdinalIgnoreCase))
+                {
+                    var oldDynKey = RedisKeySchemas.GetDynamicFieldValueKey(key, oldVal);
+                    _ = tran.SetRemoveAsync(oldDynKey, propId);
+                }
+            }
+
+            // الحقول الجديدة أو التي تغيرت قيمها
+            foreach (var kv in newDyn)
+            {
+                if (!string.IsNullOrWhiteSpace(kv.Value))
+                {
+                    var needAdd = !oldDyn.TryGetValue(kv.Key, out var oldVal) ||
+                                  !string.Equals(oldVal, kv.Value, StringComparison.OrdinalIgnoreCase);
+                    if (needAdd)
+                    {
+                        var newDynKey = RedisKeySchemas.GetDynamicFieldValueKey(kv.Key, kv.Value);
+                        _ = tran.SetAddAsync(newDynKey, propId);
+                    }
+                }
+            }
         }
 
         /// <summary>
@@ -652,6 +850,10 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
             _ = tran.SetRemoveAsync(RedisKeySchemas.GetCityKey(doc.City), propId);
             _ = tran.SetRemoveAsync(RedisKeySchemas.GetTypeKey(doc.PropertyTypeId), propId);
             _ = tran.SetRemoveAsync(RedisKeySchemas.TAG_FEATURED, propId);
+            
+            // حذف من RediSearch index  
+            var searchKey = RedisKeySchemas.SEARCH_KEY_PREFIX + propId;
+            _ = tran.KeyDeleteAsync(searchKey);
 
             // حذف من الفهارس الجغرافية
             _ = tran.GeoRemoveAsync(RedisKeySchemas.GEO_PROPERTIES, propId);
@@ -664,6 +866,9 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
             _ = tran.SortedSetRemoveAsync(RedisKeySchemas.INDEX_CREATED, propId);
             _ = tran.SortedSetRemoveAsync(RedisKeySchemas.INDEX_BOOKINGS, propId);
             _ = tran.SortedSetRemoveAsync(RedisKeySchemas.INDEX_POPULARITY, propId);
+            _ = tran.SortedSetRemoveAsync(RedisKeySchemas.INDEX_MAX_ADULTS, propId);
+            _ = tran.SortedSetRemoveAsync(RedisKeySchemas.INDEX_MAX_CHILDREN, propId);
+            _ = tran.SortedSetRemoveAsync(RedisKeySchemas.INDEX_MAX_CAPACITY, propId);
 
             // حذف من فهارس المرافق والخدمات
             foreach (var amenityId in doc.AmenityIds)
@@ -675,6 +880,23 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
             {
                 _ = tran.SetRemoveAsync(string.Format(RedisKeySchemas.TAG_SERVICE, serviceId), propId);
             }
+
+            // حذف من فهارس الحقول الديناميكية
+            if (doc.DynamicFields != null && doc.DynamicFields.Count > 0)
+            {
+                foreach (var kv in doc.DynamicFields)
+                {
+                    if (!string.IsNullOrWhiteSpace(kv.Value))
+                    {
+                        var dynKey = RedisKeySchemas.GetDynamicFieldValueKey(kv.Key, kv.Value);
+                        _ = tran.SetRemoveAsync(dynKey, propId);
+                    }
+                }
+            }
+
+            // إزالة من العلامات الخاصة بوجود بالغين/أطفال على مستوى العقار
+            _ = tran.SetRemoveAsync(RedisKeySchemas.TAG_PROPERTY_HAS_ADULTS, propId);
+            _ = tran.SetRemoveAsync(RedisKeySchemas.TAG_PROPERTY_HAS_CHILDREN, propId);
         }
 
         #endregion
@@ -691,6 +913,21 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
         {
             // الحصول على الوحدات من property.Units إذا كانت محملة
             var units = property.Units ?? new List<Unit>();
+            if (units.Count == 0)
+            {
+                try
+                {
+                    var withUnits = await _propertyRepository.GetPropertyWithUnitsAsync(property.Id, cancellationToken);
+                    if (withUnits?.Units != null)
+                    {
+                        units = withUnits.Units.ToList();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "تعذر جلب وحدات العقار {PropertyId} أثناء فهرسة الوحدات", property.Id);
+                }
+            }
             
             foreach (var unit in units)
             {
@@ -700,6 +937,34 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 
                 var unitsSetKey = RedisKeySchemas.GetPropertyUnitsKey(property.Id);
                 _ = tran.SetAddAsync(unitsSetKey, unit.Id.ToString());
+
+                // إضافة إلى فهرس نوع الوحدة
+                var unitTypeKey = string.Format(RedisKeySchemas.TAG_UNIT_TYPE, unit.UnitTypeId);
+                _ = tran.SetAddAsync(unitTypeKey, unit.Id.ToString());
+
+                // فهارس وجود وعدد البالغين/الأطفال للوحدة
+                if (unitDoc.MaxAdults > 0)
+                {
+                    _ = tran.SetAddAsync(RedisKeySchemas.TAG_UNIT_HAS_ADULTS, unit.Id.ToString());
+                    _ = tran.SortedSetAddAsync(RedisKeySchemas.INDEX_UNIT_MAX_ADULTS, unit.Id.ToString(), unitDoc.MaxAdults);
+                    _ = tran.SetAddAsync(RedisKeySchemas.TAG_UNIT_TYPE_HAS_ADULTS, unit.UnitTypeId.ToString());
+                    _ = tran.SetAddAsync(RedisKeySchemas.TAG_PROPERTY_HAS_ADULTS, property.Id.ToString());
+                }
+
+                if (unitDoc.MaxChildren > 0)
+                {
+                    _ = tran.SetAddAsync(RedisKeySchemas.TAG_UNIT_HAS_CHILDREN, unit.Id.ToString());
+                    _ = tran.SortedSetAddAsync(RedisKeySchemas.INDEX_UNIT_MAX_CHILDREN, unit.Id.ToString(), unitDoc.MaxChildren);
+                    _ = tran.SetAddAsync(RedisKeySchemas.TAG_UNIT_TYPE_HAS_CHILDREN, unit.UnitTypeId.ToString());
+                    _ = tran.SetAddAsync(RedisKeySchemas.TAG_PROPERTY_HAS_CHILDREN, property.Id.ToString());
+                }
+
+                // إضافة فترة تسعير افتراضية تغطي كل الزمن بناءً على السعر الأساسي
+                var priceZKey2 = RedisKeySchemas.GetUnitPricingZKey(unit.Id);
+                var startTicks2 = 0L;
+                var endTicks2 = DateTime.MaxValue.Ticks;
+                var priceElement2 = $"{startTicks2}:{endTicks2}:{unitDoc.BasePrice}:{unitDoc.Currency}";
+                _ = tran.SortedSetAddAsync(priceZKey2, priceElement2, startTicks2);
             }
             
             await Task.CompletedTask; // للحفاظ على التوقيع async

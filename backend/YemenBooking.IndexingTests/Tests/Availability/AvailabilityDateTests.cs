@@ -37,8 +37,8 @@ namespace YemenBooking.IndexingTests.Tests.Availability
             await _indexingService.RebuildIndexAsync();
 
             // البحث
-            var checkIn = DateTime.Now.AddDays(7);
-            var checkOut = DateTime.Now.AddDays(10);
+            var checkIn = DateTime.UtcNow.AddDays(7);
+            var checkOut = DateTime.UtcNow.AddDays(10);
 
             var searchRequest = new PropertySearchRequest
             {
@@ -70,8 +70,8 @@ namespace YemenBooking.IndexingTests.Tests.Availability
             await _indexingService.RebuildIndexAsync();
 
             // البحث - تاريخ الخروج قبل الدخول
-            var checkIn = DateTime.Now.AddDays(10);
-            var checkOut = DateTime.Now.AddDays(7);
+            var checkIn = DateTime.UtcNow.AddDays(10);
+            var checkOut = DateTime.UtcNow.AddDays(7);
 
             var searchRequest = new PropertySearchRequest
             {
@@ -108,8 +108,8 @@ namespace YemenBooking.IndexingTests.Tests.Availability
             // البحث
             var searchRequest = new PropertySearchRequest
             {
-                CheckIn = hasCheckIn ? DateTime.Now.AddDays(7) : null,
-                CheckOut = hasCheckOut ? DateTime.Now.AddDays(10) : null,
+                CheckIn = hasCheckIn ? DateTime.UtcNow.AddDays(7) : null,
+                CheckOut = hasCheckOut ? DateTime.UtcNow.AddDays(10) : null,
                 PageNumber = 1,
                 PageSize = 10
             };
@@ -135,8 +135,8 @@ namespace YemenBooking.IndexingTests.Tests.Availability
             await _indexingService.RebuildIndexAsync();
 
             // البحث بتواريخ ماضية
-            var checkIn = DateTime.Now.AddDays(-10);
-            var checkOut = DateTime.Now.AddDays(-7);
+            var checkIn = DateTime.UtcNow.AddDays(-10);
+            var checkOut = DateTime.UtcNow.AddDays(-7);
 
             var searchRequest = new PropertySearchRequest
             {
@@ -171,7 +171,7 @@ namespace YemenBooking.IndexingTests.Tests.Availability
             await _indexingService.RebuildIndexAsync();
 
             // البحث
-            var checkIn = DateTime.Now.AddDays(7);
+            var checkIn = DateTime.UtcNow.AddDays(7);
             var checkOut = checkIn.AddDays(days);
 
             var searchRequest = new PropertySearchRequest
@@ -207,8 +207,8 @@ namespace YemenBooking.IndexingTests.Tests.Availability
             var unit = _dbContext.Units.First(u => u.PropertyId == property.Id);
 
             // إضافة حجز يغطي الفترة المطلوبة
-            var checkIn = DateTime.Now.AddDays(7);
-            var checkOut = DateTime.Now.AddDays(10);
+            var checkIn = DateTime.UtcNow.AddDays(7);
+            var checkOut = DateTime.UtcNow.AddDays(10);
 
             var booking = new Booking
             {
@@ -272,8 +272,8 @@ namespace YemenBooking.IndexingTests.Tests.Availability
 
             // حجز الوحدة الأولى فقط
             var unit1 = _dbContext.Units.First(u => u.PropertyId == property.Id);
-            var checkIn = DateTime.Now.AddDays(7);
-            var checkOut = DateTime.Now.AddDays(10);
+            var checkIn = DateTime.UtcNow.AddDays(7);
+            var checkOut = DateTime.UtcNow.AddDays(10);
 
             var booking = new Booking
             {
@@ -317,7 +317,7 @@ namespace YemenBooking.IndexingTests.Tests.Availability
         public async Task Test_AvailabilityWithMultipleBookings()
         {
             _output.WriteLine("📅 اختبار الإتاحة مع حجوزات متعددة...");
-
+            
             // الإعداد
             var property = await CreateTestPropertyAsync("فندق مع حجوزات", "صنعاء");
             var unit = _dbContext.Units.First(u => u.PropertyId == property.Id);
@@ -331,11 +331,11 @@ namespace YemenBooking.IndexingTests.Tests.Availability
                     Id = Guid.NewGuid(),
                     UserId = Guid.Parse("10000000-0000-0000-0000-000000000001"),
                     UnitId = unit.Id,
-                    CheckIn = DateTime.Now.AddDays(1),
-                    CheckOut = DateTime.Now.AddDays(5),
+                    CheckIn = DateTime.UtcNow.AddDays(1),
+                    CheckOut = DateTime.UtcNow.AddDays(5),
                     Status = YemenBooking.Core.Enums.BookingStatus.Confirmed,
                     TotalPrice = new Money(400, "YER"),
-                    BookedAt = DateTime.Now
+                    BookedAt = DateTime.UtcNow
                 },
                 // حجز من 10-15
                 new Booking
@@ -343,11 +343,11 @@ namespace YemenBooking.IndexingTests.Tests.Availability
                     Id = Guid.NewGuid(),
                     UserId = Guid.Parse("10000000-0000-0000-0000-000000000001"),
                     UnitId = unit.Id,
-                    CheckIn = DateTime.Now.AddDays(10),
-                    CheckOut = DateTime.Now.AddDays(15),
+                    CheckIn = DateTime.UtcNow.AddDays(10),
+                    CheckOut = DateTime.UtcNow.AddDays(15),
                     Status = YemenBooking.Core.Enums.BookingStatus.Confirmed,
                     TotalPrice = new Money(500, "YER"),
-                    BookedAt = DateTime.Now
+                    BookedAt = DateTime.UtcNow
                 }
             };
 
@@ -358,8 +358,8 @@ namespace YemenBooking.IndexingTests.Tests.Availability
             // البحث في فترة متاحة (6-9)
             var availableRequest = new PropertySearchRequest
             {
-                CheckIn = DateTime.Now.AddDays(6),
-                CheckOut = DateTime.Now.AddDays(9),
+                CheckIn = DateTime.UtcNow.AddDays(6),
+                CheckOut = DateTime.UtcNow.AddDays(9),
                 PageNumber = 1,
                 PageSize = 10
             };
@@ -369,8 +369,8 @@ namespace YemenBooking.IndexingTests.Tests.Availability
             // البحث في فترة محجوزة (2-4)
             var bookedRequest = new PropertySearchRequest
             {
-                CheckIn = DateTime.Now.AddDays(2),
-                CheckOut = DateTime.Now.AddDays(4),
+                CheckIn = DateTime.UtcNow.AddDays(2),
+                CheckOut = DateTime.UtcNow.AddDays(4),
                 PageNumber = 1,
                 PageSize = 10
             };
@@ -412,8 +412,8 @@ namespace YemenBooking.IndexingTests.Tests.Availability
             // البحث
             var searchRequest = new PropertySearchRequest
             {
-                CheckIn = DateTime.Now.AddDays(7),
-                CheckOut = DateTime.Now.AddDays(10),
+                CheckIn = DateTime.UtcNow.AddDays(7),
+                CheckOut = DateTime.UtcNow.AddDays(10),
                 PageNumber = 1,
                 PageSize = 10
             };
@@ -448,8 +448,8 @@ namespace YemenBooking.IndexingTests.Tests.Availability
             // البحث
             var searchRequest = new PropertySearchRequest
             {
-                CheckIn = DateTime.Now.AddDays(7),
-                CheckOut = DateTime.Now.AddDays(10),
+                CheckIn = DateTime.UtcNow.AddDays(7),
+                CheckOut = DateTime.UtcNow.AddDays(10),
                 PageNumber = 1,
                 PageSize = 10
             };
@@ -487,8 +487,8 @@ namespace YemenBooking.IndexingTests.Tests.Availability
                 {
                     Id = Guid.NewGuid(),
                     UnitId = unit.Id,
-                    StartDate = DateTime.Now.AddDays(1),
-                    EndDate = DateTime.Now.AddDays(10),
+                    StartDate = DateTime.UtcNow.AddDays(1),
+                    EndDate = DateTime.UtcNow.AddDays(10),
                     Status = "available",
                     CreatedAt = DateTime.UtcNow
                 },
@@ -497,8 +497,8 @@ namespace YemenBooking.IndexingTests.Tests.Availability
                 {
                     Id = Guid.NewGuid(),
                     UnitId = unit.Id,
-                    StartDate = DateTime.Now.AddDays(11),
-                    EndDate = DateTime.Now.AddDays(20),
+                    StartDate = DateTime.UtcNow.AddDays(11),
+                    EndDate = DateTime.UtcNow.AddDays(20),
                     Status = "blocked",
                     CreatedAt = DateTime.UtcNow
                 }
@@ -511,8 +511,8 @@ namespace YemenBooking.IndexingTests.Tests.Availability
             // البحث في فترة متاحة
             var availableRequest = new PropertySearchRequest
             {
-                CheckIn = DateTime.Now.AddDays(5),
-                CheckOut = DateTime.Now.AddDays(8),
+                CheckIn = DateTime.UtcNow.AddDays(5),
+                CheckOut = DateTime.UtcNow.AddDays(8),
                 PageNumber = 1,
                 PageSize = 10
             };
@@ -522,8 +522,8 @@ namespace YemenBooking.IndexingTests.Tests.Availability
             // البحث في فترة محجوبة
             var blockedRequest = new PropertySearchRequest
             {
-                CheckIn = DateTime.Now.AddDays(12),
-                CheckOut = DateTime.Now.AddDays(15),
+                CheckIn = DateTime.UtcNow.AddDays(12),
+                CheckOut = DateTime.UtcNow.AddDays(15),
                 PageNumber = 1,
                 PageSize = 10
             };
@@ -552,7 +552,7 @@ namespace YemenBooking.IndexingTests.Tests.Availability
             var property = await CreateTestPropertyAsync("فندق نهاية الأسبوع", "صنعاء");
             
             // البحث - إيجاد أول جمعة وسبت قادمين
-            var today = DateTime.Now;
+            var today = DateTime.UtcNow;
             var friday = today.AddDays((5 - (int)today.DayOfWeek + 7) % 7);
             if (friday <= today) friday = friday.AddDays(7);
             var sunday = friday.AddDays(2);

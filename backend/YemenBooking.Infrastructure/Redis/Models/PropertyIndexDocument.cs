@@ -203,6 +203,18 @@ namespace YemenBooking.Infrastructure.Redis.Models
         [Key(252)]
         public List<string> UnitTypeNames { get; set; } = new();
         
+        /// <summary>
+        /// الحد الأقصى لعدد البالغين عبر وحدات العقار
+        /// </summary>
+        [Key(253)]
+        public int MaxAdults { get; set; }
+        
+        /// <summary>
+        /// الحد الأقصى لعدد الأطفال عبر وحدات العقار
+        /// </summary>
+        [Key(254)]
+        public int MaxChildren { get; set; }
+        
         #endregion
 
         #region المرافق والخدمات
@@ -394,6 +406,8 @@ namespace YemenBooking.Infrastructure.Redis.Models
                 new("max_capacity", MaxCapacity),
                 new("units_count", TotalUnits),
                 new("available_units", AvailableUnitsCount),
+                new("max_adults", MaxAdults),
+                new("max_children", MaxChildren),
                 
                 // بيانات الحالة
                 new("is_active", IsActive ? "1" : "0"),
@@ -476,6 +490,8 @@ namespace YemenBooking.Infrastructure.Redis.Models
                 MaxCapacity = int.Parse(dict.GetValueOrDefault("max_capacity", "0")),
                 TotalUnits = int.Parse(dict.GetValueOrDefault("units_count", "0")),
                 AvailableUnitsCount = int.Parse(dict.GetValueOrDefault("available_units", "0")),
+                MaxAdults = int.Parse(dict.GetValueOrDefault("max_adults", "0")),
+                MaxChildren = int.Parse(dict.GetValueOrDefault("max_children", "0")),
                 
                 // بيانات الحالة
                 IsActive = dict.GetValueOrDefault("is_active") == "1",

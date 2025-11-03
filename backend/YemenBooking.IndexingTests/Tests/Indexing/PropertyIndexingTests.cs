@@ -254,20 +254,21 @@ namespace YemenBooking.IndexingTests.Tests.Indexing
         {
             _output.WriteLine("🔍 اختبار حذف عقار مفهرس...");
 
-            // الإعداد
-            var property = await CreateTestPropertyAsync(name: "عقار للحذف");
+            // الإعداد - استخدام اسم فريد للعقار
+            var uniqueName = $"عقار_حذف_{Guid.NewGuid():N}";
+            var property = await CreateTestPropertyAsync(name: uniqueName);
             await _indexingService.OnPropertyCreatedAsync(property.Id);
 
             // التحقق من وجود العقار
             var searchBeforeDelete = new PropertySearchRequest
             {
-                SearchText = "عقار للحذف",
+                SearchText = uniqueName,
                 PageNumber = 1,
                 PageSize = 10
             };
 
             var resultBefore = await _indexingService.SearchAsync(searchBeforeDelete);
-            Assert.Contains(resultBefore.Properties, p => p.Name == "عقار للحذف");
+            Assert.Contains(resultBefore.Properties, p => p.Id == property.Id.ToString());
 
             // الحذف
             await _indexingService.OnPropertyDeletedAsync(property.Id);
@@ -513,16 +514,21 @@ namespace YemenBooking.IndexingTests.Tests.Indexing
             _output.WriteLine("🔍 اختبار إعادة البناء مع بيانات تالفة...");
 
             // الإعداد - إنشاء عقار بدون owner
+            // ✅ إنشاء عقار بجميع الحقول المطلوبة حتى لو كانت بيانات "تالفة"
             var property = new Property
             {
                 Id = Guid.NewGuid(),
                 Name = "عقار تالف",
                 City = "صنعاء",
+                Currency = "YER",  // ✅ حقل مطلوب
+                Address = "عنوان غير صحيح",  // ✅ حقل مطلوب
+                Description = "وصف تالف",  // ✅ حقل مطلوب
                 TypeId = Guid.Parse("30000000-0000-0000-0000-000000000003"),
-                OwnerId = Guid.Empty, // معرف غير صحيح
+                OwnerId = Guid.Empty, // معرف غير صحيح - هذا هو "التلف" المقصود
                 IsActive = true,
                 IsApproved = true,
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
             };
 
             _dbContext.Properties.Add(property);

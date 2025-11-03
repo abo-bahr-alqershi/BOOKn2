@@ -33,10 +33,12 @@ namespace YemenBooking.IndexingTests.Tests.Integration
             _output.WriteLine("🔄 اختبار سيناريو كامل لدورة حياة العقار...");
 
             // 1. إنشاء عقار جديد
+            var uniqueId = Guid.NewGuid();
+            var uniqueName = $"فندق_السيناريو_{uniqueId:N}";
             var property = new Property
             {
-                Id = Guid.NewGuid(),
-                Name = "فندق السيناريو الكامل",
+                Id = uniqueId,
+                Name = uniqueName,
                 Description = "وصف فندق السيناريو الكامل للاختبار",
                 City = "صنعاء",
                 Address = "شارع الستين",
@@ -59,13 +61,13 @@ namespace YemenBooking.IndexingTests.Tests.Integration
 
             var searchRequest = new PropertySearchRequest
             {
-                SearchText = "السيناريو الكامل",
+                SearchText = uniqueName,
                 PageNumber = 1,
                 PageSize = 10
             };
 
             var resultBeforeApproval = await _indexingService.SearchAsync(searchRequest);
-            Assert.DoesNotContain(resultBeforeApproval.Properties, p => p.Name == property.Name);
+            Assert.DoesNotContain(resultBeforeApproval.Properties, p => p.Id == property.Id.ToString());
             _output.WriteLine("✅ العقار غير المعتمد لا يظهر في البحث");
 
             // 3. اعتماد وتنشيط العقار
@@ -74,9 +76,12 @@ namespace YemenBooking.IndexingTests.Tests.Integration
             _dbContext.Properties.Update(property);
             await _dbContext.SaveChangesAsync();
             await _indexingService.OnPropertyUpdatedAsync(property.Id);
+            
+            // تأخير صغير لضمان تحديث الفهرس
+            await Task.Delay(100);
 
             var resultAfterApproval = await _indexingService.SearchAsync(searchRequest);
-            Assert.Contains(resultAfterApproval.Properties, p => p.Name == property.Name);
+            Assert.Contains(resultAfterApproval.Properties, p => p.Id == property.Id.ToString());
             _output.WriteLine("✅ العقار المعتمد يظهر في البحث");
 
             // 4. إضافة وحدات
@@ -91,7 +96,8 @@ namespace YemenBooking.IndexingTests.Tests.Integration
                     MaxCapacity = 1,
                     IsAvailable = true,
                     IsActive = true,
-                    BasePrice = new Money(100, "YER")
+                    BasePrice = new Money(100, "YER"),
+                    CustomFeatures = "{}"
                 },
                 new Unit
                 {
@@ -102,7 +108,8 @@ namespace YemenBooking.IndexingTests.Tests.Integration
                     MaxCapacity = 2,
                     IsAvailable = true,
                     IsActive = true,
-                    BasePrice = new Money(200, "YER")
+                    BasePrice = new Money(200, "YER"),
+                    CustomFeatures = "{}"
                 }
             };
 
@@ -133,11 +140,11 @@ namespace YemenBooking.IndexingTests.Tests.Integration
                 Id = Guid.NewGuid(),
                 UserId = Guid.Parse("10000000-0000-0000-0000-000000000001"),
                 UnitId = units[0].Id,
-                CheckIn = DateTime.Now.AddDays(10),
-                CheckOut = DateTime.Now.AddDays(12),
+                CheckIn = DateTime.UtcNow.AddDays(10),
+                CheckOut = DateTime.UtcNow.AddDays(12),
                 Status = BookingStatus.Confirmed,
                 TotalPrice = new Money(200, "YER"),
-                BookedAt = DateTime.Now,
+                BookedAt = DateTime.UtcNow,
                 GuestsCount = 2
             };
 
@@ -230,14 +237,30 @@ namespace YemenBooking.IndexingTests.Tests.Integration
             // إنشاء عقار بمرافق
             var property = await CreateTestPropertyAsync("فندق بمرافق", "صنعاء");
             
-            // ربط المرافق بالعقار
+            // إنشاء PropertyTypeAmenity أولاً لتجنب انتهاك FK
+            var propertyTypeAmenities = new List<PropertyTypeAmenity>();
             foreach (var amenity in amenities.Take(2))
+            {
+                var pta = new PropertyTypeAmenity
+                {
+                    Id = Guid.NewGuid(),
+                    PropertyTypeId = property.TypeId,
+                    AmenityId = amenity.Id,
+                    IsDefault = true
+                };
+                _dbContext.Set<PropertyTypeAmenity>().Add(pta);
+                propertyTypeAmenities.Add(pta);
+            }
+            await _dbContext.SaveChangesAsync();
+            
+            // ربط المرافق بالعقار باستخدام PropertyTypeAmenity.Id
+            foreach (var pta in propertyTypeAmenities)
             {
                 var propertyAmenity = new PropertyAmenity
                 {
                     Id = Guid.NewGuid(),
                     PropertyId = property.Id,
-                    PtaId = amenity.Id,  // assuming amenity.Id maps to PTA
+                    PtaId = pta.Id,  // استخدام PropertyTypeAmenity.Id
                     IsAvailable = true,
                     ExtraCost = new Money(0, "YER")
                 };
@@ -286,8 +309,8 @@ namespace YemenBooking.IndexingTests.Tests.Integration
                     UnitId = unit.Id,
                     PriceType = "Regular",
                     PriceAmount = 100,
-                    StartDate = DateTime.Now,
-                    EndDate = DateTime.Now.AddMonths(1),
+                    StartDate = DateTime.UtcNow,
+                    EndDate = DateTime.UtcNow.AddMonths(1),
                     PricingTier = "Standard",
                     Currency = "YER",
                     Description = "سعر عادي"
@@ -298,8 +321,8 @@ namespace YemenBooking.IndexingTests.Tests.Integration
                     UnitId = unit.Id,
                     PriceType = "Weekend",
                     PriceAmount = 150,
-                    StartDate = DateTime.Now,
-                    EndDate = DateTime.Now.AddMonths(1),
+                    StartDate = DateTime.UtcNow,
+                    EndDate = DateTime.UtcNow.AddMonths(1),
                     PricingTier = "Premium",
                     Currency = "YER",
                     Description = "سعر نهاية الأسبوع"
@@ -310,8 +333,8 @@ namespace YemenBooking.IndexingTests.Tests.Integration
                     UnitId = unit.Id,
                     PriceType = "Seasonal",
                     PriceAmount = 200,
-                    StartDate = DateTime.Now.AddDays(30),
-                    EndDate = DateTime.Now.AddDays(60),
+                    StartDate = DateTime.UtcNow.AddDays(30),
+                    EndDate = DateTime.UtcNow.AddDays(60),
                     PricingTier = "Peak",
                     Currency = "YER",
                     Description = "سعر الموسم"
@@ -366,14 +389,16 @@ namespace YemenBooking.IndexingTests.Tests.Integration
             // الإعداد - إنشاء حقول ديناميكية لنوع العقار
             var propertyTypeId = Guid.Parse("30000000-0000-0000-0000-000000000003");
             
-            // إنشاء نوع وحدة اختباري
+            // إنشاء نوع وحدة اختباري مع جميع الحقول المطلوبة
             var unitType = new UnitType
             {
                 Id = Guid.NewGuid(),
                 Name = "غرفة فندقية",
                 PropertyTypeId = propertyTypeId,
                 MaxCapacity = 4,
-                IsActive = true
+                IsActive = true,
+                Description = "غرفة فندقية مريحة",
+                DefaultPricingRules = "[]"
             };
             _dbContext.Set<UnitType>().Add(unitType);
             await _dbContext.SaveChangesAsync();
@@ -386,7 +411,10 @@ namespace YemenBooking.IndexingTests.Tests.Integration
                     UnitTypeId = unitType.Id,
                     FieldName = "floor_count",
                     DisplayName = "عدد الطوابق",
+                    Description = "عدد الطوابق في المبنى",
                     FieldTypeId = "number",
+                    FieldOptions = "[]",
+                    ValidationRules = "{\"min\": 1, \"max\": 50}",
                     IsRequired = false,
                     IsSearchable = true,
                     IsPublic = true,
@@ -399,7 +427,10 @@ namespace YemenBooking.IndexingTests.Tests.Integration
                     UnitTypeId = unitType.Id,
                     FieldName = "check_in_time",
                     DisplayName = "وقت تسجيل الدخول",
+                    Description = "الوقت المحدد لتسجيل الدخول",
                     FieldTypeId = "time",
+                    FieldOptions = "[]",
+                    ValidationRules = "{}",
                     IsRequired = true,
                     IsSearchable = true,
                     IsPublic = true,
@@ -412,8 +443,10 @@ namespace YemenBooking.IndexingTests.Tests.Integration
                     UnitTypeId = unitType.Id,
                     FieldName = "pet_policy",
                     DisplayName = "سياسة الحيوانات الأليفة",
+                    Description = "سياسة قبول الحيوانات الأليفة",
                     FieldTypeId = "select",
                     FieldOptions = "[\"allowed\",\"not_allowed\",\"with_fee\"]",
+                    ValidationRules = "{}",
                     IsRequired = false,
                     IsSearchable = true,
                     IsPublic = true,
@@ -439,7 +472,8 @@ namespace YemenBooking.IndexingTests.Tests.Integration
                 UnitTypeId = unitType.Id,
                 MaxCapacity = 4,
                 BasePrice = new Money(100, "YER"),
-                IsActive = true
+                IsActive = true,
+                CustomFeatures = "{}"
             };
             var unit2 = new Unit
             {
@@ -449,7 +483,8 @@ namespace YemenBooking.IndexingTests.Tests.Integration
                 UnitTypeId = unitType.Id,
                 MaxCapacity = 4,
                 BasePrice = new Money(100, "YER"),
-                IsActive = true
+                IsActive = true,
+                CustomFeatures = "{}"
             };
             var unit3 = new Unit
             {
@@ -459,7 +494,8 @@ namespace YemenBooking.IndexingTests.Tests.Integration
                 UnitTypeId = unitType.Id,
                 MaxCapacity = 4,
                 BasePrice = new Money(100, "YER"),
-                IsActive = true
+                IsActive = true,
+                CustomFeatures = "{}"
             };
             _dbContext.Units.AddRange(unit1, unit2, unit3);
             await _dbContext.SaveChangesAsync();
@@ -634,12 +670,18 @@ namespace YemenBooking.IndexingTests.Tests.Integration
             var incompleteProperty = new Property
             {
                 Id = Guid.NewGuid(),
-                Name = null, // اسم فارغ
-                City = "", // مدينة فارغة
-                TypeId = Guid.Empty, // نوع غير صحيح
+                // اجعل الحقول المطلوبة صالحة لتجنب فشل EF InMemory، بينما تبقى باقي القيم غير منطقية لاختبار المرونة
+                Name = "عقار ناقص",
+                Description = string.Empty,
+                City = string.Empty,
+                Address = string.Empty,
+                Currency = "YER",
+                TypeId = Guid.Empty, // نوع غير صحيح (يظل اختبار حالة حافة)
                 OwnerId = Guid.Empty,
                 IsActive = true,
-                IsApproved = true
+                IsApproved = true,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
             };
 
             _dbContext.Properties.Add(incompleteProperty);

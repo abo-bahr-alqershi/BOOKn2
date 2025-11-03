@@ -34,6 +34,8 @@ namespace YemenBooking.IndexingTests.Tests
         protected readonly ILogger<TestBase> _logger;
         protected readonly ITestOutputHelper _output;
         protected readonly Random _random = new Random();
+        private static bool _baseDataInitialized = false;
+        private static readonly SemaphoreSlim _initLock = new SemaphoreSlim(1, 1);
 
         /// <summary>
         /// منشئ الاختبار الأساسي
@@ -47,8 +49,29 @@ namespace YemenBooking.IndexingTests.Tests
             _indexingService = _scope.ServiceProvider.GetRequiredService<IIndexingService>();
             _logger = _scope.ServiceProvider.GetRequiredService<ILogger<TestBase>>();
             
-            // التأكد من تهيئة البيانات الأساسية باستخدام TestDataHelper
-            Task.Run(async () => await TestDataHelper.EnsureAllBaseDataAsync(_dbContext)).GetAwaiter().GetResult();
+            // ✅ التهيئة الآمنة بدون حلقات - يتم مرة واحدة فقط
+            EnsureBaseDataInitializedAsync().GetAwaiter().GetResult();
+        }
+        
+        /// <summary>
+        /// التأكد من تهيئة البيانات الأساسية مرة واحدة فقط
+        /// </summary>
+        private async Task EnsureBaseDataInitializedAsync()
+        {
+            if (_baseDataInitialized) return;
+            
+            await _initLock.WaitAsync();
+            try
+            {
+                if (_baseDataInitialized) return;
+                
+                await TestDataHelper.EnsureAllBaseDataAsync(_dbContext);
+                _baseDataInitialized = true;
+            }
+            finally
+            {
+                _initLock.Release();
+            }
         }
 
         /// <summary>
@@ -72,30 +95,76 @@ namespace YemenBooking.IndexingTests.Tests
             property.IsActive = isActive;
             property.IsApproved = isApproved;
 
+            // ضمان وجود المدينة لتجنب انتهاك FK Cities.City
+            var cityExists = await _dbContext.Cities
+                .AsNoTracking()  // ✅ عدم تتبع الاستعلام
+                .AnyAsync(c => c.Name == property.City);
+                
+            if (!cityExists)
+            {
+                var newCity = new YemenBooking.Core.Entities.City { Name = property.City, Country = "اليمن" };
+                _dbContext.Cities.Add(newCity);
+                await _dbContext.SaveChangesAsync();
+            }
+
             _dbContext.Properties.Add(property);
             await _dbContext.SaveChangesAsync();
 
-            // إنشاء وحدات للعقار
-            await CreateTestUnitsForPropertyAsync(property.Id, _random.Next(1, 5));
+            // إنشاء وحدات للعقار - عدد محدود (1-2 فقط) لتجنب التراكم
+            await CreateTestUnitsForPropertyAsync(property.Id, _random.Next(1, 3));
 
+            // ✅ العقار جاهز للاستخدام مباشرة - متتبع في DbContext
             return property;
         }
 
         /// <summary>
         /// إنشاء وحدات اختبارية للعقار
         /// </summary>
-        protected async Task CreateTestUnitsForPropertyAsync(Guid propertyId, int count = 3)
+        protected async Task CreateTestUnitsForPropertyAsync(Guid propertyId, int count = 2)
         {
+            // ✅ حد أقصى 3 وحدات لتجنب التراكم الزائد
+            count = Math.Min(count, 3);
             
+            // اختر نوع وحدة موجود لضمان سلامة FK
+            var existingUnitTypeId = await _dbContext.UnitTypes
+                .AsNoTracking()  // ✅ عدم تتبع الاستعلام
+                .Select(ut => ut.Id)
+                .FirstOrDefaultAsync();
+                
+            if (existingUnitTypeId == Guid.Empty)
+            {
+                // ضمان تهيئة الأنواع الأساسية في حال لم تكن موجودة لأي سبب
+                await TestDataHelper.EnsureAllBaseDataAsync(_dbContext);
+                existingUnitTypeId = await _dbContext.UnitTypes
+                    .AsNoTracking()
+                    .Select(ut => ut.Id)
+                    .FirstOrDefaultAsync();
+            }
+
+            var existingCount = await _dbContext.Units
+                .AsNoTracking()  // ✅ عدم تتبع الاستعلام
+                .CountAsync(u => u.PropertyId == propertyId);
+                
+            var units = new List<Unit>();
             for (int i = 0; i < count; i++)
             {
                 // استخدام TestDataHelper لإنشاء وحدة صحيحة
-                var unit = TestDataHelper.CreateValidUnit(propertyId, $"وحدة {i + 1}");
+                var uniqueName = $"وحدة {existingCount + i + 1}-{propertyId.ToString().Substring(0, 8)}";
+                var unit = TestDataHelper.CreateValidUnit(propertyId, uniqueName);
+                if (existingUnitTypeId != Guid.Empty)
+                {
+                    unit.UnitTypeId = existingUnitTypeId;
+                }
 
-                _dbContext.Units.Add(unit);
+                units.Add(unit);
             }
 
-            await _dbContext.SaveChangesAsync();
+            // ✅ إضافة دفعة واحدة بدلاً من حلقة
+            if (units.Any())
+            {
+                _dbContext.Units.AddRange(units);
+                await _dbContext.SaveChangesAsync();
+            }
         }
 
         /// <summary>
@@ -109,6 +178,7 @@ namespace YemenBooking.IndexingTests.Tests
             var cities = new[] { "صنعاء", "عدن", "تعز", "الحديدة", "إب" };
             var types = GetAllPropertyTypes();
 
+            int propertyCount = 0;
             foreach (var city in cities)
             {
                 foreach (var type in types)
@@ -122,9 +192,19 @@ namespace YemenBooking.IndexingTests.Tests
                         isApproved: true
                     );
                     properties.Add(property);
+                    
+                    propertyCount++;
+                    // ✅ تنظيف ChangeTracker كل 5 عقارات لتجنب التراكم
+                    if (propertyCount % 5 == 0)
+                    {
+                        _dbContext.ChangeTracker.Clear();
+                    }
                 }
             }
 
+            // ✅ تنظيف نهائي
+            _dbContext.ChangeTracker.Clear();
+            
             return properties;
         }
 

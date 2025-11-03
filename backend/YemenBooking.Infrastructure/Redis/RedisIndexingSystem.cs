@@ -27,7 +27,7 @@ namespace YemenBooking.Infrastructure.Redis
     /// النظام الرئيسي للفهرسة والبحث في Redis
     /// نقطة الدخول الموحدة لجميع عمليات الفهرسة والبحث
     /// </summary>
-    public class RedisIndexingSystem : IIndexingService
+    public class RedisIndexingSystem : IIndexingService, IDisposable
     {
         private readonly SmartIndexingLayer _indexingLayer;
         private readonly OptimizedSearchEngine _searchEngine;
@@ -42,6 +42,7 @@ namespace YemenBooking.Infrastructure.Redis
         private bool _isInitialized = false;
         private readonly SemaphoreSlim _initializationLock = new SemaphoreSlim(1, 1);
         private Task<bool> _initializationTask = null;
+        private readonly CancellationTokenSource _monitoringCts = new();
 
         /// <summary>
         /// مُنشئ النظام الرئيسي للفهرسة
@@ -72,6 +73,19 @@ namespace YemenBooking.Infrastructure.Redis
             // لا نقوم بالتهيئة في المُنشئ لتجنب التأخير
             // سيتم التهيئة بشكل كسول عند أول استخدام
             _logger.LogInformation("✅ RedisIndexingSystem created (lazy initialization)");
+        }
+
+        public void Dispose()
+        {
+            try
+            {
+                _monitoringCts.Cancel();
+            }
+            catch { }
+            finally
+            {
+                _monitoringCts.Dispose();
+            }
         }
 
         #region التهيئة
@@ -242,10 +256,13 @@ namespace YemenBooking.Infrastructure.Redis
                     "name", "TEXT", "WEIGHT", "5.0", "SORTABLE",
                     "name_lower", "TEXT",
                     "description", "TEXT", "WEIGHT", "2.0",
+                    "dynamic_fields", "TEXT",
                     "city", "TAG", "SORTABLE",
                     "property_type", "TAG", "SORTABLE",
                     "min_price", "NUMERIC", "SORTABLE",
                     "max_price", "NUMERIC", "SORTABLE",
+                    "max_adults", "NUMERIC", "SORTABLE",
+                    "max_children", "NUMERIC", "SORTABLE",
                     "average_rating", "NUMERIC", "SORTABLE",
                     "reviews_count", "NUMERIC", "SORTABLE",
                     "booking_count", "NUMERIC", "SORTABLE",
@@ -276,6 +293,14 @@ namespace YemenBooking.Infrastructure.Redis
         {
             _logger.LogInformation("📊 تهيئة نظام المراقبة");
 
+            // تعطيل المراقبة بشكل افتراضي ما لم تُفعل صراحة عبر الإعدادات
+            var enableMonitoring = _configuration.GetValue<bool>("Monitoring:Enabled", false);
+            if (!enableMonitoring)
+            {
+                _logger.LogInformation("⏸️ تم تعطيل نظام المراقبة عبر الإعدادات");
+                return;
+            }
+
             // إعادة تعيين الإحصائيات القديمة (اختياري)
             if (_configuration.GetValue<bool>("Redis:ResetStatsOnStartup", false))
             {
@@ -283,13 +308,15 @@ namespace YemenBooking.Infrastructure.Redis
             }
 
             // بدء مراقبة الصحة
+            var ct = _monitoringCts.Token;
             _ = Task.Run(async () =>
             {
-                while (true)
+                while (!ct.IsCancellationRequested)
                 {
                     try
                     {
-                        await Task.Delay(TimeSpan.FromMinutes(5));
+                        await Task.Delay(TimeSpan.FromMinutes(5), ct);
+                        if (ct.IsCancellationRequested) break;
                         var health = await _errorHandler.CheckSystemHealthAsync();
                         
                         if (health.Status != HealthStatus.Healthy)
@@ -297,12 +324,16 @@ namespace YemenBooking.Infrastructure.Redis
                             _logger.LogWarning("⚠️ حالة النظام: {Status}", health.Status);
                         }
                     }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
                     catch (Exception ex)
                     {
                         _logger.LogError(ex, "خطأ في مراقبة الصحة");
                     }
                 }
-            });
+            }, ct);
         }
 
         /// <summary>
@@ -522,7 +553,21 @@ namespace YemenBooking.Infrastructure.Redis
                     var unit = await GetUnitByIdAsync(unitId, cancellationToken);
                     if (unit != null)
                     {
-                        return await _indexingLayer.IndexUnitAsync(unit, cancellationToken);
+                        var indexed = await _indexingLayer.IndexUnitAsync(unit, cancellationToken);
+                        try
+                        {
+                            // تحديث فهرس العقار ليعكس التغييرات على مستوى الوحدات (units_count, max_capacity, الأسعار)
+                            var prop = await GetPropertyByIdAsync(propertyId, cancellationToken);
+                            if (prop != null)
+                            {
+                                await _indexingLayer.UpdatePropertyIndexAsync(prop, cancellationToken);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogDebug(ex, "فشل تحديث فهرس العقار بعد إضافة وحدة {UnitId}", unitId);
+                        }
+                        return indexed;
                     }
                     return false;
                 },
@@ -540,7 +585,36 @@ namespace YemenBooking.Infrastructure.Redis
         /// </summary>
         public async Task OnUnitUpdatedAsync(Guid unitId, Guid propertyId, CancellationToken cancellationToken = default)
         {
-            await OnUnitCreatedAsync(unitId, propertyId, cancellationToken);
+            await _errorHandler.ExecuteWithErrorHandlingAsync(
+                async () =>
+                {
+                    var unit = await GetUnitByIdAsync(unitId, cancellationToken);
+                    if (unit != null)
+                    {
+                        var ok = await _indexingLayer.IndexUnitAsync(unit, cancellationToken);
+                        try
+                        {
+                            var prop = await GetPropertyByIdAsync(propertyId, cancellationToken);
+                            if (prop != null)
+                            {
+                                await _indexingLayer.UpdatePropertyIndexAsync(prop, cancellationToken);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogDebug(ex, "فشل تحديث فهرس العقار بعد تحديث وحدة {UnitId}", unitId);
+                        }
+                        return ok;
+                    }
+                    return false;
+                },
+                $"UpdateUnit_{unitId}",
+                new Dictionary<string, object>
+                {
+                    ["UnitId"] = unitId,
+                    ["PropertyId"] = propertyId
+                }
+            );
         }
 
         /// <summary>
@@ -554,6 +628,10 @@ namespace YemenBooking.Infrastructure.Redis
                     var db = _redisManager.GetDatabase();
                     var tran = db.CreateTransaction();
 
+                    // قراءة نوع الوحدة قبل الحذف لإزالته من فهرس النوع
+                    var unitKeyForRead = RedisKeySchemas.GetUnitKey(unitId);
+                    var unitTypeIdValue = await db.HashGetAsync(unitKeyForRead, "unit_type_id");
+
                     // حذف من مجموعة الوحدات
                     _ = tran.SetRemoveAsync(
                         RedisKeySchemas.GetPropertyUnitsKey(propertyId),
@@ -563,6 +641,20 @@ namespace YemenBooking.Infrastructure.Redis
                     _ = tran.KeyDeleteAsync(RedisKeySchemas.GetUnitKey(unitId));
                     _ = tran.KeyDeleteAsync(RedisKeySchemas.GetUnitAvailabilityKey(unitId));
                     _ = tran.KeyDeleteAsync(RedisKeySchemas.GetUnitPricingKey(unitId));
+                    _ = tran.KeyDeleteAsync(RedisKeySchemas.GetUnitPricingZKey(unitId));
+
+                    // إزالة من فهارس وجود وعدد البالغين/الأطفال
+                    _ = tran.SetRemoveAsync(RedisKeySchemas.TAG_UNIT_HAS_ADULTS, unitId.ToString());
+                    _ = tran.SetRemoveAsync(RedisKeySchemas.TAG_UNIT_HAS_CHILDREN, unitId.ToString());
+                    _ = tran.SortedSetRemoveAsync(RedisKeySchemas.INDEX_UNIT_MAX_ADULTS, unitId.ToString());
+                    _ = tran.SortedSetRemoveAsync(RedisKeySchemas.INDEX_UNIT_MAX_CHILDREN, unitId.ToString());
+
+                    // إزالة من فهرس نوع الوحدة إذا توفر المعرف
+                    if (!unitTypeIdValue.IsNullOrEmpty)
+                    {
+                        var unitTypeKey = string.Format(RedisKeySchemas.TAG_UNIT_TYPE, unitTypeIdValue.ToString());
+                        _ = tran.SetRemoveAsync(unitTypeKey, unitId.ToString());
+                    }
 
                     return await tran.ExecuteAsync();
                 },
@@ -573,6 +665,20 @@ namespace YemenBooking.Infrastructure.Redis
                     ["PropertyId"] = propertyId
                 }
             );
+
+            // تحديث فهرس العقار بعد الحذف لضمان دقة units_count و max_capacity
+            try
+            {
+                var prop = await GetPropertyByIdAsync(propertyId, cancellationToken);
+                if (prop != null)
+                {
+                    await _indexingLayer.UpdatePropertyIndexAsync(prop, cancellationToken);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "فشل تحديث فهرس العقار بعد حذف وحدة {UnitId}", unitId);
+            }
         }
 
         #endregion
@@ -831,6 +937,18 @@ namespace YemenBooking.Infrastructure.Redis
         /// </summary>
         private async Task ClearAllIndexesAsync()
         {
+            // محاولة مسح قاعدة البيانات بالكامل أولاً (أسرع بكثير في بيئة الاختبار)
+            try
+            {
+                await _redisManager.FlushDatabaseAsync();
+                _logger.LogInformation("🧹 تم مسح قاعدة بيانات Redis بالكامل عبر FLUSHDB");
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "تعذر استخدام FLUSHDB، سيتم استخدام حذف الأنماط كبديل");
+            }
+
             var server = _redisManager.GetServer();
             var patterns = new[]
             {
@@ -917,12 +1035,36 @@ namespace YemenBooking.Infrastructure.Redis
                         if (string.IsNullOrEmpty(fieldValue))
                         {
                             // حذف الحقل
+                            // اجلب القيمة القديمة إن وُجدت لإزالة أثرها من فهرس القيم
+                            var oldValue = await db.HashGetAsync(dynamicFieldsKey, fieldName);
+
                             await db.HashDeleteAsync(dynamicFieldsKey, fieldName);
                             await db.SetRemoveAsync($"property:{propertyId}:dynamic_fields_set", fieldName);
-                            
-                            // حذف من فهرس البحث
+
+                            // حذف من فهرس البحث النصي الخاص بالحقل
                             var searchKey = $"dynamic_field:{fieldName.ToLower()}:{propertyId}";
                             await db.KeyDeleteAsync(searchKey);
+
+                            // إزالة هذا العقار من فهرس القيم للبحث السريع إذا كانت هناك قيمة قديمة
+                            if (!oldValue.IsNullOrEmpty)
+                            {
+                                var oldValueIndexKey = $"dynamic_value:{fieldName.ToLower()}:{oldValue.ToString().ToLower()}";
+                                await db.SetRemoveAsync(oldValueIndexKey, propertyId.ToString());
+                            }
+
+                            // تنظيف أي مفاتيح فهرس لقيم أخرى محتملة لنفس الحقل تحتوي هذا العقار (وقاية من بيانات قديمة)
+                            try
+                            {
+                                var server = _redisManager.GetServer();
+                                foreach (var key in server.Keys(pattern: $"dynamic_value:{fieldName.ToLower()}:*"))
+                                {
+                                    await db.SetRemoveAsync(key, propertyId.ToString());
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogDebug(ex, "فشل تنظيف فهارس dynamic_value للحقل {Field}", fieldName);
+                            }
                         }
                         else
                         {

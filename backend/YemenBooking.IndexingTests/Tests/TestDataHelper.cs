@@ -15,37 +15,51 @@ namespace YemenBooking.IndexingTests.Tests
     public static class TestDataHelper
     {
         private static readonly object _lock = new object();
-        private static bool _initialized = false;
+        private static Task? _initializationTask = null;
 
         /// <summary>
         /// تهيئة جميع البيانات الأساسية المطلوبة
         /// </summary>
         public static async Task EnsureAllBaseDataAsync(YemenBookingDbContext dbContext)
         {
-            bool shouldInitialize = false;
-            
+            Task initTask;
             lock (_lock)
             {
-                if (!_initialized)
+                if (_initializationTask == null)
                 {
-                    shouldInitialize = true;
-                    _initialized = true;
+                    _initializationTask = InitializeAllAsync(dbContext);
                 }
+                initTask = _initializationTask;
             }
+            await initTask;
+        }
 
-            if (!shouldInitialize) return;
-
-            // التأكد من وجود أنواع العقارات
-            await EnsurePropertyTypesAsync(dbContext);
-            
-            // التأكد من وجود أنواع الوحدات
-            await EnsureUnitTypesAsync(dbContext);
-            
-            // التأكد من وجود المستخدمين الاختباريين
+        private static async Task InitializeAllAsync(YemenBookingDbContext dbContext)
+        {
+            // هذه الدوال Idempotent وتتحقق قبل الإضافة
+            // ✅ يتم تنفيذها بالترتيب لتجنب مشاكل Foreign Key
+            await EnsureCitiesAsync(dbContext);
             await EnsureTestUsersAsync(dbContext);
-            
-            // التأكد من وجود المرافق الأساسية
+            await EnsurePropertyTypesAsync(dbContext);
+            await EnsureUnitTypesAsync(dbContext);
             await EnsureAmenitiesAsync(dbContext);
+        }
+
+        /// <summary>
+        /// التأكد من وجود المدن الأساسية المستخدمة في الاختبارات
+        /// </summary>
+        private static async Task EnsureCitiesAsync(YemenBookingDbContext dbContext)
+        {
+            var existing = await dbContext.Cities.Select(c => c.Name).ToListAsync();
+            var needed = new[] { "صنعاء", "عدن", "تعز", "الحديدة", "إب", "ذمار", "المكلا" };
+            var toAdd = needed.Where(n => !existing.Contains(n))
+                .Select(n => new YemenBooking.Core.Entities.City { Name = n, Country = "اليمن" })
+                .ToList();
+            if (toAdd.Any())
+            {
+                dbContext.Cities.AddRange(toAdd);
+                await dbContext.SaveChangesAsync();
+            }
         }
 
         /// <summary>
@@ -64,6 +78,8 @@ namespace YemenBooking.IndexingTests.Tests
                     Id = Guid.Parse("30000000-0000-0000-0000-000000000001"), 
                     Name = "منتجع",
                     Icon = "🏖️",
+                    Description = "منتجع سياحي",
+                    DefaultAmenities = "[]",
                     IsActive = true 
                 },
                 new PropertyType 
@@ -71,6 +87,8 @@ namespace YemenBooking.IndexingTests.Tests
                     Id = Guid.Parse("30000000-0000-0000-0000-000000000002"), 
                     Name = "شقق مفروشة",
                     Icon = "🏢",
+                    Description = "شقق مفروشة",
+                    DefaultAmenities = "[]",
                     IsActive = true 
                 },
                 new PropertyType 
@@ -78,6 +96,8 @@ namespace YemenBooking.IndexingTests.Tests
                     Id = Guid.Parse("30000000-0000-0000-0000-000000000003"), 
                     Name = "فندق",
                     Icon = "🏨",
+                    Description = "فندق",
+                    DefaultAmenities = "[]",
                     IsActive = true 
                 },
                 new PropertyType 
@@ -85,6 +105,8 @@ namespace YemenBooking.IndexingTests.Tests
                     Id = Guid.Parse("30000000-0000-0000-0000-000000000004"), 
                     Name = "فيلا",
                     Icon = "🏡",
+                    Description = "فيلا خاصة",
+                    DefaultAmenities = "[]",
                     IsActive = true 
                 },
                 new PropertyType 
@@ -92,6 +114,8 @@ namespace YemenBooking.IndexingTests.Tests
                     Id = Guid.Parse("30000000-0000-0000-0000-000000000005"), 
                     Name = "شاليه",
                     Icon = "🏠",
+                    Description = "شاليه",
+                    DefaultAmenities = "[]",
                     IsActive = true 
                 }
             };
@@ -134,6 +158,7 @@ namespace YemenBooking.IndexingTests.Tests
                     Description = "غرفة مفردة مريحة",
                     PropertyTypeId = propertyTypeId,
                     MaxCapacity = 1,
+                    DefaultPricingRules = "[]",
                     IsActive = true
                 },
                 new UnitType
@@ -143,6 +168,7 @@ namespace YemenBooking.IndexingTests.Tests
                     Description = "غرفة مزدوجة واسعة",
                     PropertyTypeId = propertyTypeId,
                     MaxCapacity = 2,
+                    DefaultPricingRules = "[]",
                     IsActive = true
                 },
                 new UnitType
@@ -152,6 +178,7 @@ namespace YemenBooking.IndexingTests.Tests
                     Description = "جناح فاخر",
                     PropertyTypeId = propertyTypeId,
                     MaxCapacity = 4,
+                    DefaultPricingRules = "[]",
                     IsActive = true
                 },
                 new UnitType
@@ -161,6 +188,7 @@ namespace YemenBooking.IndexingTests.Tests
                     Description = "شقة كاملة مفروشة",
                     PropertyTypeId = propertyTypeId,
                     MaxCapacity = 6,
+                    DefaultPricingRules = "[]",
                     IsActive = true
                 }
             };

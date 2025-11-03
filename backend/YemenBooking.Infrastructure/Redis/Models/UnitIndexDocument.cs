@@ -159,6 +159,58 @@ namespace YemenBooking.Infrastructure.Redis.Models
                 new HashEntry("updated_at", UpdatedAt.Ticks)
             };
         }
+
+    }
+
+    /// <summary>
+    /// فترة تسعير
+    /// </summary>
+    [MessagePackObject]
+    public class PriceRange
+    {
+        /// <summary>
+        /// تاريخ البداية
+        /// </summary>
+        [Key(0)]
+        public DateTime StartDate { get; set; }
+
+        /// <summary>
+        /// تاريخ النهاية
+        /// </summary>
+        [Key(1)]
+        public DateTime EndDate { get; set; }
+
+        /// <summary>
+        /// السعر لليلة
+        /// </summary>
+        [Key(2)]
+        public decimal PricePerNight { get; set; }
+
+        /// <summary>
+        /// العملة
+        /// </summary>
+        [Key(3)]
+        public string Currency { get; set; } = "YER";
+
+        /// <summary>
+        /// تحويل إلى تنسيق Redis: startTicks:endTicks:price:currency
+        /// </summary>
+        public string ToRedisFormat() => $"{StartDate.Ticks}:{EndDate.Ticks}:{PricePerNight}:{Currency}";
+
+        /// <summary>
+        /// إنشاء من تنسيق Redis
+        /// </summary>
+        public static PriceRange FromRedisFormat(string value)
+        {
+            var parts = value.Split(':');
+            return new PriceRange
+            {
+                StartDate = new DateTime(long.Parse(parts[0])),
+                EndDate = new DateTime(long.Parse(parts[1])),
+                PricePerNight = decimal.Parse(parts[2]),
+                Currency = parts.Length > 3 ? parts[3] : "YER"
+            };
+        }
     }
 
     /// <summary>

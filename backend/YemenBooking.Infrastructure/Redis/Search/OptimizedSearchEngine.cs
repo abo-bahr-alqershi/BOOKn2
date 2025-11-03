@@ -8,6 +8,9 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Caching.Memory;
 using StackExchange.Redis;
 using MessagePack;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using YemenBooking.Infrastructure.Redis.Scripts;
 using YemenBooking.Infrastructure.Redis.Core;
 using YemenBooking.Infrastructure.Redis.Models;
 using YemenBooking.Infrastructure.Redis.Cache;
@@ -51,6 +54,26 @@ namespace YemenBooking.Infrastructure.Redis.Search
             _searchLimiter = new SemaphoreSlim(50, 50); // حد أقصى 50 بحث متزامن
         }
 
+        /// <summary>
+        /// الحصول على مفتاح فهرس الترتيب المناسب
+        /// </summary>
+        private string GetSortIndexKey(string sortBy)
+        {
+            switch (sortBy?.ToLowerInvariant())
+            {
+                case "price_asc":
+                case "price_desc":
+                    return RedisKeySchemas.INDEX_PRICE;
+                case "rating":
+                    return RedisKeySchemas.INDEX_RATING;
+                case "newest":
+                    return RedisKeySchemas.INDEX_CREATED;
+                case "popularity":
+                default:
+                    return RedisKeySchemas.INDEX_POPULARITY;
+            }
+        }
+
         private IDatabase GetDatabase()
         {
             if (_db != null)
@@ -83,8 +106,8 @@ namespace YemenBooking.Infrastructure.Redis.Search
                 _logger.LogInformation("🔎 بدء البحث: {SearchText}, المدينة: {City}", 
                     request.SearchText, request.City);
 
-                // 1. التحقق من الكاش أولاً
-                var cacheKey = GenerateCacheKey(request);
+                // 1. التحقق من الكاش أولاً (مفتاح يعتمد على نسخة الفهرس)
+                var cacheKey = await BuildCacheKeyAsync(request);
                 var cachedResult = await _cacheManager.GetAsync<PropertySearchResult>(cacheKey);
                 
                 if (cachedResult != null)
@@ -159,6 +182,12 @@ namespace YemenBooking.Infrastructure.Redis.Search
                 return SearchStrategy.TextSearch;
             }
 
+            // إذا كان هناك تواريخ، اعتبرها فلترة معقدة (لأن الإتاحة تعالج عبر Lua داخل Redis)
+            if (request.CheckIn.HasValue && request.CheckOut.HasValue)
+            {
+                return SearchStrategy.ComplexFilter;
+            }
+
             // إذا كان هناك إحداثيات جغرافية
             if (request.Latitude.HasValue && request.Longitude.HasValue && request.RadiusKm.HasValue)
             {
@@ -179,6 +208,13 @@ namespace YemenBooking.Infrastructure.Redis.Search
                 return SearchStrategy.ComplexFilter;
             }
 
+            // إذا وُجد تواريخ + فلتر سعر اعتبرها فلترة معقدة
+            if ((request.MinPrice.HasValue || request.MaxPrice.HasValue) &&
+                request.CheckIn.HasValue && request.CheckOut.HasValue)
+            {
+                return SearchStrategy.ComplexFilter;
+            }
+
             // بحث بسيط
             return SearchStrategy.SimpleSearch;
         }
@@ -192,28 +228,68 @@ namespace YemenBooking.Infrastructure.Redis.Search
         {
             try
             {
-                // التحقق من توفر RediSearch
+                // التحقق من توفر RediSearch، وإلا فالتحويل للمسار اليدوي
                 if (!await IsRediSearchAvailable())
                 {
                     _logger.LogWarning("RediSearch غير متاح، التحويل للبحث اليدوي");
                     return await ExecuteManualTextSearchAsync(request, cancellationToken);
                 }
 
-                // بناء استعلام RediSearch
+                // بناء الاستعلام
                 var query = BuildRediSearchQuery(request);
                 var offset = (request.PageNumber - 1) * request.PageSize;
 
-                // تنفيذ البحث
+                // الحقول المطلوبة فقط لتقليل الحمولة
+                var returnFields = new[]
+                {
+                    "id","name","city","property_type","min_price","currency",
+                    "average_rating","star_rating","max_capacity","units_count","latitude","longitude"
+                };
+
                 var args = new List<object> { RedisKeySchemas.SEARCH_INDEX_NAME, query };
-                
-                // إضافة الترتيب
+                args.Add("RETURN");
+                args.Add(returnFields.Length);
+                foreach (var f in returnFields) args.Add(f);
+
+                // الترتيب
                 AddSortingArgs(args, request.SortBy);
-                
-                // إضافة الصفحة
+
+                // الصفحة
                 args.AddRange(new object[] { "LIMIT", offset.ToString(), request.PageSize.ToString() });
 
-                var result = await GetDatabase().ExecuteAsync("FT.SEARCH", args.ToArray());
-                return ParseRediSearchResult(result, request);
+                // المحاولة مع DIALECT 2 ثم fallback
+                try
+                {
+                    var argsWithDialect = new List<object>(args) { "DIALECT", 2 };
+                    var rr = await GetDatabase().ExecuteAsync("FT.SEARCH", argsWithDialect.ToArray());
+                    var parsed = ParseRediSearchResult(rr, request);
+                    if (parsed.TotalCount == 0)
+                    {
+                        _logger.LogDebug("FT.SEARCH أعاد 0 نتيجة، استخدام مسار البحث اليدوي كبديل");
+                        return await ExecuteManualTextSearchAsync(request, cancellationToken);
+                    }
+                    return parsed;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "FT.SEARCH مع DIALECT 2 فشل، محاولة بدون DIALECT");
+                    try
+                    {
+                        var rr = await GetDatabase().ExecuteAsync("FT.SEARCH", args.ToArray());
+                        var parsed = ParseRediSearchResult(rr, request);
+                        if (parsed.TotalCount == 0)
+                        {
+                            _logger.LogDebug("FT.SEARCH أعاد 0 نتيجة (بدون DIALECT)، استخدام مسار البحث اليدوي كبديل");
+                            return await ExecuteManualTextSearchAsync(request, cancellationToken);
+                        }
+                        return parsed;
+                    }
+                    catch (Exception ex2)
+                    {
+                        _logger.LogWarning(ex2, "FT.SEARCH غير متاح، استخدام البحث اليدوي كبديل");
+                        return await ExecuteManualTextSearchAsync(request, cancellationToken);
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -223,20 +299,16 @@ namespace YemenBooking.Infrastructure.Redis.Search
         }
 
         /// <summary>
-        /// تنفيذ البحث الجغرافي
+        /// تنفيذ البحث الجغرافي باستخدام GeoRadius
         /// </summary>
         private async Task<PropertySearchResult> ExecuteGeoSearchAsync(
             PropertySearchRequest request,
             CancellationToken cancellationToken)
         {
-            var results = new List<PropertyIndexDocument>();
-
-            // البحث في النطاق الجغرافي
             var geoKey = !string.IsNullOrWhiteSpace(request.City) 
                 ? string.Format(RedisKeySchemas.GEO_CITY, request.City.ToLowerInvariant())
                 : RedisKeySchemas.GEO_PROPERTIES;
 
-            // استخدام GeoRadius للبحث الجغرافي
             var geoResults = await GetDatabase().GeoRadiusAsync(
                 geoKey,
                 request.Longitude.Value,
@@ -258,14 +330,11 @@ namespace YemenBooking.Infrastructure.Redis.Search
                 };
             }
 
-            // جلب تفاصيل العقارات
             var propertyIds = geoResults.Select(r => r.Member.ToString()).ToList();
             var properties = await GetPropertiesDetailsAsync(propertyIds);
 
-            // تطبيق الفلاتر الإضافية
             properties = ApplyFilters(properties, request);
 
-            // الترتيب والصفحة
             properties = ApplySorting(properties, request.SortBy);
             var pagedProperties = ApplyPaging(properties, request.PageNumber, request.PageSize);
 
@@ -285,7 +354,9 @@ namespace YemenBooking.Infrastructure.Redis.Search
             var args = BuildLuaScriptArgs(request);
 
             var result = await GetDatabase().ScriptEvaluateAsync(luaScript, keys, args);
-            return ParseLuaScriptResult(result, request);
+
+            // تحليل النتائج: نأخذ معرّفات العقارات فقط، ثم نجلب تفاصيل الصفحة المطلوبة
+            return await ParseLuaScriptResultAsync(result, request, cancellationToken);
         }
 
         /// <summary>
@@ -295,113 +366,282 @@ namespace YemenBooking.Infrastructure.Redis.Search
             PropertySearchRequest request,
             CancellationToken cancellationToken)
         {
-            var propertyIds = new HashSet<string>();
+            // تنفيذ الفلترة داخل Redis بالكامل عبر تقاطعات المجموعات وترتيب عبر الفهارس المرتبة
+            var db = GetDatabase();
 
-            // البدء بجميع العقارات أو مجموعة محددة
-            if (!string.IsNullOrWhiteSpace(request.City))
-            {
-                _logger.LogInformation("🏙️ البحث في المدينة: {City}", request.City);
-                var cityKey = RedisKeySchemas.GetCityKey(request.City);
-                var cityProperties = await GetDatabase().SetMembersAsync(cityKey);
-                propertyIds = cityProperties.Select(p => p.ToString()).ToHashSet();
-                _logger.LogInformation("✅ تم العثور على {Count} عقار في المدينة", propertyIds.Count);
-            }
-            else
-            {
-                var allProperties = await GetDatabase().SetMembersAsync(RedisKeySchemas.PROPERTIES_ALL_SET);
-                propertyIds = allProperties.Select(p => p.ToString()).ToHashSet();
-                _logger.LogInformation("📋 البدء بجميع العقارات: {Count}", propertyIds.Count);
-            }
+            // مفاتيح مؤقتة
+            var opId = Guid.NewGuid().ToString("N");
+            var tempBaseKey = string.Format(RedisKeySchemas.TEMP_OPERATION, "search:base", opId);
+            var tempSortedKey = string.Format(RedisKeySchemas.TEMP_OPERATION, "search:sorted", opId);
+            var tempPriceKey = string.Format(RedisKeySchemas.TEMP_OPERATION, "search:price", opId);
+            var tempRatingKey = string.Format(RedisKeySchemas.TEMP_OPERATION, "search:rating", opId);
+            var tempAdultsKey = string.Format(RedisKeySchemas.TEMP_OPERATION, "search:adults", opId);
+            var tempChildrenKey = string.Format(RedisKeySchemas.TEMP_OPERATION, "search:children", opId);
+            var tempCapacityKey = string.Format(RedisKeySchemas.TEMP_OPERATION, "search:capacity", opId);
+            var tempCandidatesZKey = string.Format(RedisKeySchemas.TEMP_OPERATION, "search:candidates:z", opId);
 
-            // تطبيق فلتر النوع
-            if (!string.IsNullOrWhiteSpace(request.PropertyType))
+            try
             {
-                _logger.LogInformation("🏢 تطبيق فلتر نوع العقار: {PropertyType}", request.PropertyType);
-                
-                // محاولة كـ GUID أولاً (معرف نوع العقار)
-                string typeKey;
-                if (Guid.TryParse(request.PropertyType, out var propertyTypeGuid))
+                // 1) بناء قائمة مفاتيح الفلاتر (Sets)
+                var filterKeys = new List<RedisKey>();
+                // دائماً احصر النتائج بالعقارات النشطة والمعتمدة
+                filterKeys.Add(RedisKeySchemas.PROPERTIES_ALL_SET);
+                if (!string.IsNullOrWhiteSpace(request.City))
                 {
-                    // استخدام معرف النوع
-                    typeKey = string.Format(RedisKeySchemas.TAG_TYPE, propertyTypeGuid.ToString());
+                    filterKeys.Add(RedisKeySchemas.GetCityKey(request.City));
                 }
-                else
-                {
-                    // استخدام اسم النوع
-                    typeKey = string.Format(RedisKeySchemas.TAG_TYPE, request.PropertyType);
-                }
-                
-                var typeProperties = await GetDatabase().SetMembersAsync(typeKey);
-                var typePropsSet = typeProperties.Select(p => p.ToString()).ToHashSet();
-                
-                _logger.LogInformation("🔍 عقارات النوع المطلوب: {Count}", typePropsSet.Count);
-                
-                propertyIds.IntersectWith(typePropsSet);
-                
-                _logger.LogInformation("✅ بعد فلتر النوع: {Count} عقار", propertyIds.Count);
-            }
 
-            // تطبيق فلتر المرافق
-            if (request.RequiredAmenityIds?.Any() == true)
-            {
-                foreach (var amenityId in request.RequiredAmenityIds)
+                if (!string.IsNullOrWhiteSpace(request.PropertyType))
                 {
-                    var amenityKey = RedisKeySchemas.GetAmenityKey(Guid.Parse(amenityId));
-                    var amenityProperties = await GetDatabase().SetMembersAsync(amenityKey);
-                    propertyIds.IntersectWith(amenityProperties.Select(p => p.ToString()));
-                }
-            }
-
-            // تطبيق فلاتر الحقول الديناميكية
-            if (request.DynamicFieldFilters?.Any() == true)
-            {
-                _logger.LogInformation("🔍 تطبيق فلاتر الحقول الديناميكية: {Count} فلتر", request.DynamicFieldFilters.Count);
-                
-                foreach (var filter in request.DynamicFieldFilters)
-                {
-                    // البحث عن العقارات التي لديها قيمة الحقل المطلوبة
-                    var valueIndexKey = $"dynamic_value:{filter.Key.ToLower()}:{filter.Value.ToLower()}";
-                    var matchingProperties = await GetDatabase().SetMembersAsync(valueIndexKey);
-                    
-                    if (matchingProperties.Length > 0)
+                    if (Guid.TryParse(request.PropertyType, out var typeGuid))
                     {
-                        var matchingSet = matchingProperties.Select(p => p.ToString()).ToHashSet();
-                        propertyIds.IntersectWith(matchingSet);
-                        _logger.LogInformation("✅ فلتر ديناميكي {Field}={Value}: {Count} نتيجة", 
-                            filter.Key, filter.Value, matchingSet.Count);
+                        filterKeys.Add(RedisKeySchemas.GetTypeKey(typeGuid));
                     }
                     else
                     {
-                        _logger.LogInformation("⚠️ لا توجد نتائج للفلتر الديناميكي {Field}={Value}", 
-                            filter.Key, filter.Value);
-                        // إذا لم تجد أي عقار بهذا الحقل، النتيجة فارغة
-                        propertyIds.Clear();
-                        break;
+                        var typeKeyByName = string.Format(RedisKeySchemas.TAG_TYPE, request.PropertyType.ToLowerInvariant());
+                        filterKeys.Add(typeKeyByName);
                     }
                 }
-                
-                _logger.LogInformation("✅ بعد فلاتر الحقول الديناميكية: {Count} عقار", propertyIds.Count);
-            }
 
-            if (!propertyIds.Any())
-            {
-                return new PropertySearchResult
+                if (request.RequiredAmenityIds?.Any() == true)
                 {
-                    Properties = new List<PropertySearchItem>(),
-                    TotalCount = 0,
-                    PageNumber = request.PageNumber,
-                    PageSize = request.PageSize,
-                    TotalPages = 0
-                };
+                    foreach (var amenityId in request.RequiredAmenityIds)
+                    {
+                        if (Guid.TryParse(amenityId, out var amenityGuid))
+                        {
+                            filterKeys.Add(RedisKeySchemas.GetAmenityKey(amenityGuid));
+                        }
+                    }
+                }
+
+                if (request.DynamicFieldFilters?.Any() == true)
+                {
+                    foreach (var kv in request.DynamicFieldFilters)
+                    {
+                        var field = kv.Key;
+                        var val = kv.Value?.ToString();
+                        if (!string.IsNullOrWhiteSpace(field) && !string.IsNullOrWhiteSpace(val))
+                        {
+                            filterKeys.Add(RedisKeySchemas.GetDynamicFieldValueKey(field, val));
+                        }
+                    }
+                }
+
+                // 2) إنشاء مجموعة المرشحين SINTERSTORE
+                if (filterKeys.Count == 1)
+                {
+                    // نسخ إلى مفتاح مؤقت لضمان عدم تعديل المصدر
+                    await db.ExecuteAsync("SUNIONSTORE", tempBaseKey, filterKeys[0]);
+                }
+                else
+                {
+                    var interArgs = new List<object> { tempBaseKey };
+                    interArgs.AddRange(filterKeys.Select(k => (object)k));
+                    await db.ExecuteAsync("SINTERSTORE", interArgs.ToArray());
+                }
+
+                // TTL للمفاتيح المؤقتة
+                _ = db.KeyExpireAsync(tempBaseKey, TimeSpan.FromMinutes(2));
+
+                // في حال عدم وجود مرشحين
+                var candidatesCount = await db.SetLengthAsync(tempBaseKey);
+                if (candidatesCount == 0)
+                {
+                    return new PropertySearchResult
+                    {
+                        Properties = new List<PropertySearchItem>(),
+                        TotalCount = 0,
+                        PageNumber = request.PageNumber,
+                        PageSize = request.PageSize,
+                        TotalPages = 0
+                    };
+                }
+
+                // 3) تحويل المرشحين (Set) إلى مجموعة مرتبة مؤقتة (ZSet) عبر SMEMBERS + ZADD بدرجة 0
+                var candidateMembers = await db.SetMembersAsync(tempBaseKey);
+                if (candidateMembers.Length > 0)
+                {
+                    var batch = db.CreateBatch();
+                    foreach (var member in candidateMembers)
+                    {
+                        _ = batch.SortedSetAddAsync(tempCandidatesZKey, member, 0);
+                    }
+                    batch.Execute();
+                }
+
+                _ = db.KeyExpireAsync(tempCandidatesZKey, TimeSpan.FromMinutes(2));
+
+                // تقاطع المجموعة المرتبة للترتيب مع المرشحين
+                var sortIndex = GetSortIndexKey(request.SortBy);
+                await db.ExecuteAsync(
+                    "ZINTERSTORE",
+                    tempSortedKey,
+                    2,
+                    sortIndex,
+                    tempCandidatesZKey,
+                    "WEIGHTS", 1, 0);
+                _ = db.KeyExpireAsync(tempSortedKey, TimeSpan.FromMinutes(2));
+
+                // 4) تطبيق فلاتر رقمية اختيارية مع الحفاظ على ترتيب sortIndex
+                // فلتر السعر
+                if (request.MinPrice.HasValue || request.MaxPrice.HasValue)
+                {
+                    var min = request.MinPrice ?? 0;
+                    var max = request.MaxPrice ?? decimal.MaxValue;
+
+                    await db.ExecuteAsync(
+                        "ZINTERSTORE",
+                        tempPriceKey,
+                        2,
+                        RedisKeySchemas.INDEX_PRICE,
+                        tempCandidatesZKey,
+                        "WEIGHTS", 1, 0);
+                    _ = db.KeyExpireAsync(tempPriceKey, TimeSpan.FromMinutes(2));
+
+                    // إزالة ما هو خارج النطاق
+                    await db.SortedSetRemoveRangeByScoreAsync(tempPriceKey, double.NegativeInfinity, (double)min - double.Epsilon);
+                    await db.SortedSetRemoveRangeByScoreAsync(tempPriceKey, (double)max + double.Epsilon, double.PositiveInfinity);
+
+                    // تقاطع مع مجموعة الترتيب الحالية مع الحفاظ على الدرجات من tempSortedKey
+                    await db.ExecuteAsync(
+                        "ZINTERSTORE",
+                        tempSortedKey,
+                        2,
+                        tempSortedKey,
+                        tempPriceKey,
+                        "WEIGHTS", 1, 0);
+                }
+
+                // فلتر التقييم الأدنى
+                if (request.MinRating.HasValue)
+                {
+                    await db.ExecuteAsync(
+                        "ZINTERSTORE",
+                        tempRatingKey,
+                        2,
+                        RedisKeySchemas.INDEX_RATING,
+                        tempCandidatesZKey,
+                        "WEIGHTS", 1, 0);
+                    _ = db.KeyExpireAsync(tempRatingKey, TimeSpan.FromMinutes(2));
+
+                    await db.SortedSetRemoveRangeByScoreAsync(tempRatingKey, double.NegativeInfinity, (double)request.MinRating.Value - double.Epsilon);
+
+                    await db.ExecuteAsync(
+                        "ZINTERSTORE",
+                        tempSortedKey,
+                        2,
+                        tempSortedKey,
+                        tempRatingKey,
+                        "WEIGHTS", 1, 0);
+                }
+
+                // فلتر الحد الأدنى للبالغين
+                if (request.MinAdults.HasValue && request.MinAdults.Value > 0)
+                {
+                    await db.ExecuteAsync(
+                        "ZINTERSTORE",
+                        tempAdultsKey,
+                        2,
+                        RedisKeySchemas.INDEX_MAX_ADULTS,
+                        tempCandidatesZKey,
+                        "WEIGHTS", 1, 0);
+                    _ = db.KeyExpireAsync(tempAdultsKey, TimeSpan.FromMinutes(2));
+                    await db.SortedSetRemoveRangeByScoreAsync(tempAdultsKey, double.NegativeInfinity, request.MinAdults.Value - double.Epsilon);
+                    await db.ExecuteAsync(
+                        "ZINTERSTORE",
+                        tempSortedKey,
+                        2,
+                        tempSortedKey,
+                        tempAdultsKey,
+                        "WEIGHTS", 1, 0);
+                }
+
+                // فلتر الحد الأدنى للأطفال
+                if (request.MinChildren.HasValue && request.MinChildren.Value > 0)
+                {
+                    await db.ExecuteAsync(
+                        "ZINTERSTORE",
+                        tempChildrenKey,
+                        2,
+                        RedisKeySchemas.INDEX_MAX_CHILDREN,
+                        tempCandidatesZKey,
+                        "WEIGHTS", 1, 0);
+                    _ = db.KeyExpireAsync(tempChildrenKey, TimeSpan.FromMinutes(2));
+                    await db.SortedSetRemoveRangeByScoreAsync(tempChildrenKey, double.NegativeInfinity, request.MinChildren.Value - double.Epsilon);
+                    await db.ExecuteAsync(
+                        "ZINTERSTORE",
+                        tempSortedKey,
+                        2,
+                        tempSortedKey,
+                        tempChildrenKey,
+                        "WEIGHTS", 1, 0);
+                }
+
+                // فلتر السعة العامة (GuestsCount)
+                if (request.GuestsCount.HasValue && request.GuestsCount.Value > 0)
+                {
+                    await db.ExecuteAsync(
+                        "ZINTERSTORE",
+                        tempCapacityKey,
+                        2,
+                        RedisKeySchemas.INDEX_MAX_CAPACITY,
+                        tempCandidatesZKey,
+                        "WEIGHTS", 1, 0);
+                    _ = db.KeyExpireAsync(tempCapacityKey, TimeSpan.FromMinutes(2));
+
+                    await db.SortedSetRemoveRangeByScoreAsync(
+                        tempCapacityKey,
+                        double.NegativeInfinity,
+                        request.GuestsCount.Value - double.Epsilon);
+
+                    await db.ExecuteAsync(
+                        "ZINTERSTORE",
+                        tempSortedKey,
+                        2,
+                        tempSortedKey,
+                        tempCapacityKey,
+                        "WEIGHTS", 1, 0);
+                }
+
+                // 5) قراءة صفحة النتائج من المجموعة المرتبة
+                var start = (request.PageNumber - 1) * request.PageSize;
+                var stop = start + request.PageSize - 1;
+
+                var sortLower = request.SortBy?.ToLowerInvariant();
+                var descending = sortLower == "price_desc" || sortLower == "rating" || sortLower == "newest" || sortLower == "popularity";
+
+                RedisValue[] pageMembers = descending
+                    ? await db.SortedSetRangeByRankAsync(tempSortedKey, start, stop, Order.Descending)
+                    : await db.SortedSetRangeByRankAsync(tempSortedKey, start, stop, Order.Ascending);
+
+                var total = (int)await db.SortedSetLengthAsync(tempSortedKey);
+
+                var pageIds = pageMembers.Select(v => v.ToString()).Where(s => !string.IsNullOrEmpty(s)).ToList();
+
+                var pageDocs = await GetPropertiesDetailsAsync(pageIds);
+                return BuildSearchResult(pageDocs, total, request);
             }
-
-            // جلب التفاصيل وتطبيق الفلاتر
-            var properties = await GetPropertiesDetailsAsync(propertyIds.ToList());
-            properties = ApplyFilters(properties, request);
-            properties = ApplySorting(properties, request.SortBy);
-            var pagedProperties = ApplyPaging(properties, request.PageNumber, request.PageSize);
-
-            return BuildSearchResult(pagedProperties, properties.Count(), request);
+            finally
+            {
+                // تنظيف المفاتيح المؤقتة
+                try
+                {
+                    var cleanup = new List<Task>
+                    {
+                        db.KeyDeleteAsync(tempBaseKey),
+                        db.KeyDeleteAsync(tempSortedKey),
+                        db.KeyDeleteAsync(tempPriceKey),
+                        db.KeyDeleteAsync(tempRatingKey),
+                        db.KeyDeleteAsync(tempCapacityKey),
+                        db.KeyDeleteAsync(tempCandidatesZKey),
+                        db.KeyDeleteAsync(tempAdultsKey),
+                        db.KeyDeleteAsync(tempChildrenKey)
+                    };
+                    await Task.WhenAll(cleanup);
+                }
+                catch { /* تجاهل أخطاء التنظيف */ }
+            }
         }
 
         /// <summary>
@@ -412,6 +652,7 @@ namespace YemenBooking.Infrastructure.Redis.Search
             CancellationToken cancellationToken)
         {
             var searchText = request.SearchText?.ToLowerInvariant();
+            var tokens = BuildPlainTokens(searchText);
             var allProperties = await GetDatabase().SetMembersAsync(RedisKeySchemas.PROPERTIES_ALL_SET);
             var matchedProperties = new List<PropertyIndexDocument>();
 
@@ -424,10 +665,27 @@ namespace YemenBooking.Infrastructure.Redis.Search
                 
                 var doc = PropertyIndexDocument.FromHashEntries(propertyData);
                 
-                // بحث في الاسم والوصف
-                if (doc.NameNormalized?.Contains(searchText) == true ||
-                    doc.Description?.ToLowerInvariant().Contains(searchText) == true ||
-                    doc.City?.ToLowerInvariant().Contains(searchText) == true)
+                // بحث في الاسم والوصف عبر التوكينات لتجاوز الفواصل/التطويل
+                bool textMatch = false;
+                if (tokens.Count == 0)
+                {
+                    textMatch = string.IsNullOrWhiteSpace(searchText);
+                }
+                else
+                {
+                    foreach (var tk in tokens)
+                    {
+                        if (doc.NameNormalized?.Contains(tk) == true ||
+                            doc.Description?.ToLowerInvariant().Contains(tk) == true ||
+                            doc.City?.ToLowerInvariant().Contains(tk) == true)
+                        {
+                            textMatch = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (textMatch)
                 {
                     matchedProperties.Add(doc);
                 }
@@ -437,13 +695,20 @@ namespace YemenBooking.Infrastructure.Redis.Search
                 {
                     foreach (var field in doc.DynamicFields.Values)
                     {
-                        if (field?.ToLowerInvariant().Contains(searchText) == true)
+                        if (string.IsNullOrWhiteSpace(field)) continue;
+                        var fval = field.ToLowerInvariant();
+                        foreach (var tk in tokens)
                         {
-                            matchedProperties.Add(doc);
-                            break;
+                            if (fval.Contains(tk))
+                            {
+                                matchedProperties.Add(doc);
+                                goto AddedDoc;
+                            }
                         }
                     }
                 }
+            AddedDoc:
+                ;
             }
 
             // تطبيق الفلاتر والترتيب
@@ -465,8 +730,27 @@ namespace YemenBooking.Infrastructure.Redis.Search
         {
             try
             {
-                var marker = await GetDatabase().StringGetAsync("search:module:available");
-                return marker == "1";
+                var db = GetDatabase();
+                var marker = await db.StringGetAsync("search:module:available");
+                if (marker == "1") return true;
+
+                // Probe using FT.INFO to detect availability even if marker missing
+                try
+                {
+                    var info = await db.ExecuteAsync("FT.INFO", RedisKeySchemas.SEARCH_INDEX_NAME);
+                    if (!info.IsNull)
+                    {
+                        await db.StringSetAsync("search:module:available", "1");
+                        return true;
+                    }
+                }
+                catch
+                {
+                    // ignore and set unavailable
+                }
+
+                await db.StringSetAsync("search:module:available", "0");
+                return false;
             }
             catch
             {
@@ -484,7 +768,11 @@ namespace YemenBooking.Infrastructure.Redis.Search
             // النص البحثي
             if (!string.IsNullOrWhiteSpace(request.SearchText))
             {
-                queryParts.Add($"(@name:{request.SearchText}* | @description:{request.SearchText})");
+                var escaped = PrepareSearchTokens(request.SearchText);
+                if (!string.IsNullOrWhiteSpace(escaped))
+                {
+                    queryParts.Add($"(@name:({escaped}) | @description:({escaped}) | @dynamic_fields:({escaped}))");
+                }
             }
 
             // المدينة
@@ -511,6 +799,22 @@ namespace YemenBooking.Infrastructure.Redis.Search
             if (request.MinRating.HasValue)
             {
                 queryParts.Add($"@average_rating:[{request.MinRating.Value} +inf]");
+            }
+
+            // حد أدنى للبالغين/الأطفال
+            if (request.MinAdults.HasValue && request.MinAdults.Value > 0)
+            {
+                queryParts.Add($"@max_adults:[{request.MinAdults.Value} +inf]");
+            }
+            if (request.MinChildren.HasValue && request.MinChildren.Value > 0)
+            {
+                queryParts.Add($"@max_children:[{request.MinChildren.Value} +inf]");
+            }
+
+            // حد أدنى للسعة العامة
+            if (request.GuestsCount.HasValue && request.GuestsCount.Value > 0)
+            {
+                queryParts.Add($"@max_capacity:[{request.GuestsCount.Value} +inf]");
             }
 
             // الحالة النشطة والمعتمدة
@@ -580,6 +884,9 @@ namespace YemenBooking.Infrastructure.Redis.Search
             List<PropertyIndexDocument> properties,
             PropertySearchRequest request)
         {
+            // دائماً فلتر بحسب حالة النشاط والاعتماد
+            properties = properties.Where(p => p.IsActive && p.IsApproved).ToList();
+
             // فلتر نوع العقار - مهم جداً
             if (!string.IsNullOrWhiteSpace(request.PropertyType))
             {
@@ -812,13 +1119,22 @@ namespace YemenBooking.Infrastructure.Redis.Search
         /// <summary>
         /// توليد مفتاح الكاش الفريد
         /// </summary>
-        private string GenerateCacheKey(PropertySearchRequest request)
+        private async Task<string> BuildCacheKeyAsync(PropertySearchRequest request)
         {
+            // قراءة نسخة الفهرس الحالية من Redis لضمان عدم إعادة استخدام نتائج قديمة
+            string version = "0";
+            try
+            {
+                var v = await GetDatabase().StringGetAsync("search:version");
+                if (v.HasValue) version = v.ToString();
+            }
+            catch { /* تجاهل أخطاء القراءة من Redis */ }
+
             var key = $"search:{request.SearchText}:{request.City}:{request.PropertyType}:" +
                      $"{request.MinPrice}:{request.MaxPrice}:{request.MinRating}:" +
                      $"{request.GuestsCount}:{request.CheckIn?.Ticks}:{request.CheckOut?.Ticks}:" +
-                     $"{request.PageNumber}:{request.PageSize}:{request.SortBy}";
-            
+                     $"{request.PageNumber}:{request.PageSize}:{request.SortBy}:v={version}";
+
             return Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(key));
         }
 
@@ -853,8 +1169,108 @@ namespace YemenBooking.Infrastructure.Redis.Search
         /// </summary>
         private PropertySearchResult ParseRediSearchResult(RedisResult result, PropertySearchRequest request)
         {
-            // TODO: تنفيذ تحليل النتائج من RediSearch
-            return new PropertySearchResult();
+            try
+            {
+                var arr = (RedisResult[])result;
+                if (arr == null || arr.Length == 0)
+                {
+                    return new PropertySearchResult
+                    {
+                        Properties = new List<PropertySearchItem>(),
+                        TotalCount = 0,
+                        PageNumber = request.PageNumber,
+                        PageSize = request.PageSize,
+                        TotalPages = 0
+                    };
+                }
+
+                var total = (int)arr[0];
+                var items = new List<PropertySearchItem>();
+
+                for (int i = 1; i < arr.Length; i += 2)
+                {
+                    var key = (string)arr[i];
+                    if (i + 1 >= arr.Length) break;
+                    var fieldsArr = (RedisResult[])arr[i + 1];
+                    if (fieldsArr == null || fieldsArr.Length == 0) continue;
+
+                    var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    for (int j = 0; j + 1 < fieldsArr.Length; j += 2)
+                    {
+                        var fname = (string)fieldsArr[j];
+                        var fval = (string)fieldsArr[j + 1];
+                        dict[fname] = fval;
+                    }
+
+                    // بناء عنصر النتيجة مباشرة
+                    var item = new PropertySearchItem
+                    {
+                        Id = dict.GetValueOrDefault("id", key.Replace("property:", string.Empty)),
+                        Name = dict.GetValueOrDefault("name", string.Empty),
+                        City = dict.GetValueOrDefault("city", string.Empty),
+                        PropertyType = dict.GetValueOrDefault("property_type", string.Empty),
+                        MinPrice = decimal.TryParse(dict.GetValueOrDefault("min_price", "0"), out var mp) ? mp : 0,
+                        Currency = dict.GetValueOrDefault("currency", "YER"),
+                        AverageRating = decimal.TryParse(dict.GetValueOrDefault("average_rating", "0"), out var ar) ? ar : 0,
+                        StarRating = int.TryParse(dict.GetValueOrDefault("star_rating", "0"), out var sr) ? sr : 0,
+                        ImageUrls = new List<string>(),
+                        MaxCapacity = int.TryParse(dict.GetValueOrDefault("max_capacity", "0"), out var mc) ? mc : 0,
+                        UnitsCount = int.TryParse(dict.GetValueOrDefault("units_count", "0"), out var uc) ? uc : 0,
+                        DynamicFields = new Dictionary<string, string>(),
+                        Latitude = double.TryParse(dict.GetValueOrDefault("latitude", "0"), out var lat) ? lat : 0,
+                        Longitude = double.TryParse(dict.GetValueOrDefault("longitude", "0"), out var lon) ? lon : 0
+                    };
+                    items.Add(item);
+                }
+
+                return new PropertySearchResult
+                {
+                    Properties = items,
+                    TotalCount = total,
+                    PageNumber = request.PageNumber,
+                    PageSize = request.PageSize,
+                    TotalPages = (int)Math.Ceiling((double)total / request.PageSize)
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "فشل تحليل نتائج RediSearch");
+                return new PropertySearchResult
+                {
+                    Properties = new List<PropertySearchItem>(),
+                    TotalCount = 0,
+                    PageNumber = request.PageNumber,
+                    PageSize = request.PageSize,
+                    TotalPages = 0
+                };
+            }
+        }
+
+        /// <summary>
+        /// تجهيز كلمات البحث مع الهروب والتحويل إلى بادئات (prefix) لاستخدامها في RediSearch
+        /// </summary>
+        private string PrepareSearchTokens(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+            // احتفظ بالأحرف العربية واللاتينية والأرقام وحول الباقي لمسافات
+            var lowered = text.ToLowerInvariant().Replace("\u0640", string.Empty); // إزالة التطويل العربي
+            var normalized = Regex.Replace(lowered, @"[^\p{L}\p{N}]+", " ");
+            var tokens = normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Select(t => t + "*")
+                .ToList();
+            return string.Join("|", tokens);
+        }
+
+        /// <summary>
+        /// بناء توكينات نصية بسيطة بدون wildcard لاستخدامها في البحث اليدوي
+        /// </summary>
+        private List<string> BuildPlainTokens(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return new List<string>();
+            var normalized = Regex.Replace(text.ToLowerInvariant(), @"[^\p{L}\p{N}]+", " ");
+            return normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Distinct()
+                .ToList();
         }
 
         /// <summary>
@@ -862,8 +1278,8 @@ namespace YemenBooking.Infrastructure.Redis.Search
         /// </summary>
         private string GetComplexFilterLuaScript()
         {
-            // TODO: إضافة Lua Script للفلترة المعقدة
-            return "";
+            // استخدام السكربت الجاهز في الطبقة Scripts
+            return LuaScripts.COMPLEX_SEARCH_SCRIPT;
         }
 
         /// <summary>
@@ -871,8 +1287,8 @@ namespace YemenBooking.Infrastructure.Redis.Search
         /// </summary>
         private RedisKey[] BuildLuaScriptKeys(PropertySearchRequest request)
         {
-            // TODO: بناء المفاتيح
-            return new RedisKey[0];
+            // هذا السكربت لا يعتمد على KEYS صريحة بل يستخدم مفاتيح ثابتة
+            return Array.Empty<RedisKey>();
         }
 
         /// <summary>
@@ -880,17 +1296,100 @@ namespace YemenBooking.Infrastructure.Redis.Search
         /// </summary>
         private RedisValue[] BuildLuaScriptArgs(PropertySearchRequest request)
         {
-            // TODO: بناء المعطيات
-            return new RedisValue[0];
+            var searchText = request.SearchText ?? string.Empty;
+            var city = request.City ?? string.Empty;
+
+            // السكربت يتوقع معرف نوع العقار (GUID) فقط
+            var propertyTypeArg = Guid.TryParse(request.PropertyType, out var typeGuid)
+                ? typeGuid.ToString()
+                : string.Empty;
+
+            var minPrice = request.MinPrice?.ToString() ?? "0";
+            var maxPrice = request.MaxPrice?.ToString() ?? decimal.MaxValue.ToString();
+            var minRating = request.MinRating?.ToString() ?? "0";
+            var guests = request.GuestsCount?.ToString() ?? "0";
+            var checkIn = request.CheckIn?.Ticks.ToString() ?? string.Empty;
+            var checkOut = request.CheckOut?.Ticks.ToString() ?? string.Empty;
+            var sortBy = request.SortBy ?? "popularity";
+            var pageNumber = request.PageNumber.ToString();
+            var pageSize = request.PageSize.ToString();
+
+            var amenityIds = request.RequiredAmenityIds?.ToList() ?? new List<string>();
+            var amenityJson = JsonSerializer.Serialize(amenityIds);
+            var preferredCurrency = request.PreferredCurrency ?? string.Empty;
+
+            return new RedisValue[]
+            {
+                searchText,
+                city,
+                propertyTypeArg,
+                minPrice,
+                maxPrice,
+                minRating,
+                guests,
+                checkIn,
+                checkOut,
+                sortBy,
+                pageNumber,
+                pageSize,
+                amenityJson,
+                preferredCurrency
+            };
         }
 
         /// <summary>
         /// تحليل نتائج Lua Script
         /// </summary>
-        private PropertySearchResult ParseLuaScriptResult(RedisResult result, PropertySearchRequest request)
+        private async Task<PropertySearchResult> ParseLuaScriptResultAsync(
+            RedisResult result,
+            PropertySearchRequest request,
+            CancellationToken cancellationToken)
         {
-            // TODO: تحليل النتائج
-            return new PropertySearchResult();
+            try
+            {
+                var json = (string)result;
+                if (string.IsNullOrWhiteSpace(json))
+                {
+                    return new PropertySearchResult
+                    {
+                        Properties = new List<PropertySearchItem>(),
+                        TotalCount = 0,
+                        PageNumber = request.PageNumber,
+                        PageSize = request.PageSize,
+                        TotalPages = 0
+                    };
+                }
+
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                var total = root.GetProperty("total_count").GetInt32();
+                var results = root.GetProperty("results");
+                var ids = new List<string>();
+
+                foreach (var item in results.EnumerateArray())
+                {
+                    if (item.ValueKind == JsonValueKind.Array && item.GetArrayLength() >= 1)
+                    {
+                        var id = item[0].GetString();
+                        if (!string.IsNullOrWhiteSpace(id)) ids.Add(id);
+                    }
+                }
+
+                var docs = await GetPropertiesDetailsAsync(ids);
+                return BuildSearchResult(docs, total, request);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "خطأ في تحليل نتيجة Lua Script");
+                return new PropertySearchResult
+                {
+                    Properties = new List<PropertySearchItem>(),
+                    TotalCount = 0,
+                    PageNumber = request.PageNumber,
+                    PageSize = request.PageSize,
+                    TotalPages = 0
+                };
+            }
         }
 
         #endregion

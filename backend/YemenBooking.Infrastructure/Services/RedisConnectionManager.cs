@@ -1,5 +1,8 @@
 // RedisConnectionManager.cs
 using System;
+using System.Linq;
+using System.Net;
+using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
@@ -23,12 +26,14 @@ namespace YemenBooking.Infrastructure.Services
         private bool _initialized = false;
         private Task<bool> _initializationTask = null;
         private readonly object _initLock = new object();
+        private readonly bool _enabled = true;
 
         public RedisConnectionManager(IConfiguration configuration, ILogger<RedisConnectionManager> logger)
         {
             _logger = logger;
             
             var redisConfig = configuration.GetSection("Redis");
+            _enabled = redisConfig.GetValue<bool>("Enabled", true);
             // استخدام Connection string إذا كان موجوداً
             var connectionString = redisConfig["Connection"];
             if (!string.IsNullOrEmpty(connectionString))
@@ -50,7 +55,7 @@ namespace YemenBooking.Infrastructure.Services
                     ConnectRetry = 1, // محاولة واحدة فقط
                     ReconnectRetryPolicy = new LinearRetry(1000), // فترة قصيرة
                     AbortOnConnectFail = false,
-                    AllowAdmin = false // لا حاجة لصلاحيات admin في الاختبارات
+                    AllowAdmin = redisConfig.GetValue<bool>("AllowAdmin", true) // السماح بعمليات admin للاختبارات (KEYS, SCRIPT LOAD)
                 };
             }
 
@@ -85,11 +90,16 @@ namespace YemenBooking.Infrastructure.Services
                             }));
 
             // لا نقوم بالاتصال في المُنشئ
-            _logger.LogInformation("✅ RedisConnectionManager created (lazy connection)");
+            _logger.LogInformation("✅ RedisConnectionManager created (lazy connection), Enabled={Enabled}", _enabled);
         }
 
         private async Task<bool> EnsureConnectedAsync()
         {
+            if (!_enabled)
+            {
+                _initialized = false;
+                return false;
+            }
             if (_initialized && _connection != null && _connection.IsConnected)
                 return true;
 
@@ -127,6 +137,78 @@ namespace YemenBooking.Infrastructure.Services
             {
                 _logger.LogInformation("🔌 محاولة الاتصال بـ Redis...");
                 
+                // Fast DNS pre-check to fail early on invalid hosts
+                try
+                {
+                    var ep = _configOptions.EndPoints?.FirstOrDefault();
+                    if (ep != null)
+                    {
+                        var hostPort = ep.ToString(); // e.g., host:port
+                        var host = hostPort;
+                        var colonIdx = hostPort.LastIndexOf(':');
+                        if (colonIdx > 0)
+                            host = hostPort.Substring(0, colonIdx);
+                        var port = 6379;
+                        if (colonIdx > 0)
+                        {
+                            int.TryParse(hostPort.Substring(colonIdx + 1), out port);
+                        }
+
+                        // Skip common local addresses
+                        if (!string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase) &&
+                            !string.Equals(host, "127.0.0.1", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var dnsTask = Dns.GetHostEntryAsync(host);
+                            var dnsCompleted = await Task.WhenAny(dnsTask, Task.Delay(1000));
+                            if (dnsCompleted != dnsTask)
+                            {
+                                _logger.LogWarning("DNS resolution timeout for host {Host}", host);
+                                _initialized = false;
+                                return false;
+                            }
+                            // If DNS throws, catch below
+                            _ = dnsTask.Result;
+                        }
+
+                        // Quick TCP connectivity probe (skip for localhost to avoid false negatives)
+                        if (!string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase) &&
+                            !string.Equals(host, "127.0.0.1", StringComparison.OrdinalIgnoreCase))
+                        {
+                            try
+                            {
+                                using var tcp = new TcpClient();
+                                var tcpConnectTask = tcp.ConnectAsync(host, port);
+                                var delayTask = Task.Delay(500);
+                                var completed = await Task.WhenAny(tcpConnectTask, delayTask);
+                                if (completed == delayTask)
+                                {
+                                    _logger.LogWarning("TCP connectivity probe timeout for {Host}:{Port}", host, port);
+                                    _initialized = false;
+                                    return false;
+                                }
+                                if (tcpConnectTask.IsFaulted || !tcp.Connected)
+                                {
+                                    _logger.LogWarning("TCP connectivity probe failed for {Host}:{Port}", host, port);
+                                    _initialized = false;
+                                    return false;
+                                }
+                            }
+                            catch (Exception tcpEx)
+                            {
+                                _logger.LogWarning(tcpEx, "TCP connectivity probe threw for {Host}:{Port}", host, port);
+                                _initialized = false;
+                                return false;
+                            }
+                        }
+                    }
+                }
+                catch (Exception dnsEx)
+                {
+                    _logger.LogWarning(dnsEx, "DNS resolution failed for configured Redis endpoint");
+                    _initialized = false;
+                    return false;
+                }
+                
                 // محاولة الاتصال بشكل غير متزامن مع timeout
                 var connectTask = ConnectionMultiplexer.ConnectAsync(_configOptions);
                 var timeoutTask = Task.Delay(3000);
@@ -141,7 +223,58 @@ namespace YemenBooking.Infrastructure.Services
                 }
                 
                 _connection = await connectTask;
-                
+
+                // Validate actual connectivity: with AbortOnConnectFail=false ConnectAsync may succeed while not connected
+                if (_connection == null || !_connection.IsConnected)
+                {
+                    _logger.LogWarning("Redis multiplexer created but not connected");
+                    _initialized = false;
+                    try
+                    {
+                        _connection?.Dispose();
+                    }
+                    catch { }
+                    return false;
+                }
+
+                // Optional quick ping validation to ensure connectivity is working
+                try
+                {
+                    var db = _connection.GetDatabase();
+                    var ping = await db.PingAsync();
+                    _logger.LogDebug("Redis ping: {PingMs}ms", ping.TotalMilliseconds);
+
+                    // Ensure we have at least one reachable server endpoint and it responds
+                    var endpoints = _connection.GetEndPoints();
+                    if (endpoints == null || endpoints.Length == 0)
+                    {
+                        _logger.LogWarning("No endpoints returned by multiplexer");
+                        _initialized = false;
+                        try { _connection?.Dispose(); } catch { }
+                        return false;
+                    }
+
+                    try
+                    {
+                        var server = _connection.GetServer(endpoints[0]);
+                        await server.PingAsync();
+                    }
+                    catch (Exception serverPingEx)
+                    {
+                        _logger.LogWarning(serverPingEx, "Redis server ping failed after connect");
+                        _initialized = false;
+                        try { _connection?.Dispose(); } catch { }
+                        return false;
+                    }
+                }
+                catch (Exception pingEx)
+                {
+                    _logger.LogWarning(pingEx, "Redis ping failed after connect");
+                    _initialized = false;
+                    try { _connection?.Dispose(); } catch { }
+                    return false;
+                }
+
                 _connection.ConnectionFailed += (sender, args) =>
                 {
                     _logger.LogError("فشل اتصال Redis: {FailureType}", args.FailureType);
@@ -181,6 +314,8 @@ namespace YemenBooking.Infrastructure.Services
 
         public IDatabase GetDatabase(int db = -1)
         {
+            if (!_enabled)
+                throw new InvalidOperationException("Redis is disabled by configuration");
             // التحقق من الاتصال بشكل آمن دون حجب
             if (_initialized && _connection != null && _connection.IsConnected)
             {
@@ -189,7 +324,7 @@ namespace YemenBooking.Infrastructure.Services
             
             // محاولة الاتصال بشكل غير متزامن مع timeout قصير
             var task = Task.Run(async () => await EnsureConnectedAsync());
-            if (task.Wait(TimeSpan.FromSeconds(2)))
+            if (task.Wait(TimeSpan.FromSeconds(5)))
             {
                 if (task.Result && _connection != null)
                 {
@@ -202,6 +337,8 @@ namespace YemenBooking.Infrastructure.Services
 
         public ISubscriber GetSubscriber()
         {
+            if (!_enabled)
+                throw new InvalidOperationException("Redis is disabled by configuration");
             // التحقق من الاتصال بشكل آمن دون حجب
             if (_initialized && _connection != null && _connection.IsConnected)
             {
@@ -210,7 +347,7 @@ namespace YemenBooking.Infrastructure.Services
             
             // محاولة الاتصال بشكل غير متزامن مع timeout قصير
             var task = Task.Run(async () => await EnsureConnectedAsync());
-            if (task.Wait(TimeSpan.FromSeconds(2)))
+            if (task.Wait(TimeSpan.FromSeconds(5)))
             {
                 if (task.Result && _connection != null)
                 {
@@ -223,6 +360,8 @@ namespace YemenBooking.Infrastructure.Services
 
         public IServer GetServer()
         {
+            if (!_enabled)
+                throw new InvalidOperationException("Redis is disabled by configuration");
             // التحقق من الاتصال بشكل آمن دون حجب
             if (_initialized && _connection != null && _connection.IsConnected)
             {
@@ -232,7 +371,7 @@ namespace YemenBooking.Infrastructure.Services
             
             // محاولة الاتصال بشكل غير متزامن مع timeout قصير
             var task = Task.Run(async () => await EnsureConnectedAsync());
-            if (task.Wait(TimeSpan.FromSeconds(2)))
+            if (task.Wait(TimeSpan.FromSeconds(5)))
             {
                 if (task.Result && _connection != null)
                 {
@@ -248,8 +387,23 @@ namespace YemenBooking.Infrastructure.Services
         {
             try
             {
-                // محاولة الاتصال إذا لم يكن متصلاً
-                return await EnsureConnectedAsync();
+                // Ensure connection is initialized
+                var ok = await EnsureConnectedAsync();
+                if (!ok || _connection == null || !_connection.IsConnected)
+                    return false;
+
+                // Quick ping to validate actual connectivity
+                try
+                {
+                    var db = _connection.GetDatabase();
+                    var ping = await db.PingAsync();
+                    _logger.LogDebug("IsConnected check ping: {Ms}ms", ping.TotalMilliseconds);
+                    return true;
+                }
+                catch
+                {
+                    return false;
+                }
             }
             catch
             {

@@ -193,7 +193,8 @@ namespace YemenBooking.IndexingTests.Tests.Core
                 }
                 catch
                 {
-                    if (retry == 2) throw;
+                    if (retry >= 2) throw;
+                    await Task.Delay(100); // تأخير قصير بين المحاولات
                 }
             }
 
