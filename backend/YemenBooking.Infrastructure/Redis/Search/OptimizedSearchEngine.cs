@@ -914,13 +914,53 @@ namespace YemenBooking.Infrastructure.Redis.Search
         {
             var queryParts = new List<string>();
 
-            // النص البحثي
+            // ✅ الحل الاحترافي: Hybrid Search Strategy (TEXT + TAG)
+            // للنصوص القصيرة: نستخدم TAG search (exact + partial)
+            // للنصوص الطويلة: نستخدم TEXT search (full-text)
             if (!string.IsNullOrWhiteSpace(request.SearchText))
             {
-                var escaped = PrepareSearchTokens(request.SearchText);
-                if (!string.IsNullOrWhiteSpace(escaped))
+                var searchText = request.SearchText.Trim();
+                var isShortText = searchText.Length <= 15 || searchText.Split(' ').Length <= 2;
+                
+                if (isShortText)
                 {
-                    queryParts.Add($"(@name:({escaped}) | @description:({escaped}) | @dynamic_fields:({escaped}))");
+                    // النصوص القصيرة: TAG search (دقيق)
+                    var tagQuery = $"@name_tag:{{{searchText}}}";
+                    
+                    // إضافة lowercase variant
+                    var lowerText = searchText.ToLowerInvariant();
+                    if (lowerText != searchText)
+                    {
+                        tagQuery += $" | @name_tag:{{{lowerText}}}";
+                    }
+                    
+                    // إضافة كلمات فردية
+                    var words = searchText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    if (words.Length > 1)
+                    {
+                        foreach (var word in words.Where(w => w.Length > 2))
+                        {
+                            tagQuery += $" | @name_tag:{{{word}}}";
+                        }
+                    }
+                    
+                    // Fallback to TEXT search
+                    var escaped = PrepareSearchTokens(searchText);
+                    if (!string.IsNullOrWhiteSpace(escaped))
+                    {
+                        tagQuery += $" | @name:({escaped}) | @description:({escaped})";
+                    }
+                    
+                    queryParts.Add($"({tagQuery})");
+                }
+                else
+                {
+                    // النصوص الطويلة: TEXT search (full-text)
+                    var escaped = PrepareSearchTokens(searchText);
+                    if (!string.IsNullOrWhiteSpace(escaped))
+                    {
+                        queryParts.Add($"(@name:({escaped}) | @description:({escaped}) | @dynamic_fields:({escaped}))");
+                    }
                 }
             }
 
@@ -930,10 +970,16 @@ namespace YemenBooking.Infrastructure.Redis.Search
                 queryParts.Add($"@city:{{{request.City}}}");
             }
 
-            // نوع العقار
+            // نوع العقار - hybrid search
             if (!string.IsNullOrWhiteSpace(request.PropertyType))
             {
-                queryParts.Add($"@property_type:{{{request.PropertyType}}}");
+                // محاولة TAG search أولاً (للأسماء)
+                var typeQuery = $"@property_type_name:{{{request.PropertyType}}}";
+                
+                // fallback to GUID search
+                typeQuery += $" | @property_type:{{{request.PropertyType}}}";
+                
+                queryParts.Add($"({typeQuery})");
             }
 
             // نطاق السعر
@@ -964,6 +1010,30 @@ namespace YemenBooking.Infrastructure.Redis.Search
             if (request.GuestsCount.HasValue && request.GuestsCount.Value > 0)
             {
                 queryParts.Add($"@max_capacity:[{request.GuestsCount.Value} +inf]");
+            }
+            
+            // ✅ الحقول الديناميكية - البحث في RediSearch مباشرة
+            if (request.DynamicFieldFilters != null && request.DynamicFieldFilters.Any())
+            {
+                var dynamicQueries = new List<string>();
+                foreach (var filter in request.DynamicFieldFilters)
+                {
+                    var fieldName = filter.Key;
+                    var fieldValue = filter.Value?.ToString();
+                    
+                    if (!string.IsNullOrWhiteSpace(fieldValue))
+                    {
+                        // البحث في dynamic_fields TEXT field
+                        // Format: "key:value" - نبحث عن التطابق الدقيق
+                        var searchTerm = $"{fieldName}:{fieldValue}";
+                        dynamicQueries.Add($"@dynamic_fields:({searchTerm})");
+                    }
+                }
+                
+                if (dynamicQueries.Any())
+                {
+                    queryParts.Add($"({string.Join(" ", dynamicQueries)})");
+                }
             }
 
             // الحالة النشطة والمعتمدة
@@ -1137,28 +1207,9 @@ namespace YemenBooking.Infrastructure.Redis.Search
                 _logger.LogInformation("✅ تبقى {Count} عقار بعد فلتر الخدمات", properties.Count);
             }
 
-            // فلتر الحقول الديناميكية
-            if (request.DynamicFieldFilters?.Any() == true)
-            {
-                _logger.LogInformation("🔍 تطبيق فلاتر الحقول الديناميكية: {Count} حقل", request.DynamicFieldFilters.Count);
-                
-                foreach (var filter in request.DynamicFieldFilters)
-                {
-                    var fieldName = filter.Key;
-                    var fieldValue = filter.Value?.ToString();
-                    
-                    if (!string.IsNullOrWhiteSpace(fieldValue))
-                    {
-                        properties = properties.Where(p =>
-                            p.DynamicFields != null &&
-                            p.DynamicFields.ContainsKey(fieldName) &&
-                            string.Equals(p.DynamicFields[fieldName], fieldValue, StringComparison.OrdinalIgnoreCase)
-                        ).ToList();
-                    }
-                }
-                _logger.LogInformation("✅ تبقى {Count} عقار بعد فلاتر الحقول الديناميكية", properties.Count);
-            }
-
+            // ✅ فلتر الحقول الديناميكية: الآن يتم في RediSearch query مباشرة
+            // لا حاجة لفلترة in-memory - تم نقلها إلى BuildFTSearchQuery()
+            
             // فلتر التواريخ والإتاحة
             if (request.CheckIn.HasValue && request.CheckOut.HasValue)
             {

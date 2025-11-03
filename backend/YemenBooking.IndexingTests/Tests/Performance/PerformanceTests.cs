@@ -3,8 +3,11 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 using Xunit.Abstractions;
+using YemenBooking.Application.Features.SearchAndFilters.Services;
 using YemenBooking.Core.Entities;
 using YemenBooking.Core.Indexing.Models;
 
@@ -390,7 +393,7 @@ namespace YemenBooking.IndexingTests.Tests.Performance
             // الإعداد
             await CreateComprehensiveTestDataAsync();
 
-            // البحث المتزامن - 100 عملية بحث متزامنة
+            // البحث المتزامن - 100 عملية بحث متزامنة - ✅ استخدام scoped services
             var concurrentSearches = 100;
             var searchTasks = new List<Task<PropertySearchResult>>();
 
@@ -398,22 +401,28 @@ namespace YemenBooking.IndexingTests.Tests.Performance
             
             for (int i = 0; i < concurrentSearches; i++)
             {
+                var localI = i;
                 var searchRequest = new PropertySearchRequest
                 {
-                    City = i % 2 == 0 ? "صنعاء" : "عدن",
+                    City = localI % 2 == 0 ? "صنعاء" : "عدن",
                     PageNumber = 1,
                     PageSize = 10
                 };
 
                 searchTasks.Add(Task.Run(async () => 
-                    await _indexingService.SearchAsync(searchRequest)));
+                {
+                    // ✅ استخدام scope منفصل لكل thread
+                    using var scope = _fixture.ServiceProvider.CreateScope();
+                    var scopedIndexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
+                    return await scopedIndexingService.SearchAsync(searchRequest);
+                }));
             }
 
-            await Task.WhenAll(searchTasks);
+            var results = await Task.WhenAll(searchTasks);
             stopwatch.Stop();
 
             // التحقق
-            Assert.All(searchTasks, t => Assert.NotNull(t.Result));
+            Assert.All(results, r => Assert.NotNull(r));
             Assert.True(stopwatch.ElapsedMilliseconds < 5000, 
                 $"{concurrentSearches} عملية بحث متزامنة استغرقت {stopwatch.ElapsedMilliseconds}ms");
 
@@ -436,11 +445,18 @@ namespace YemenBooking.IndexingTests.Tests.Performance
                 properties.Add(await CreateTestPropertyAsync($"عقار متزامن {i}", "صنعاء"));
             }
 
-            // الفهرسة المتزامنة
+            // الفهرسة المتزامنة - ✅ استخدام scoped services
             var stopwatch = Stopwatch.StartNew();
             
-            var indexingTasks = properties.Select(p => 
-                Task.Run(async () => await _indexingService.OnPropertyCreatedAsync(p.Id))
+            var propertyIds = properties.Select(p => p.Id).ToList();
+            var indexingTasks = propertyIds.Select(propertyId => 
+                Task.Run(async () => 
+                {
+                    // ✅ استخدام scope منفصل لكل thread
+                    using var scope = _fixture.ServiceProvider.CreateScope();
+                    var scopedIndexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
+                    await scopedIndexingService.OnPropertyCreatedAsync(propertyId);
+                })
             ).ToArray();
 
             await Task.WhenAll(indexingTasks);
@@ -468,35 +484,61 @@ namespace YemenBooking.IndexingTests.Tests.Performance
             var tasks = new List<Task>();
             var stopwatch = Stopwatch.StartNew();
 
-            // 50 عملية بحث
+            // 50 عملية بحث - ✅ استخدام scoped services
             for (int i = 0; i < 50; i++)
             {
+                var localI = i;
                 tasks.Add(Task.Run(async () =>
                 {
+                    // ✅ استخدام scope منفصل لكل thread
+                    using var scope = _fixture.ServiceProvider.CreateScope();
+                    var scopedIndexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
+                    
                     var searchRequest = new PropertySearchRequest
                     {
-                        City = i % 3 == 0 ? "صنعاء" : i % 3 == 1 ? "عدن" : "تعز",
+                        City = localI % 3 == 0 ? "صنعاء" : localI % 3 == 1 ? "عدن" : "تعز",
                         PageNumber = 1,
                         PageSize = 10
                     };
-                    await _indexingService.SearchAsync(searchRequest);
+                    await scopedIndexingService.SearchAsync(searchRequest);
                 }));
             }
 
-            // 20 عملية فهرسة
+            // 20 عملية فهرسة - ✅ استخدام scoped services
+            var propertyIds = new List<Guid>();
             for (int i = 0; i < 20; i++)
             {
                 var property = await CreateTestPropertyAsync($"عقار ضغط {i}", "صنعاء");
-                tasks.Add(Task.Run(async () =>
-                    await _indexingService.OnPropertyCreatedAsync(property.Id)));
+                propertyIds.Add(property.Id);
             }
-
-            // 10 عمليات تحديث
-            var existingProperties = _dbContext.Properties.Take(10).ToList();
-            foreach (var prop in existingProperties)
+            
+            foreach (var propertyId in propertyIds)
             {
                 tasks.Add(Task.Run(async () =>
-                    await _indexingService.OnPropertyUpdatedAsync(prop.Id)));
+                {
+                    // ✅ استخدام scope منفصل لكل thread
+                    using var scope = _fixture.ServiceProvider.CreateScope();
+                    var scopedIndexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
+                    await scopedIndexingService.OnPropertyCreatedAsync(propertyId);
+                }));
+            }
+
+            // 10 عمليات تحديث - ✅ استخدام scoped services
+            var existingPropertyIds = await _dbContext.Properties
+                .AsNoTracking()
+                .Take(10)
+                .Select(p => p.Id)
+                .ToListAsync();
+                
+            foreach (var propertyId in existingPropertyIds)
+            {
+                tasks.Add(Task.Run(async () =>
+                {
+                    // ✅ استخدام scope منفصل لكل thread
+                    using var scope = _fixture.ServiceProvider.CreateScope();
+                    var scopedIndexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
+                    await scopedIndexingService.OnPropertyUpdatedAsync(propertyId);
+                }));
             }
 
             await Task.WhenAll(tasks);

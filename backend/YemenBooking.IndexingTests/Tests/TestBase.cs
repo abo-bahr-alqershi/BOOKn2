@@ -59,6 +59,149 @@ namespace YemenBooking.IndexingTests.Tests
         }
         
         /// <summary>
+        /// إنشاء scope منفصل للعمليات المتزامنة - لتجنب DbContext concurrency
+        /// </summary>
+        protected IServiceScope CreateIsolatedScope()
+        {
+            return _fixture.ServiceProvider.CreateScope();
+        }
+        
+        /// <summary>
+        /// الحصول على DbContext منفصل للعمليات المتزامنة
+        /// </summary>
+        protected YemenBookingDbContext GetIsolatedDbContext()
+        {
+            var scope = CreateIsolatedScope();
+            return scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+        }
+        
+        /// <summary>
+        /// الحصول على IIndexingService منفصل للعمليات المتزامنة
+        /// </summary>
+        protected IIndexingService GetIsolatedIndexingService(IServiceScope scope)
+        {
+            return scope.ServiceProvider.GetRequiredService<IIndexingService>();
+        }
+        
+        /// <summary>
+        /// قراءة كيان بدون tracking - حل احترافي لتجنب DbContext conflicts
+        /// </summary>
+        protected async Task<T?> GetEntityNoTrackingAsync<T>(Guid id) where T : class
+        {
+            return await _dbContext.Set<T>()
+                .AsNoTracking()
+                .FirstOrDefaultAsync(e => EF.Property<Guid>(e, "Id") == id);
+        }
+        
+        /// <summary>
+        /// قراءة قائمة كيانات بدون tracking
+        /// </summary>
+        protected async Task<List<T>> GetEntitiesNoTrackingAsync<T>(System.Linq.Expressions.Expression<Func<T, bool>> predicate) where T : class
+        {
+            return await _dbContext.Set<T>()
+                .AsNoTracking()
+                .Where(predicate)
+                .ToListAsync();
+        }
+        
+        /// <summary>
+        /// انتظار ذكي حتى تكتمل الفهرسة - polling مع timeout بدلاً من delay ثابت
+        /// </summary>
+        protected async Task<PropertySearchResult> WaitForIndexingAsync(
+            PropertySearchRequest searchRequest,
+            int expectedMinCount,
+            int maxAttempts = 10,
+            int delayMs = 500)
+        {
+            PropertySearchResult? result = null;
+            int attempts = 0;
+            
+            while (attempts < maxAttempts)
+            {
+                result = await _indexingService.SearchAsync(searchRequest);
+                
+                if (result?.TotalCount >= expectedMinCount)
+                {
+                    _output.WriteLine($"  ✅ تم العثور على {result.TotalCount} نتيجة بعد {attempts + 1} محاولة");
+                    return result;
+                }
+                
+                attempts++;
+                if (attempts < maxAttempts)
+                {
+                    await Task.Delay(delayMs);
+                }
+            }
+            
+            // إذا فشلت جميع المحاولات، أعد آخر نتيجة
+            _output.WriteLine($"  ⚠️ تحذير: تم العثور على {result?.TotalCount ?? 0} فقط بعد {attempts} محاولة");
+            return result ?? new PropertySearchResult { Properties = new List<PropertySearchItem>(), TotalCount = 0 };
+        }
+        
+        /// <summary>
+        /// انتظار ذكي حتى تختفي النتائج (للحذف) - polling مع timeout
+        /// </summary>
+        protected async Task<bool> WaitForDeletionAsync(
+            Guid propertyId,
+            int maxAttempts = 10,
+            int delayMs = 500)
+        {
+            int attempts = 0;
+            
+            while (attempts < maxAttempts)
+            {
+                var searchRequest = new PropertySearchRequest
+                {
+                    PageNumber = 1,
+                    PageSize = 100
+                };
+                
+                var result = await _indexingService.SearchAsync(searchRequest);
+                var found = result.Properties.Any(p => p.Id == propertyId.ToString());
+                
+                if (!found)
+                {
+                    _output.WriteLine($"  ✅ تم التأكد من حذف العقار بعد {attempts + 1} محاولة");
+                    return true;
+                }
+                
+                attempts++;
+                if (attempts < maxAttempts)
+                {
+                    await Task.Delay(delayMs);
+                }
+            }
+            
+            _output.WriteLine($"  ⚠️ تحذير: العقار ما زال موجوداً بعد {attempts} محاولة");
+            return false;
+        }
+        
+        /// <summary>
+        /// تنظيف كاش البحث - لضمان قراءة البيانات الحية من Redis
+        /// </summary>
+        protected async Task FlushSearchCacheAsync()
+        {
+            try
+            {
+                // ✅ استدعاء clear cache من IIndexingService إن كان موجوداً
+                var cacheMethod = _indexingService.GetType().GetMethod("ClearSearchCacheAsync");
+                if (cacheMethod != null)
+                {
+                    var task = cacheMethod.Invoke(_indexingService, null) as Task;
+                    if (task != null)
+                    {
+                        await task;
+                        _output.WriteLine("  🗑️ تم تنظيف كاش البحث");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _output.WriteLine($"  ⚠️ تحذير: فشل تنظيف الكاش - {ex.Message}");
+            }
+        }
+        
+        /// <summary>
         /// التأكد من تهيئة البيانات الأساسية مرة واحدة فقط
         /// </summary>
         private async Task EnsureBaseDataInitializedAsync()
@@ -375,14 +518,41 @@ namespace YemenBooking.IndexingTests.Tests
         
         public virtual void Dispose()
         {
-            // التنظيف النهائي
+            // ✅ الحل الاحترافي: تنظيف شامل وآمن
             try
             {
+                // 1. حفظ أي تغييرات معلقة
+                if (_dbContext?.ChangeTracker?.HasChanges() == true)
+                {
+                    try
+                    {
+                        _dbContext.SaveChanges();
+                    }
+                    catch { /* تجاهل أخطاء الحفظ عند التنظيف */ }
+                }
+                
+                // 2. تنظيف كامل للـ ChangeTracker
                 _dbContext?.ChangeTracker?.Clear();
+                
+                // 3. إزالة tracking من جميع الكيانات
+                var entries = _dbContext?.ChangeTracker?.Entries()?.ToList();
+                if (entries != null)
+                {
+                    foreach (var entry in entries)
+                    {
+                        entry.State = EntityState.Detached;
+                    }
+                }
             }
-            catch { /* تجاهل الأخطاء عند التنظيف */ }
-            
-            _scope?.Dispose();
+            catch (Exception ex)
+            {
+                _output?.WriteLine($"⚠️ تحذير أثناء التنظيف: {ex.Message}");
+            }
+            finally
+            {
+                // 4. تحرير الموارد
+                _scope?.Dispose();
+            }
         }
     }
 }

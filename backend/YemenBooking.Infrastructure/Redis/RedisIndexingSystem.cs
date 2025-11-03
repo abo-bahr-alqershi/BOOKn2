@@ -279,12 +279,16 @@ namespace YemenBooking.Infrastructure.Redis
                     "ON", "HASH",
                     "PREFIX", "1", RedisKeySchemas.SEARCH_KEY_PREFIX,
                     "SCHEMA",
-                    "name", "TEXT", "WEIGHT", "5.0", "SORTABLE",
-                    "name_lower", "TEXT",
-                    "description", "TEXT", "WEIGHT", "2.0",
+                    // ✅ الحل الاحترافي: TEXT + TAG للنصوص القصيرة
+                    "name", "TEXT", "WEIGHT", "5.0", "SORTABLE", "PHONETIC", "dm:ar",
+                    "name_lower", "TEXT", "PHONETIC", "dm:ar",
+                    "name_tag", "TAG", "SEPARATOR", "|",  // ✅ للبحث الدقيق
+                    "description", "TEXT", "WEIGHT", "2.0", "PHONETIC", "dm:ar",
                     "dynamic_fields", "TEXT",
                     "city", "TAG", "SORTABLE",
                     "property_type", "TAG", "SORTABLE",
+                    // ✅ إضافة property_type_name كـ TAG للبحث بالاسم
+                    "property_type_name", "TAG", "SEPARATOR", "|",
                     "min_price", "NUMERIC", "SORTABLE",
                     "max_price", "NUMERIC", "SORTABLE",
                     "max_adults", "NUMERIC", "SORTABLE",
@@ -302,7 +306,7 @@ namespace YemenBooking.Infrastructure.Redis
                     "longitude", "GEO"
                 );
 
-                _logger.LogInformation("✅ تم إنشاء فهرس RediSearch بنجاح");
+                _logger.LogInformation("✅ تم إنشاء فهرس RediSearch بنجاح (مع دعم PHONETIC للعربية + TAG للنصوص القصيرة)");
                 await db.StringSetAsync("search:module:available", "1");
             }
             catch (Exception ex)

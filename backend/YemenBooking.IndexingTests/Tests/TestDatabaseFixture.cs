@@ -62,6 +62,11 @@ namespace YemenBooking.IndexingTests.Tests
                     new KeyValuePair<string, string>("Redis:ResetStatsOnStartup", "false"),
                     new KeyValuePair<string, string>("Redis:MaintenanceIntervalHours", "999999"), // تعطيل الصيانة الدورية
                     new KeyValuePair<string, string>("Testing:UseInMemoryDatabase", "true"), // استخدام قاعدة بيانات في الذاكرة
+                    // ✅ تعطيل الكاش في بيئة الاختبار - للقراءة الفعلية من Redis دائماً
+                    new KeyValuePair<string, string>("Cache:Enabled", "false"),
+                    new KeyValuePair<string, string>("Cache:L1Enabled", "false"),
+                    new KeyValuePair<string, string>("Cache:L2Enabled", "false"),
+                    new KeyValuePair<string, string>("Redis:CacheEnabled", "false"),
                     // ✅ إعدادات Circuit Breaker أكثر تساهلاً للاختبارات
                     new KeyValuePair<string, string>("CircuitBreaker:FailureThreshold", "100"), // زيادة عتبة الفشل
                     new KeyValuePair<string, string>("CircuitBreaker:BreakDurationSeconds", "5"), // تقليل مدة الفتح
@@ -199,8 +204,9 @@ namespace YemenBooking.IndexingTests.Tests
 
                 // تنظيف Redis فقط - بدون إعادة بناء الفهرس لتجنب الحلقة اللانهائية
                 await CleanupRedisAsync();
-                // تجاهل RebuildIndexAsync لتجنب الحلقة اللانهائية
-                // await RebuildIndexAsync();
+                
+                // ✅ تهيئة نظام الفهرسة (إنشاء RediSearch index)
+                await InitializeRedisIndexingAsync();
                 
                 _initialized = true;
             }
@@ -369,6 +375,70 @@ namespace YemenBooking.IndexingTests.Tests
             // var db = RedisManager.GetDatabase();
             // await db.ExecuteAsync("FLUSHDB");
             await Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// تهيئة نظام الفهرسة في Redis (إنشاء RediSearch index)
+        /// </summary>
+        private async Task InitializeRedisIndexingAsync()
+        {
+            try
+            {
+                using var scope = ServiceProvider.CreateScope();
+                var logger = scope.ServiceProvider.GetRequiredService<ILogger<TestDatabaseFixture>>();
+                var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                
+                // الحصول على IIndexingService
+                var indexingSystem = scope.ServiceProvider.GetService<IIndexingService>();
+                
+                if (indexingSystem == null)
+                {
+                    logger.LogWarning("⚠️ IIndexingService غير متاح في test environment");
+                    return;
+                }
+
+                logger.LogInformation("🏗️ تهيئة نظام الفهرسة وإنشاء RediSearch index...");
+                
+                try
+                {
+                    // محاولة فهرسة property وهمي لتشغيل التهيئة
+                    // أولاً إنشاء property في قاعدة البيانات
+                    var dummyProperty = new YemenBooking.Core.Entities.Property
+                    {
+                        Id = Guid.NewGuid(),
+                        Name = "__test_initialization__",
+                        ShortDescription = "Property for triggering initialization",
+                        City = "Test",
+                        Address = "Test Address",
+                        TypeId = Guid.Parse("30000000-0000-0000-0000-000000000001"),
+                        OwnerId = Guid.Parse("10000000-0000-0000-0000-000000000001"),
+                        IsActive = false,
+                        IsApproved = false
+                    };
+                    
+                    dbContext.Properties.Add(dummyProperty);
+                    await dbContext.SaveChangesAsync();
+                    
+                    // الآن نفهرسها (هذا سيشغل EnsureInitializedAsync ويُنشئ الفهرس)
+                    await indexingSystem.OnPropertyCreatedAsync(dummyProperty.Id);
+                    
+                    // حذف الـ property الوهمي
+                    await indexingSystem.OnPropertyDeletedAsync(dummyProperty.Id);
+                    dbContext.Properties.Remove(dummyProperty);
+                    await dbContext.SaveChangesAsync();
+                    
+                    logger.LogInformation("✅ تمت تهيئة نظام الفهرسة بنجاح");
+                }
+                catch (Exception ex)
+                {
+                    logger.LogDebug(ex, "محاولة تهيئة الفهرس (بعض التحذيرات متوقعة)");
+                }
+            }
+            catch (Exception ex)
+            {
+                // تجاهل الأخطاء - الاختبارات ستعمل على fallback إن لزم الأمر
+                Console.WriteLine($"⚠️ تحذير: فشل تهيئة نظام الفهرسة: {ex.Message}");
+            }
         }
 
         // تم حذف RebuildIndexAsync لتجنب الحلقة اللانهائية عند بدء الاختبارات

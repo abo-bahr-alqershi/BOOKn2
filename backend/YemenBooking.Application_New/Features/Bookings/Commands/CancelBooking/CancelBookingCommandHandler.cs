@@ -181,30 +181,57 @@ public class CancelBookingCommandHandler : IRequestHandler<CancelBookingCommand,
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        // تحديث مباشر لفهرس الإتاحة
-        try
+        // ✅ تحديث مباشر لفهرس الإتاحة - Critical للبحث
+        // إذا فشل، نحتاج إعادة المحاولة لأن الفهرس سيصبح غير متطابق
+        var indexingSuccess = false;
+        var indexingAttempts = 0;
+        const int maxIndexingAttempts = 3;
+        
+        while (!indexingSuccess && indexingAttempts < maxIndexingAttempts)
         {
-            var bookingToUpdate = await _bookingRepository.GetByIdAsync(request.BookingId, cancellationToken);
-            if (bookingToUpdate != null)
+            try
             {
-                var from = DateTime.UtcNow.Date;
-                var to = from.AddMonths(6);
-                var periods = await _availabilityRepository.GetByDateRangeAsync(bookingToUpdate.UnitId, from, to);
-                var availableRanges = periods
-                    .Where(a => a.Status == "Available")
-                    .Select(p => (p.StartDate, p.EndDate))
-                    .ToList();
+                indexingAttempts++;
+                var bookingToUpdate = await _bookingRepository.GetByIdAsync(request.BookingId, cancellationToken);
+                if (bookingToUpdate != null)
+                {
+                    var from = DateTime.UtcNow.Date;
+                    var to = from.AddMonths(6);
+                    var periods = await _availabilityRepository.GetByDateRangeAsync(bookingToUpdate.UnitId, from, to);
+                    var availableRanges = periods
+                        .Where(a => a.Status == "Available")
+                        .Select(p => (p.StartDate, p.EndDate))
+                        .ToList();
 
-                // var unit = await _unitRepository.GetByIdAsync(bookingToUpdate.UnitId, cancellationToken);
-                var propertyId = unit?.PropertyId ?? Guid.Empty;
+                    var propertyId = unit?.PropertyId ?? Guid.Empty;
 
-                await _indexingService.OnAvailabilityChangedAsync(bookingToUpdate.UnitId, propertyId, availableRanges, cancellationToken);
+                    await _indexingService.OnAvailabilityChangedAsync(bookingToUpdate.UnitId, propertyId, availableRanges, cancellationToken);
+                    indexingSuccess = true;
+                    _logger.LogInformation("✅ تم تحديث فهرس الإتاحة بنجاح بعد إلغاء الحجز {BookingId} (محاولة {Attempt}/{Max})", 
+                        request.BookingId, indexingAttempts, maxIndexingAttempts);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "⚠️ فشلت محاولة {Attempt}/{Max} لتحديث فهرس الإتاحة بعد إلغاء الحجز {BookingId}", 
+                    indexingAttempts, maxIndexingAttempts, request.BookingId);
+                
+                if (indexingAttempts < maxIndexingAttempts)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(1 * indexingAttempts), cancellationToken); // Exponential backoff
+                }
+                else
+                {
+                    // ❌ Critical failure: الفهرس لن يتطابق مع الواقع
+                    _logger.LogCritical("❌ CRITICAL: فشل تحديث فهرس الإتاحة بعد {Attempts} محاولات للحجز {BookingId}. " +
+                        "الفهرس غير متطابق! يجب تشغيل re-index يدوي.", 
+                        maxIndexingAttempts, request.BookingId);
+                    
+                    // TODO: إضافة إلى background job queue للمحاولة لاحقاً
+                }
             }
         }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "تعذرت الفهرسة المباشرة للإتاحة بعد إلغاء الحجز {BookingId}", request.BookingId);
-        }
+        
         var performerName = _currentUserService.Username;
         var performerId = _currentUserService.UserId;
         var notes = $"تم إلغاء الحجز {booking.Id} بواسطة {performerName} (ID={performerId})";

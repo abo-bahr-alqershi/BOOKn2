@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 using Xunit.Abstractions;
 using YemenBooking.Core.Entities;
@@ -324,20 +325,29 @@ namespace YemenBooking.IndexingTests.Tests.Search
         {
             _output.WriteLine("🛏️ اختبار فلتر نوع الوحدة...");
 
+            // ✅ الحل الاحترافي: تنظيف ChangeTracker قبل الاختبار
+            _dbContext.ChangeTracker.Clear();
+
             // الإعداد
             var singleRoomType = Guid.Parse("20000000-0000-0000-0000-000000000001");
             var doubleRoomType = Guid.Parse("20000000-0000-0000-0000-000000000002");
 
             var hotel1 = await CreateTestPropertyAsync("فندق بغرف مفردة", "صنعاء");
-            var unit1 = _dbContext.Units.First(u => u.PropertyId == hotel1.Id);
+            _dbContext.ChangeTracker.Clear();
+            
+            var unit1 = await _dbContext.Units.FirstAsync(u => u.PropertyId == hotel1.Id);
             unit1.UnitTypeId = singleRoomType;
+            await _dbContext.SaveChangesAsync();
+            _dbContext.ChangeTracker.Clear();
 
             var hotel2 = await CreateTestPropertyAsync("فندق بغرف مزدوجة", "صنعاء");
-            var unit2 = _dbContext.Units.First(u => u.PropertyId == hotel2.Id);
+            _dbContext.ChangeTracker.Clear();
+            
+            var unit2 = await _dbContext.Units.FirstAsync(u => u.PropertyId == hotel2.Id);
             unit2.UnitTypeId = doubleRoomType;
-
-            _dbContext.Units.UpdateRange(unit1, unit2);
             await _dbContext.SaveChangesAsync();
+            _dbContext.ChangeTracker.Clear();
+            
             await _indexingService.RebuildIndexAsync();
 
             // البحث

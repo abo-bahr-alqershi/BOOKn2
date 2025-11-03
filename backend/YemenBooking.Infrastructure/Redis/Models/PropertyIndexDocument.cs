@@ -374,6 +374,8 @@ namespace YemenBooking.Infrastructure.Redis.Models
                 new("id", Id.ToString()),
                 new("name", Name ?? ""),
                 new("name_lower", NameNormalized ?? Name?.ToLowerInvariant() ?? ""),
+                // ✅ الحل الاحترافي: name_tag للبحث الدقيق في النصوص القصيرة
+                new("name_tag", CreateSearchTags(Name)),
                 new("description", Description ?? ""),
                 
                 // بيانات الموقع
@@ -386,6 +388,8 @@ namespace YemenBooking.Infrastructure.Redis.Models
                 // بيانات التصنيف
                 new("property_type_id", PropertyTypeId.ToString()),
                 new("property_type", PropertyTypeName ?? ""),
+                // ✅ property_type_name كـ TAG للبحث بالاسم
+                new("property_type_name", CreateSearchTags(PropertyTypeName)),
                 new("star_rating", StarRating),
                 
                 // بيانات التسعير
@@ -436,11 +440,30 @@ namespace YemenBooking.Infrastructure.Redis.Models
                 
                 // معرفات المرافق والخدمات
                 new("amenity_ids", string.Join(",", AmenityIds ?? new List<Guid>())),
-                new("service_ids", string.Join(",", ServiceIds ?? new List<Guid>())),
-                
-                // الحقول الديناميكية
-                new("dynamic_fields", System.Text.Json.JsonSerializer.Serialize(DynamicFields ?? new Dictionary<string, string>()))
+                new("service_ids", string.Join(",", ServiceIds ?? new List<Guid>()))
             };
+            
+            // إضافة DynamicFields بطريقتين:
+            // 1. individual fields (df:*) للقراءة المباشرة
+            // 2. dynamic_fields TEXT للبحث عبر RediSearch
+            if (DynamicFields != null && DynamicFields.Any())
+            {
+                // 1. Individual fields: df:wifi, df:pool, etc
+                var dynamicEntries = DynamicFields.Select(kv => 
+                    new HashEntry($"df:{kv.Key}", kv.Value ?? "")
+                ).ToList();
+                entries.AddRange(dynamicEntries);
+                
+                // 2. Concatenated TEXT field للبحث
+                // Format: "key:value key:value ..."
+                var searchableText = string.Join(" ", DynamicFields.Select(kv => 
+                    $"{kv.Key}:{kv.Value}"));
+                entries.Add(new HashEntry("dynamic_fields", searchableText));
+            }
+            else
+            {
+                entries.Add(new HashEntry("dynamic_fields", ""));
+            }
             
             return entries.ToArray();
         }
@@ -451,6 +474,18 @@ namespace YemenBooking.Infrastructure.Redis.Models
         public static PropertyIndexDocument FromHashEntries(HashEntry[] entries)
         {
             var dict = entries.ToDictionary(x => x.Name.ToString(), x => x.Value);
+            
+            // استخراج DynamicFields من individual fields بـ prefix "df:"
+            var dynamicFields = new Dictionary<string, string>();
+            foreach (var entry in entries)
+            {
+                var key = entry.Name.ToString();
+                if (key.StartsWith("df:"))
+                {
+                    var fieldName = key.Substring(3); // إزالة "df:" prefix
+                    dynamicFields[fieldName] = entry.Value.ToString();
+                }
+            }
             
             return new PropertyIndexDocument
             {
@@ -523,7 +558,7 @@ namespace YemenBooking.Infrastructure.Redis.Models
                 ServiceIds = ParseGuidsFromString(dict.GetValueOrDefault("service_ids", "")),
                 
                 // الحقول الديناميكية
-                DynamicFields = ParseDynamicFields(dict.GetValueOrDefault("dynamic_fields", "{}"))
+                DynamicFields = dynamicFields
             };
         }
         
@@ -568,6 +603,32 @@ namespace YemenBooking.Infrastructure.Redis.Models
                 .Select(s => Guid.TryParse(s, out var guid) ? guid : Guid.Empty)
                 .Where(g => g != Guid.Empty)
                 .ToList();
+        }
+        
+        /// <summary>
+        /// إنشاء tags للبحث من نص - يفصل بـ | للاستخدام في TAG fields
+        /// الحل الاحترافي للنصوص القصيرة: تقسيم الكلمات + إضافة النص الكامل
+        /// </summary>
+        private static string CreateSearchTags(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return "";
+            
+            // تنظيف النص
+            var cleanText = text.Trim();
+            
+            // تقسيم الكلمات وإضافة النص الكامل
+            var words = cleanText.Split(new[] { ' ', '\t', '\n', '\r', '-', '_' }, 
+                StringSplitOptions.RemoveEmptyEntries);
+            
+            var tags = new List<string> { cleanText }; // النص الكامل
+            tags.AddRange(words.Select(w => w.Trim()).Where(w => w.Length > 2)); // الكلمات الفردية
+            
+            // ✅ إضافة lowercase versions - نسخة مستقلة لتجنب modification during enumeration
+            var originalTags = tags.ToList(); // نسخة آمنة
+            tags.AddRange(originalTags.Select(t => t.ToLowerInvariant()).Distinct());
+            
+            return string.Join("|", tags.Distinct());
         }
         
         /// <summary>
