@@ -265,10 +265,30 @@ namespace YemenBooking.IndexingTests.Infrastructure
                 // إضافة بيانات UnitTypes الأساسية
                 var unitTypes = new[]
                 {
-                    new UnitType { Id = Guid.Parse("20000000-0000-0000-0000-000000000001"), Name = "غرفة مفردة", Description = "غرفة لشخص واحد" },
-                    new UnitType { Id = Guid.Parse("20000000-0000-0000-0000-000000000002"), Name = "غرفة مزدوجة", Description = "غرفة لشخصين" },
-                    new UnitType { Id = Guid.Parse("20000000-0000-0000-0000-000000000003"), Name = "جناح", Description = "جناح فندقي" },
-                    new UnitType { Id = Guid.Parse("20000000-0000-0000-0000-000000000004"), Name = "شقة", Description = "شقة كاملة" }
+                    new UnitType { 
+                        Id = Guid.Parse("20000000-0000-0000-0000-000000000001"), 
+                        Name = "غرفة مفردة", 
+                        Description = "غرفة لشخص واحد",
+                        DefaultPricingRules = "[]" // JSON فارغ
+                    },
+                    new UnitType { 
+                        Id = Guid.Parse("20000000-0000-0000-0000-000000000002"), 
+                        Name = "غرفة مزدوجة", 
+                        Description = "غرفة لشخصين",
+                        DefaultPricingRules = "[]" // JSON فارغ
+                    },
+                    new UnitType { 
+                        Id = Guid.Parse("20000000-0000-0000-0000-000000000003"), 
+                        Name = "جناح", 
+                        Description = "جناح فندقي",
+                        DefaultPricingRules = "[]" // JSON فارغ
+                    },
+                    new UnitType { 
+                        Id = Guid.Parse("20000000-0000-0000-0000-000000000004"), 
+                        Name = "شقة", 
+                        Description = "شقة كاملة",
+                        DefaultPricingRules = "[]" // JSON فارغ
+                    }
                 };
                 
                 // إضافة بيانات Amenities الأساسية
