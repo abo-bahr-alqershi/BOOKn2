@@ -509,7 +509,8 @@ namespace YemenBooking.IndexingTests.Integration
         
         private async Task<string> GetRedisPropertyDataAsync(Guid propertyId)
         {
-            var key = GetRedisKey($"property:{propertyId}");
+            // IndexingService يستخدم مفتاحًا بدون test prefix
+            var key = $"property:{propertyId}";
             return await RedisDatabase.StringGetAsync(key);
         }
         
