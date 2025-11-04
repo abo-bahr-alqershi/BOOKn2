@@ -1,19 +1,32 @@
 using System;
-using System.Threading;
+using System.Collections.Generic;
 using System.Threading.Tasks;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
+using System.Threading;
+using System.Linq;
 using Xunit;
 using Xunit.Abstractions;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
+using Microsoft.EntityFrameworkCore;
 using YemenBooking.Application.Features.SearchAndFilters.Services;
+using YemenBooking.Infrastructure.Redis.Indexing;
+using YemenBooking.Infrastructure.Redis.Core;
+using YemenBooking.Infrastructure.Redis.Core.Interfaces;
 using YemenBooking.Infrastructure.Data.Context;
 using YemenBooking.Core.Interfaces.Repositories;
+using YemenBooking.Core.Entities;
+using YemenBooking.IndexingTests.Infrastructure.Fixtures;
+using StackExchange.Redis;
+using Polly;
+using System.Diagnostics;
 
 namespace YemenBooking.IndexingTests.Infrastructure
 {
     /// <summary>
     /// الفئة الأساسية لجميع الاختبارات - بدون static state
     /// كل اختبار معزول تماماً عن الآخر
+    /// تطبق مبادئ العزل الكامل والحتمية
     /// </summary>
     public abstract class TestBase : IAsyncLifetime, IDisposable
     {
@@ -26,16 +39,27 @@ namespace YemenBooking.IndexingTests.Infrastructure
         // خدمات أساسية لكل اختبار
         protected YemenBookingDbContext DbContext;
         protected IIndexingService IndexingService;
+        protected IRedisConnectionManager RedisManager;
+        protected IDatabase RedisDatabase;
         protected ILogger<TestBase> Logger;
+        
+        // TestContainers
+        protected TestContainerFixture ContainerFixture;
         
         // للتتبع والتنظيف
         private readonly List<Guid> _trackedEntities = new();
+        private readonly List<string> _trackedRedisKeys = new();
         private readonly List<IDisposable> _disposables = new();
+        private readonly SemaphoreSlim _cleanupLock = new(1, 1);
+        
+        // Redis key prefix للعزل
+        protected readonly string RedisKeyPrefix;
         
         protected TestBase(ITestOutputHelper output)
         {
             Output = output ?? throw new ArgumentNullException(nameof(output));
             TestId = $"Test_{Guid.NewGuid():N}";
+            RedisKeyPrefix = $"test:{TestId}:";
             TestCancellation = new CancellationTokenSource();
             
             // سيتم تهيئة الخدمات في InitializeAsync
@@ -46,30 +70,53 @@ namespace YemenBooking.IndexingTests.Infrastructure
         /// </summary>
         public virtual async Task InitializeAsync()
         {
-            Output.WriteLine($"🚀 Initializing test: {TestId}");
+            var stopwatch = Stopwatch.StartNew();
+            Output.WriteLine($"🚀 Initializing test: {TestId} at {DateTime.UtcNow:HH:mm:ss.fff}");
             
-            // إنشاء ServiceProvider مخصص لهذا الاختبار
-            var services = new ServiceCollection();
-            await ConfigureServicesAsync(services);
-            
-            var provider = services.BuildServiceProvider();
-            _disposables.Add(provider);
-            
-            // إنشاء scope منفصل للاختبار
-            TestScope = provider.CreateScope();
-            _disposables.Add(TestScope);
-            
-            ServiceProvider = TestScope.ServiceProvider;
-            
-            // الحصول على الخدمات الأساسية
-            DbContext = ServiceProvider.GetRequiredService<YemenBookingDbContext>();
-            IndexingService = ServiceProvider.GetRequiredService<IIndexingService>();
-            Logger = ServiceProvider.GetRequiredService<ILogger<TestBase>>();
-            
-            // تهيئة قاعدة البيانات
-            await InitializeDatabaseAsync();
-            
-            Output.WriteLine($"✅ Test {TestId} initialized successfully");
+            try
+            {
+                // تهيئة TestContainers إذا لزم
+                if (UseTestContainers())
+                {
+                    ContainerFixture = new TestContainerFixture();
+                    await ContainerFixture.InitializeAsync();
+                    _disposables.Add(ContainerFixture);
+                }
+                
+                // إنشاء ServiceProvider مخصص لهذا الاختبار
+                var services = new ServiceCollection();
+                await ConfigureServicesAsync(services);
+                
+                var provider = services.BuildServiceProvider();
+                _disposables.Add(provider);
+                
+                // إنشاء scope منفصل للاختبار
+                TestScope = provider.CreateScope();
+                _disposables.Add(TestScope);
+                
+                ServiceProvider = TestScope.ServiceProvider;
+                
+                // الحصول على الخدمات الأساسية
+                DbContext = ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                IndexingService = ServiceProvider.GetRequiredService<IIndexingService>();
+                RedisManager = ServiceProvider.GetRequiredService<IRedisConnectionManager>();
+                RedisDatabase = RedisManager.GetDatabase();
+                Logger = ServiceProvider.GetRequiredService<ILogger<TestBase>>();
+                
+                // تهيئة قاعدة البيانات
+                await InitializeDatabaseAsync();
+                
+                // التحقق من جاهزية الخدمات
+                await VerifyServicesReadyAsync();
+                
+                stopwatch.Stop();
+                Output.WriteLine($"✅ Test {TestId} initialized successfully in {stopwatch.ElapsedMilliseconds}ms");
+            }
+            catch (Exception ex)
+            {
+                Output.WriteLine($"❌ Failed to initialize test {TestId}: {ex.Message}");
+                throw;
+            }
         }
         
         /// <summary>
@@ -77,7 +124,68 @@ namespace YemenBooking.IndexingTests.Infrastructure
         /// </summary>
         protected virtual async Task ConfigureServicesAsync(IServiceCollection services)
         {
-            // سيتم تنفيذها في الفئات المشتقة
+            // إضافة Configuration
+            var configData = new Dictionary<string, string>();
+            
+            if (UseTestContainers() && ContainerFixture != null)
+            {
+                // استخدام TestContainers connection strings
+                configData["ConnectionStrings:Redis"] = ContainerFixture.RedisConnectionString;
+                configData["ConnectionStrings:DefaultConnection"] = ContainerFixture.PostgresConnectionString;
+            }
+            else
+            {
+                // استخدام In-Memory للاختبارات السريعة
+                configData["ConnectionStrings:Redis"] = "localhost:6379";
+            }
+            
+            configData["Redis:DefaultDatabase"] = "0";
+            configData["Redis:ConnectTimeout"] = "5000";
+            configData["Redis:ConnectRetry"] = "3";
+            configData["Redis:AbortOnConnectFail"] = "false";
+            
+            var configuration = new ConfigurationBuilder()
+                .AddInMemoryCollection(configData)
+                .Build();
+            
+            services.AddSingleton<IConfiguration>(configuration);
+            
+            // تسجيل قاعدة البيانات
+            if (UseTestContainers() && ContainerFixture != null)
+            {
+                // استخدام PostgreSQL حقيقي
+                services.AddDbContext<YemenBookingDbContext>(options =>
+                {
+                    options.UseNpgsql(ContainerFixture.PostgresConnectionString);
+                    options.EnableSensitiveDataLogging();
+                    options.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
+                });
+            }
+            else
+            {
+                // استخدام In-Memory Database للاختبارات السريعة
+                var dbName = $"TestDb_{TestId}_{Guid.NewGuid():N}";
+                services.AddDbContext<YemenBookingDbContext>(options =>
+                {
+                    options.UseInMemoryDatabase(dbName);
+                    options.EnableSensitiveDataLogging();
+                    options.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
+                });
+            }
+            
+            // تسجيل خدمات Redis الحقيقية
+            services.AddSingleton<IRedisConnectionManager, RedisConnectionManager>();
+            
+            // تسجيل خدمة الفهرسة الحقيقية
+            services.AddScoped<IIndexingService, IndexingService>();
+            
+            // تسجيل Logging
+            services.AddLogging(builder =>
+            {
+                builder.AddConsole();
+                builder.SetMinimumLevel(LogLevel.Debug);
+            });
+            
             await Task.CompletedTask;
         }
         
@@ -95,15 +203,32 @@ namespace YemenBooking.IndexingTests.Infrastructure
         /// </summary>
         public virtual async Task DisposeAsync()
         {
-            Output.WriteLine($"🧹 Cleaning up test: {TestId}");
-            
+            await _cleanupLock.WaitAsync();
             try
             {
+                var stopwatch = Stopwatch.StartNew();
+                Output.WriteLine($"🧹 Cleaning up test: {TestId} at {DateTime.UtcNow:HH:mm:ss.fff}");
+                
                 // إلغاء أي عمليات جارية
                 TestCancellation.Cancel();
                 
-                // تنظيف الكيانات المتتبعة
-                await CleanupTrackedEntitiesAsync();
+                // تنظيف البيانات المتتبعة بالتوازي
+                var cleanupTasks = new List<Task>();
+                
+                if (_trackedEntities.Any())
+                {
+                    cleanupTasks.Add(CleanupTrackedEntitiesAsync());
+                }
+                
+                if (_trackedRedisKeys.Any())
+                {
+                    cleanupTasks.Add(CleanupRedisKeysAsync());
+                }
+                
+                if (cleanupTasks.Any())
+                {
+                    await Task.WhenAll(cleanupTasks);
+                }
                 
                 // تنظيف الموارد
                 foreach (var disposable in _disposables.AsEnumerable().Reverse())
@@ -118,11 +243,16 @@ namespace YemenBooking.IndexingTests.Infrastructure
                     }
                 }
                 
-                Output.WriteLine($"✅ Test {TestId} cleaned up successfully");
+                stopwatch.Stop();
+                Output.WriteLine($"✅ Test {TestId} cleaned up successfully in {stopwatch.ElapsedMilliseconds}ms");
             }
             catch (Exception ex)
             {
                 Output.WriteLine($"❌ Error during cleanup: {ex.Message}");
+            }
+            finally
+            {
+                _cleanupLock.Release();
             }
         }
         
@@ -130,6 +260,7 @@ namespace YemenBooking.IndexingTests.Infrastructure
         {
             // التنظيف الإضافي إذا لزم
             TestCancellation?.Dispose();
+            _cleanupLock?.Dispose();
         }
         
         #region Helper Methods
@@ -184,11 +315,45 @@ namespace YemenBooking.IndexingTests.Infrastructure
         }
         
         /// <summary>
-        /// تنفيذ التنظيف الفعلي للكيانات - يتم تنفيذها في الفئات المشتقة
+        /// تنفيذ التنظيف الفعلي للكيانات
         /// </summary>
         protected virtual async Task PerformEntityCleanupAsync(List<Guid> entityIds)
         {
-            await Task.CompletedTask;
+            if (!entityIds.Any()) return;
+            
+            try
+            {
+                // التنظيف بالترتيب العكسي لتجنب مشاكل FK
+                using var scope = CreateIsolatedScope();
+                var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                
+                // حذف الوحدات أولاً
+                var units = await dbContext.Units
+                    .Where(u => entityIds.Contains(u.Id) || entityIds.Contains(u.PropertyId))
+                    .ToListAsync();
+                
+                if (units.Any())
+                {
+                    dbContext.Units.RemoveRange(units);
+                }
+                
+                // حذف العقارات
+                var properties = await dbContext.Properties
+                    .Where(p => entityIds.Contains(p.Id))
+                    .ToListAsync();
+                
+                if (properties.Any())
+                {
+                    dbContext.Properties.RemoveRange(properties);
+                }
+                
+                await dbContext.SaveChangesAsync();
+                dbContext.ChangeTracker.Clear();
+            }
+            catch (Exception ex)
+            {
+                Output.WriteLine($"⚠️ Error cleaning entities: {ex.Message}");
+            }
         }
         
         /// <summary>
@@ -278,6 +443,100 @@ namespace YemenBooking.IndexingTests.Infrastructure
             return await operation();
         }
         
+        /// <summary>
+        /// تنظيف مفاتيح Redis المتتبعة
+        /// </summary>
+        protected virtual async Task CleanupRedisKeysAsync()
+        {
+            if (!_trackedRedisKeys.Any()) return;
+            
+            try
+            {
+                var keys = _trackedRedisKeys.Select(k => (RedisKey)k).ToArray();
+                await RedisDatabase.KeyDeleteAsync(keys);
+                _trackedRedisKeys.Clear();
+                
+                Output.WriteLine($"🗑️ Cleaned {keys.Length} Redis keys");
+            }
+            catch (Exception ex)
+            {
+                Output.WriteLine($"⚠️ Error cleaning Redis keys: {ex.Message}");
+            }
+        }
+        
+        /// <summary>
+        /// تتبع مفتاح Redis للتنظيف
+        /// </summary>
+        protected void TrackRedisKey(string key)
+        {
+            _trackedRedisKeys.Add(key);
+        }
+        
+        /// <summary>
+        /// التحقق من جاهزية الخدمات
+        /// </summary>
+        protected virtual async Task VerifyServicesReadyAsync()
+        {
+            // التحقق من Redis
+            if (RedisManager != null)
+            {
+                var isConnected = await WaitForConditionAsync(
+                    async () => await RedisManager.IsConnectedAsync(),
+                    result => result,
+                    TimeSpan.FromSeconds(10)
+                );
+                
+                if (!isConnected)
+                {
+                    throw new InvalidOperationException("Redis is not ready");
+                }
+            }
+            
+            // التحقق من قاعدة البيانات
+            if (DbContext != null)
+            {
+                await DbContext.Database.CanConnectAsync();
+            }
+        }
+        
+        /// <summary>
+        /// هل يستخدم الاختبار TestContainers
+        /// </summary>
+        protected virtual bool UseTestContainers()
+        {
+            // يمكن للفئات المشتقة تخصيص هذا
+            return false;
+        }
+        
+        /// <summary>
+        /// إنشاء مفتاح Redis معزول للاختبار
+        /// </summary>
+        protected string GetRedisKey(string key)
+        {
+            var fullKey = $"{RedisKeyPrefix}{key}";
+            TrackRedisKey(fullKey);
+            return fullKey;
+        }
+        
+        /// <summary>
+        /// انتظار حتى تصبح البيانات متاحة في Redis (Eventually Consistent)
+        /// </summary>
+        protected async Task<T> WaitForRedisDataAsync<T>(
+            Func<Task<T>> getData,
+            Func<T, bool> isDataReady,
+            TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(5);
+            
+            return await Policy
+                .HandleResult<T>(result => !isDataReady(result))
+                .WaitAndRetryAsync(
+                    retryCount: 50,
+                    sleepDurationProvider: _ => TimeSpan.FromMilliseconds(100))
+                .ExecuteAsync(getData);
+        }
+        
         #endregion
     }
+    
 }
