@@ -169,7 +169,7 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
                 It.IsAny<RedisKey>(),
                 It.Is<RedisValue>(v => v == "city"),
                 It.IsAny<CommandFlags>()))
-                .ReturnsAsync(oldCity);
+                .Returns(Task.FromResult<RedisValue>(oldCity));
             
             _databaseMock.Setup(x => x.HashSetAsync(
                 It.IsAny<RedisKey>(),
@@ -305,13 +305,13 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
                 It.IsAny<RedisKey>(),
                 It.IsAny<HashEntry[]>(),
                 It.IsAny<CommandFlags>()))
-                .ReturnsAsync(true);
+                .Returns(Task.FromResult(true));
             
             _databaseMock.Setup(x => x.SetAddAsync(
                 It.IsAny<RedisKey>(),
                 It.IsAny<RedisValue>(),
                 It.IsAny<CommandFlags>()))
-                .ReturnsAsync(true);
+                .Returns(Task.FromResult(true));
             
             // Act
             await _indexingService.OnUnitCreatedAsync(unit.Id, unit.PropertyId);

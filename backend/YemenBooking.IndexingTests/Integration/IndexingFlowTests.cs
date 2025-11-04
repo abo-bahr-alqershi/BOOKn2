@@ -272,10 +272,16 @@ namespace YemenBooking.IndexingTests.Integration
             {
                 new PricingRule
                 {
-                    RuleType = "seasonal",
-                    Percentage = 20,
+                    Id = Guid.NewGuid(),
+                    UnitId = unit.Id,
+                    PriceType = "seasonal",
+                    PriceAmount = 120,
+                    PercentageChange = 20,
+                    PricingTier = "high_season",
+                    Currency = "YER",
                     StartDate = DateTime.Today.AddDays(30),
-                    EndDate = DateTime.Today.AddDays(60)
+                    EndDate = DateTime.Today.AddDays(60),
+                    CreatedAt = DateTime.UtcNow
                 }
             };
             
@@ -331,7 +337,7 @@ namespace YemenBooking.IndexingTests.Integration
             // Assert: Search with dynamic fields
             var searchWithDynamicFields = await IndexingService.SearchAsync(new PropertySearchRequest
             {
-                DynamicFieldFilters = new Dictionary<string, object>
+                DynamicFieldFilters = new Dictionary<string, string>
                 {
                     ["pet_friendly"] = "true"
                 },

@@ -4,28 +4,21 @@ using System.Linq;
 using Bogus;
 using YemenBooking.Core.ValueObjects;
 using YemenBooking.Core.Entities;
-using Unit = YemenBooking.Core.Entities.Unit;
 
 namespace YemenBooking.IndexingTests.Infrastructure.Builders
 {
     /// <summary>
     /// بناء البيانات الاختبارية باستخدام Object Mother Pattern
-    /// كل بيانات فريدة ومعزولة
+    /// كل بيانات فريدة ومعزولة - بدون static state
     /// </summary>
     public static class TestDataBuilder
     {
-        private static int _counter = 0;
-        private static readonly object _lock = new object();
-        
         /// <summary>
-        /// الحصول على معرف فريد متزايد
+        /// الحصول على معرف فريد باستخدام Guid
         /// </summary>
-        private static int GetNextId()
+        private static string GetUniqueId()
         {
-            lock (_lock)
-            {
-                return ++_counter;
-            }
+            return Guid.NewGuid().ToString("N").Substring(0, 8);
         }
         
         #region Property Builders
@@ -35,7 +28,7 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
         /// </summary>
         public static Property SimpleProperty(string testId = null)
         {
-            var uniqueId = GetNextId();
+            var uniqueId = GetUniqueId();
             testId ??= Guid.NewGuid().ToString("N");
             
             var faker = new Faker<Property>("ar")
@@ -44,11 +37,11 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
                 .RuleFor(p => p.Description, f => f.Lorem.Paragraph())
                 .RuleFor(p => p.City, f => f.PickRandom("صنعاء", "عدن", "تعز", "الحديدة", "إب"))
                 .RuleFor(p => p.Address, f => f.Address.FullAddress())
-                .RuleFor(p => p.PropertyTypeId, f => GetRandomPropertyTypeId())
+                .RuleFor(p => p.TypeId, f => GetRandomPropertyTypeId())
                 .RuleFor(p => p.OwnerId, f => Guid.NewGuid())
                 .RuleFor(p => p.IsActive, f => true)
                 .RuleFor(p => p.IsApproved, f => true)
-                .RuleFor(p => p.StarRating, f => f.Random.Int(1, 5))
+                .RuleFor(p => p.AverageRating, f => f.Random.Decimal(3, 5))
                 .RuleFor(p => p.Latitude, f => f.Address.Latitude())
                 .RuleFor(p => p.Longitude, f => f.Address.Longitude())
                 .RuleFor(p => p.CreatedAt, f => DateTime.UtcNow)
@@ -77,11 +70,13 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
         {
             var property = SimpleProperty(testId);
             
-            property.PropertyAmenities = Enumerable.Range(0, amenityCount)
+            property.Amenities = Enumerable.Range(0, amenityCount)
                 .Select(i => new PropertyAmenity
                 {
+                    Id = Guid.NewGuid(),
                     PropertyId = property.Id,
-                    AmenityId = GetRandomAmenityId(),
+                    PtaId = GetRandomAmenityId(),
+                    IsAvailable = true,
                     CreatedAt = DateTime.UtcNow
                 })
                 .ToList();
@@ -97,11 +92,13 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
             var property = PropertyWithUnits(3, testId);
             
             // إضافة المرافق
-            property.PropertyAmenities = Enumerable.Range(0, 5)
+            property.Amenities = Enumerable.Range(0, 5)
                 .Select(i => new PropertyAmenity
                 {
+                    Id = Guid.NewGuid(),
                     PropertyId = property.Id,
-                    AmenityId = GetRandomAmenityId(),
+                    PtaId = GetRandomAmenityId(),
+                    IsAvailable = true,
                     CreatedAt = DateTime.UtcNow
                 })
                 .ToList();
@@ -131,18 +128,18 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
         /// </summary>
         public static YemenBooking.Core.Entities.Unit SimpleUnit(string testId = null)
         {
-            var uniqueId = GetNextId();
+            var uniqueId = GetUniqueId();
             testId ??= Guid.NewGuid().ToString("N");
             
-            var faker = new Faker<Unit>("ar")
+            var faker = new Faker<YemenBooking.Core.Entities.Unit>("ar")
                 .RuleFor(u => u.Id, f => Guid.NewGuid())
                 .RuleFor(u => u.Name, f => $"TEST_UNIT_{uniqueId}_{testId}")
-                .RuleFor(u => u.Description, f => f.Lorem.Sentence())
                 .RuleFor(u => u.UnitTypeId, f => GetRandomUnitTypeId())
-                .RuleFor(u => u.MaxAdults, f => f.Random.Int(1, 4))
-                .RuleFor(u => u.MaxChildren, f => f.Random.Int(0, 2))
+                .RuleFor(u => u.AdultsCapacity, f => f.Random.Int(1, 4))
+                .RuleFor(u => u.ChildrenCapacity, f => f.Random.Int(0, 2))
+                .RuleFor(u => u.MaxCapacity, f => f.Random.Int(1, 6))
                 .RuleFor(u => u.BasePrice, f => new Money(f.Random.Decimal(50, 1000), "YER"))
-                .RuleFor(u => u.IsActive, f => true)
+                .RuleFor(u => u.IsAvailable, f => true)
                 .RuleFor(u => u.CreatedAt, f => DateTime.UtcNow)
                 .RuleFor(u => u.UpdatedAt, f => DateTime.UtcNow);
             
@@ -166,7 +163,7 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
         {
             var unit = UnitForProperty(propertyId, testId);
             
-            unit.Availabilities = new List<UnitAvailability>
+            unit.UnitAvailabilities = new List<UnitAvailability>
             {
                 new UnitAvailability
                 {
@@ -174,7 +171,6 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
                     UnitId = unit.Id,
                     StartDate = from,
                     EndDate = to,
-                    IsAvailable = true,
                     CreatedAt = DateTime.UtcNow
                 }
             };

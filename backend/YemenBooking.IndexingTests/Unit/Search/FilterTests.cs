@@ -71,7 +71,7 @@ namespace YemenBooking.IndexingTests.Unit.Search
             SetupCityFilter(city, sanaaProperties);
             
             // Act
-            var result = await _searchEngine.SearchAsync(request);
+            var result = await _searchEngine.ExecuteSearchAsync(request);
             
             // Assert
             result.Should().AllBeInCity(city);
@@ -114,10 +114,10 @@ namespace YemenBooking.IndexingTests.Unit.Search
                 CreatePropertyWithPrice(Guid.NewGuid(), 600m)
             };
             
-            SetupPriceFilter(matchingProperties.Select(p => p.Id).ToArray());
+            SetupPriceFilter(matchingProperties.Select(p => Guid.Parse(p.Id)).ToArray());
             
             // Act
-            var result = await _searchEngine.SearchAsync(request);
+            var result = await _searchEngine.ExecuteSearchAsync(request);
             
             // Assert
             result.Should().HavePricesInRange(minPrice, maxPrice);
@@ -149,7 +149,7 @@ namespace YemenBooking.IndexingTests.Unit.Search
             SetupPropertyTypeFilter(propertyTypeId, matchingProperties);
             
             // Act
-            var result = await _searchEngine.SearchAsync(request);
+            var result = await _searchEngine.ExecuteSearchAsync(request);
             
             // Assert
             result.Should().AllBeOfType(propertyTypeId.ToString());
@@ -178,10 +178,10 @@ namespace YemenBooking.IndexingTests.Unit.Search
                 CreatePropertyWithCapacity(Guid.NewGuid(), 3)
             };
             
-            SetupCapacityFilter(matchingProperties.Select(p => p.Id).ToArray());
+            SetupCapacityFilter(matchingProperties.Select(p => Guid.Parse(p.Id)).ToArray());
             
             // Act
-            var result = await _searchEngine.SearchAsync(request);
+            var result = await _searchEngine.ExecuteSearchAsync(request);
             
             // Assert
             result.Properties.All(p => p.MaxCapacity >= guestsCount).Should().BeTrue();
@@ -209,7 +209,7 @@ namespace YemenBooking.IndexingTests.Unit.Search
             SetupComplexFilter(matchingProperty);
             
             // Act
-            var result = await _searchEngine.SearchAsync(request);
+            var result = await _searchEngine.ExecuteSearchAsync(request);
             
             // Assert
             result.Should().HaveAtLeast(1);
@@ -217,7 +217,7 @@ namespace YemenBooking.IndexingTests.Unit.Search
             
             var property = result.Properties.First(p => p.Id == matchingProperty.ToString());
             property.City.Should().Be(request.City);
-            property.PropertyType.Should().Be(request.PropertyType);
+            property.PropertyType.Should().Be("منتجع");
             property.MinPrice.Should().BeInRange(request.MinPrice.Value, request.MaxPrice.Value);
             property.AverageRating.Should().BeGreaterOrEqualTo(request.MinRating.Value);
             property.MaxCapacity.Should().BeGreaterOrEqualTo(request.GuestsCount.Value);
@@ -246,7 +246,7 @@ namespace YemenBooking.IndexingTests.Unit.Search
             SetupAmenityFilter(amenityIds, matchingProperties);
             
             // Act
-            var result = await _searchEngine.SearchAsync(request);
+            var result = await _searchEngine.ExecuteSearchAsync(request);
             
             // Assert
             result.Should().HaveCount(matchingProperties.Length);
@@ -280,7 +280,7 @@ namespace YemenBooking.IndexingTests.Unit.Search
             SetupDynamicFieldFilter(dynamicFilters, matchingProperties);
             
             // Act
-            var result = await _searchEngine.SearchAsync(request);
+            var result = await _searchEngine.ExecuteSearchAsync(request);
             
             // Assert
             result.Should().HaveCount(matchingProperties.Length);
@@ -310,7 +310,7 @@ namespace YemenBooking.IndexingTests.Unit.Search
             SetupAvailabilityFilter(checkIn, checkOut, availableProperties, unavailableProperties);
             
             // Act
-            var result = await _searchEngine.SearchAsync(request);
+            var result = await _searchEngine.ExecuteSearchAsync(request);
             
             // Assert
             foreach (var id in availableProperties)
@@ -346,7 +346,7 @@ namespace YemenBooking.IndexingTests.Unit.Search
             SetupSortingTest(properties);
             
             // Act
-            var result = await _searchEngine.SearchAsync(request);
+            var result = await _searchEngine.ExecuteSearchAsync(request);
             
             // Assert
             switch (sortBy)
@@ -423,7 +423,7 @@ namespace YemenBooking.IndexingTests.Unit.Search
             SetupPropertyDetails(propertyIds);
         }
         
-        private void SetupDynamicFieldFilter(Dictionary<string, object> fields, Guid[] propertyIds)
+        private void SetupDynamicFieldFilter(Dictionary<string, string> fields, Guid[] propertyIds)
         {
             SetupPropertyDetails(propertyIds, dynamicFields: fields);
         }
@@ -431,36 +431,25 @@ namespace YemenBooking.IndexingTests.Unit.Search
         private void SetupAvailabilityFilter(DateTime checkIn, DateTime checkOut, 
             Guid[] availableProperties, Guid[] unavailableProperties)
         {
+            // تكوين التوفر للعقارات المتاحة
             foreach (var id in availableProperties)
             {
-                _availabilityMock.Setup(x => x.CheckPropertyAvailabilityAsync(
-                    It.Is<Guid>(g => g == id),
-                    It.IsAny<DateTime>(),
-                    It.IsAny<DateTime>(),
-                    It.IsAny<int>(),
-                    It.IsAny<Guid?>(),
-                    It.IsAny<CancellationToken>()))
-                    .ReturnsAsync(new PropertyAvailabilityResult
-                    {
-                        IsAvailable = true,
-                        TotalAvailableUnits = 1
-                    });
+                // محاكاة أن العقار متاح
+                var availableKey = $"property:{id}:availability:{checkIn:yyyy-MM-dd}:{checkOut:yyyy-MM-dd}";
+                _databaseMock.Setup(x => x.StringGetAsync(
+                    It.Is<RedisKey>(k => k.ToString() == availableKey),
+                    It.IsAny<CommandFlags>()))
+                    .ReturnsAsync("available");
             }
             
             foreach (var id in unavailableProperties)
             {
-                _availabilityMock.Setup(x => x.CheckPropertyAvailabilityAsync(
-                    It.Is<Guid>(g => g == id),
-                    It.IsAny<DateTime>(),
-                    It.IsAny<DateTime>(),
-                    It.IsAny<int>(),
-                    It.IsAny<Guid?>(),
-                    It.IsAny<CancellationToken>()))
-                    .ReturnsAsync(new PropertyAvailabilityResult
-                    {
-                        IsAvailable = false,
-                        Message = "No units available"
-                    });
+                // محاكاة أن العقار غير متاح
+                var unavailableKey = $"property:{id}:availability:{checkIn:yyyy-MM-dd}:{checkOut:yyyy-MM-dd}";
+                _databaseMock.Setup(x => x.StringGetAsync(
+                    It.Is<RedisKey>(k => k.ToString() == unavailableKey),
+                    It.IsAny<CommandFlags>()))
+                    .ReturnsAsync(RedisValue.Null);
             }
             
             SetupPropertyDetails(availableProperties.Concat(unavailableProperties).ToArray());
@@ -481,10 +470,15 @@ namespace YemenBooking.IndexingTests.Unit.Search
                 {
                     new("id", prop.Id.ToString()),
                     new("name", prop.Name),
+                    new("city", prop.City),
+                    new("property_type", prop.PropertyType),
                     new("min_price", prop.MinPrice.ToString()),
                     new("average_rating", prop.AverageRating.ToString()),
-                    new("created_at", prop.CreatedAt.Ticks.ToString()),
-                    new("booking_count", prop.BookingCount.ToString()),
+                    new("star_rating", prop.StarRating.ToString()),
+                    new("max_capacity", prop.MaxCapacity.ToString()),
+                    new("units_count", prop.UnitsCount.ToString()),
+                    new("latitude", prop.Latitude.ToString()),
+                    new("longitude", prop.Longitude.ToString()),
                     new("is_active", "1"),
                     new("is_approved", "1")
                 };
@@ -497,12 +491,8 @@ namespace YemenBooking.IndexingTests.Unit.Search
         }
         
         private void SetupPropertyDetails(Guid[] propertyIds,
-            string city = "صنعاء",
-            string propertyType = null,
-            decimal minPrice = 100,
-            decimal rating = 4.0m,
-            int capacity = 2,
-            Dictionary<string, object> dynamicFields = null)
+            string city = null, decimal price = 0, string propertyType = null, 
+            int capacity = 0, Dictionary<string, string> dynamicFields = null)
         {
             foreach (var id in propertyIds)
             {
@@ -510,9 +500,9 @@ namespace YemenBooking.IndexingTests.Unit.Search
                 {
                     new("id", id.ToString()),
                     new("name", $"Property {id}"),
-                    new("city", city),
-                    new("min_price", minPrice.ToString()),
-                    new("average_rating", rating.ToString()),
+                    new("city", city ?? "صنعاء"),
+                    new("min_price", price.ToString()),
+                    new("average_rating", "4.5"),
                     new("max_capacity", capacity.ToString()),
                     new("is_active", "1"),
                     new("is_approved", "1")

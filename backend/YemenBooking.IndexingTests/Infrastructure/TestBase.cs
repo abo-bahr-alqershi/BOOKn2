@@ -18,15 +18,15 @@ namespace YemenBooking.IndexingTests.Infrastructure
     public abstract class TestBase : IAsyncLifetime, IDisposable
     {
         protected readonly ITestOutputHelper Output;
-        protected readonly IServiceProvider ServiceProvider;
-        protected readonly IServiceScope TestScope;
+        protected IServiceProvider ServiceProvider;
+        protected IServiceScope TestScope;
         protected readonly string TestId;
         protected readonly CancellationTokenSource TestCancellation;
         
         // خدمات أساسية لكل اختبار
-        protected readonly YemenBookingDbContext DbContext;
-        protected readonly IIndexingService IndexingService;
-        protected readonly ILogger<TestBase> Logger;
+        protected YemenBookingDbContext DbContext;
+        protected IIndexingService IndexingService;
+        protected ILogger<TestBase> Logger;
         
         // للتتبع والتنظيف
         private readonly List<Guid> _trackedEntities = new();

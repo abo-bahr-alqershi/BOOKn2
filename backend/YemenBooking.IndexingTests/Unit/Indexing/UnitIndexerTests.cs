@@ -69,8 +69,9 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
             // Arrange
             var propertyId = Guid.NewGuid();
             var unit = TestDataBuilder.UnitForProperty(propertyId, _testId);
-            unit.MaxAdults = 4;
-            unit.MaxChildren = 2;
+            unit.AdultsCapacity = 4;
+            unit.ChildrenCapacity = 2;
+            unit.MaxCapacity = 6;
             
             // Act
             await _indexingService.OnUnitCreatedAsync(unit.Id, propertyId);
@@ -106,9 +107,9 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
                 Times.Once);
             
             _transactionMock.Verify(x => x.SortedSetAddAsync(
-                It.Is<RedisKey>(k => k.ToString() == "idx:unit:max_adults"),
+                It.Is<RedisKey>(k => k.ToString() == "idx:unit:adults_capacity"),
                 It.Is<RedisValue>(v => v.ToString() == unit.Id.ToString()),
-                It.Is<double>(score => score == unit.MaxAdults),
+                It.Is<double>(score => score == unit.AdultsCapacity.GetValueOrDefault()),
                 It.IsAny<CommandFlags>()),
                 Times.Once);
             
@@ -261,8 +262,8 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
                     LogLevel.Error,
                     It.IsAny<EventId>(),
                     It.IsAny<It.IsAnyType>(),
-                    It.IsAny<Exception>(),
-                    It.IsAny<Func<It.IsAnyType, Exception, string>>()),
+                    It.IsAny<Exception?>(),
+                    It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
                 Times.AtLeastOnce);
             
             _output.WriteLine($"✅ Redis error handled gracefully");
@@ -280,8 +281,8 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
             var propertyId = Guid.NewGuid();
             var unit = TestDataBuilder.SimpleUnit(_testId);
             unit.PropertyId = propertyId;
-            unit.MaxAdults = maxAdults;
-            unit.MaxChildren = maxChildren;
+            unit.AdultsCapacity = maxAdults;
+            unit.ChildrenCapacity = maxChildren;
             
             // Act
             await _indexingService.OnUnitCreatedAsync(unit.Id, propertyId);

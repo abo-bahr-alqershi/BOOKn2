@@ -343,9 +343,9 @@ namespace YemenBooking.IndexingTests.Unit.Search
                 It.IsAny<RedisKey[]>(),
                 It.IsAny<RedisValue[]>(),
                 It.IsAny<CommandFlags>()))
-                .ReturnsAsync(RedisResult.Create(
+                .ReturnsAsync(RedisResult.Create(new RedisValue(
                     $"{{\"total_count\":{matchingIds.Length},\"results\":[{string.Join(",", matchingIds.Select(id => $"[\"{id}\"]"))}]}}"
-                ));
+                )));
             
             SetupBasicSearch(matchingIds);
         }

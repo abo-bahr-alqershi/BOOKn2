@@ -171,6 +171,17 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 using var scope = _serviceProvider.CreateScope();
                 var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
                 
+                // التحقق من وجود العقار أولاً
+                var propertyExists = await dbContext.Properties
+                    .AsNoTracking()
+                    .AnyAsync(p => p.Id == propertyId, cancellationToken);
+                    
+                if (!propertyExists)
+                {
+                    _logger.LogError("Property {PropertyId} not found for unit {UnitId}. Cannot index unit without valid property", propertyId, unitId);
+                    throw new InvalidOperationException($"Property {propertyId} not found. Unit must be associated with an existing property.");
+                }
+                
                 var unit = await dbContext.Units
                     .Include(u => u.UnitType)
                     .AsNoTracking()
@@ -181,6 +192,14 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                     _logger.LogWarning("Unit {UnitId} not found for indexing", unitId);
                     return;
                 }
+                
+                // التحقق من أن الوحدة تنتمي للعقار الصحيح
+                if (unit.PropertyId != propertyId)
+                {
+                    _logger.LogError("Unit {UnitId} belongs to property {ActualPropertyId}, not {RequestedPropertyId}", 
+                        unitId, unit.PropertyId, propertyId);
+                    throw new InvalidOperationException($"Unit {unitId} does not belong to property {propertyId}");
+                }
 
                 await IndexUnitAsync(unit, propertyId, cancellationToken);
                 
@@ -188,6 +207,11 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 await UpdatePropertyAggregatesAsync(propertyId, cancellationToken);
                 
                 _logger.LogInformation("Successfully indexed unit {UnitId} for property {PropertyId}", unitId, propertyId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error indexing unit {UnitId} for property {PropertyId}", unitId, propertyId);
+                throw;
             }
             finally
             {

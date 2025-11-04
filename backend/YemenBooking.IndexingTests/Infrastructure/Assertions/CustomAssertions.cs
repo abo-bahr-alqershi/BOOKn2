@@ -195,6 +195,22 @@ namespace YemenBooking.IndexingTests.Infrastructure.Assertions
         }
         
         /// <summary>
+        /// التحقق من وجود عقار معين بواسطة string ID
+        /// </summary>
+        public PropertySearchResultAssertions ContainProperty(string propertyId, string because = "")
+        {
+            Execute.Assertion
+                .ForCondition(_result?.Properties != null)
+                .FailWith("Expected search result properties to exist, but they were null")
+                .Then
+                .ForCondition(_result.Properties.Any(p => p.Id == propertyId))
+                .FailWith($"Expected search results to contain property with ID '{{0}}'{{reason}}, but it was not found",
+                    propertyId, because);
+            
+            return this;
+        }
+        
+        /// <summary>
         /// التحقق من عدم وجود عقار معين
         /// </summary>
         public PropertySearchResultAssertions NotContainProperty(Guid propertyId, string because = "")
@@ -204,6 +220,22 @@ namespace YemenBooking.IndexingTests.Infrastructure.Assertions
                 .FailWith("Expected search result properties to exist, but they were null")
                 .Then
                 .ForCondition(!_result.Properties.Any(p => p.Id == propertyId.ToString()))
+                .FailWith($"Expected search results not to contain property with ID '{{0}}'{{reason}}, but it was found",
+                    propertyId, because);
+            
+            return this;
+        }
+        
+        /// <summary>
+        /// التحقق من عدم وجود عقار معين بواسطة string ID
+        /// </summary>
+        public PropertySearchResultAssertions NotContainProperty(string propertyId, string because = "")
+        {
+            Execute.Assertion
+                .ForCondition(_result?.Properties != null)
+                .FailWith("Expected search result properties to exist, but they were null")
+                .Then
+                .ForCondition(!_result.Properties.Any(p => p.Id == propertyId))
                 .FailWith($"Expected search results not to contain property with ID '{{0}}'{{reason}}, but it was found",
                     propertyId, because);
             
