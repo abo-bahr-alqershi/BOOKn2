@@ -17,7 +17,7 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
     /// <summary>
     /// محرك البحث - يطبق مبادئ العزل والأداء
     /// </summary>
-    internal sealed class SearchEngine
+    public sealed class SearchEngine
     {
         private readonly IRedisConnectionManager _redisManager;
         private readonly IServiceProvider _serviceProvider;

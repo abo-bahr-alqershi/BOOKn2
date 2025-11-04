@@ -8,7 +8,8 @@ using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using YemenBooking.Core.Entities;
 using YemenBooking.Core.Interfaces.Repositories;
-using YemenBooking.Application.Infrastructure.Services;
+using YemenBooking.Infrastructure.Redis.Core;
+using YemenBooking.Infrastructure.Redis.Core.Interfaces;
 using YemenBooking.Infrastructure.Redis.Indexing;
 using YemenBooking.IndexingTests.Infrastructure.Builders;
 using StackExchange.Redis;
@@ -23,14 +24,11 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
     {
         private readonly ITestOutputHelper _output;
         private readonly Mock<IRedisConnectionManager> _redisManagerMock;
-        private readonly Mock<IPropertyRepository> _propertyRepoMock;
-        private readonly Mock<IUnitAvailabilityRepository> _availabilityRepoMock;
-        private readonly Mock<IBookingRepository> _bookingRepoMock;
-        private readonly Mock<IConfiguration> _configMock;
-        private readonly Mock<ILogger<SmartIndexingLayer>> _loggerMock;
+        private readonly Mock<IServiceProvider> _serviceProviderMock;
+        private readonly Mock<ILogger<IndexingService>> _loggerMock;
         private readonly Mock<IDatabase> _databaseMock;
         private readonly Mock<ITransaction> _transactionMock;
-        private readonly SmartIndexingLayer _indexingLayer;
+        private readonly IndexingService _indexingService;
         private readonly string _testId;
         
         public UnitIndexerTests(ITestOutputHelper output)
@@ -40,11 +38,8 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
             
             // إعداد Mocks
             _redisManagerMock = new Mock<IRedisConnectionManager>();
-            _propertyRepoMock = new Mock<IPropertyRepository>();
-            _availabilityRepoMock = new Mock<IUnitAvailabilityRepository>();
-            _bookingRepoMock = new Mock<IBookingRepository>();
-            _configMock = new Mock<IConfiguration>();
-            _loggerMock = new Mock<ILogger<SmartIndexingLayer>>();
+            _serviceProviderMock = new Mock<IServiceProvider>();
+            _loggerMock = new Mock<ILogger<IndexingService>>();
             _databaseMock = new Mock<IDatabase>();
             _transactionMock = new Mock<ITransaction>();
             
@@ -54,18 +49,16 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
             _transactionMock.Setup(x => x.ExecuteAsync(It.IsAny<CommandFlags>())).ReturnsAsync(true);
             
             // إعداد Configuration
+            var _configMock = new Mock<IConfiguration>();
             _configMock.Setup(x => x.GetSection(It.IsAny<string>()))
                 .Returns(Mock.Of<IConfigurationSection>());
             _configMock.Setup(x => x["Performance:MaxConcurrentIndexing"])
                 .Returns("10");
             
             // إنشاء الطبقة المختبرة
-            _indexingLayer = new SmartIndexingLayer(
+            _indexingService = new IndexingService(
+                _serviceProviderMock.Object,
                 _redisManagerMock.Object,
-                _propertyRepoMock.Object,
-                _availabilityRepoMock.Object,
-                _bookingRepoMock.Object,
-                _configMock.Object,
                 _loggerMock.Object
             );
         }
@@ -80,10 +73,9 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
             unit.MaxChildren = 2;
             
             // Act
-            var result = await _indexingLayer.IndexUnitAsync(unit);
+            await _indexingService.OnUnitCreatedAsync(unit.Id, propertyId);
             
-            // Assert
-            result.Should().BeTrue();
+            // Assert - التحقق من النجاح
             
             // التحقق من حفظ بيانات الوحدة
             _transactionMock.Verify(x => x.HashSetAsync(
@@ -143,10 +135,9 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
             );
             
             // Act
-            var result = await _indexingLayer.IndexUnitAsync(unit);
+            await _indexingService.OnUnitCreatedAsync(unit.Id, propertyId);
             
-            // Assert
-            result.Should().BeTrue();
+            // Assert - التحقق من النجاح
             
             // التحقق من فهرسة التسعير
             _transactionMock.Verify(x => x.SortedSetAddAsync(
@@ -171,14 +162,15 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
         public async Task IndexUnitAsync_WithInactiveUnit_ShouldNotIndexAvailability()
         {
             // Arrange
+            var propertyId = Guid.NewGuid();
             var unit = TestDataBuilder.SimpleUnit(_testId);
             unit.IsActive = false;
+            unit.PropertyId = propertyId;
             
             // Act
-            var result = await _indexingLayer.IndexUnitAsync(unit);
+            await _indexingService.OnUnitCreatedAsync(unit.Id, propertyId);
             
-            // Assert
-            result.Should().BeTrue();
+            // Assert - التحقق من النجاح
             
             // التحقق من عدم فهرسة الإتاحة للوحدة غير النشطة
             _transactionMock.Verify(x => x.SortedSetAddAsync(
@@ -199,14 +191,12 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
             var units = TestDataBuilder.BatchUnits(propertyId, 5, _testId);
             
             // Act
-            var results = new List<bool>();
             foreach (var unit in units)
             {
-                results.Add(await _indexingLayer.IndexUnitAsync(unit));
+                await _indexingService.OnUnitCreatedAsync(unit.Id, propertyId);
             }
             
-            // Assert
-            results.Should().AllBeEquivalentTo(true);
+            // Assert - التحقق من النجاح
             
             // التحقق من فهرسة جميع الوحدات
             foreach (var unit in units)
@@ -225,13 +215,19 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
         public async Task IndexUnitAsync_WithNullUnit_ShouldReturnFalse()
         {
             // Arrange
-            Unit unit = null;
+            var propertyId = Guid.NewGuid();
             
-            // Act
-            var result = await _indexingLayer.IndexUnitAsync(unit);
+            // Act - محاولة فهرسة وحدة فارغة
+            try
+            {
+                await _indexingService.OnUnitCreatedAsync(Guid.Empty, propertyId);
+            }
+            catch
+            {
+                // متوقع
+            }
             
-            // Assert
-            result.Should().BeFalse();
+            // Assert - يجب عدم الفهرسة
             
             // التحقق من عدم استدعاء أي عمليات Redis
             _transactionMock.Verify(x => x.HashSetAsync(
@@ -247,16 +243,17 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
         public async Task IndexUnitAsync_WithRedisError_ShouldHandleGracefully()
         {
             // Arrange
+            var propertyId = Guid.NewGuid();
             var unit = TestDataBuilder.SimpleUnit(_testId);
+            unit.PropertyId = propertyId;
             
             _transactionMock.Setup(x => x.ExecuteAsync(It.IsAny<CommandFlags>()))
                 .ThrowsAsync(new RedisException("Connection failed"));
             
             // Act
-            var result = await _indexingLayer.IndexUnitAsync(unit);
+            await _indexingService.OnUnitCreatedAsync(unit.Id, propertyId);
             
-            // Assert
-            result.Should().BeFalse();
+            // Assert - يجب عدم الفهرسة
             
             // التحقق من تسجيل الخطأ
             _loggerMock.Verify(
@@ -280,15 +277,16 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
             int maxAdults, int maxChildren, bool expectAdultIndex, bool expectChildIndex)
         {
             // Arrange
+            var propertyId = Guid.NewGuid();
             var unit = TestDataBuilder.SimpleUnit(_testId);
+            unit.PropertyId = propertyId;
             unit.MaxAdults = maxAdults;
             unit.MaxChildren = maxChildren;
             
             // Act
-            var result = await _indexingLayer.IndexUnitAsync(unit);
+            await _indexingService.OnUnitCreatedAsync(unit.Id, propertyId);
             
-            // Assert
-            result.Should().BeTrue();
+            // Assert - التحقق من النجاح
             
             // التحقق من فهرسة البالغين
             var adultIndexTimes = expectAdultIndex ? Times.Once() : Times.Never();

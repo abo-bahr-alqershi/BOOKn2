@@ -10,11 +10,9 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Caching.Memory;
 using YemenBooking.Core.Indexing.Models;
 using YemenBooking.Core.Interfaces.Repositories;
-using YemenBooking.Application.Infrastructure.Services;
-using YemenBooking.Infrastructure.Redis.Search;
-using YemenBooking.Infrastructure.Redis.Cache;
-using YemenBooking.Infrastructure.Redis.Availability;
-using YemenBooking.Infrastructure.Redis.Models;
+using YemenBooking.Infrastructure.Redis.Core;
+using YemenBooking.Infrastructure.Redis.Core.Interfaces;
+using YemenBooking.Infrastructure.Redis.Indexing;
 using YemenBooking.IndexingTests.Infrastructure.Builders;
 using YemenBooking.IndexingTests.Infrastructure.Assertions;
 using StackExchange.Redis;
@@ -29,12 +27,11 @@ namespace YemenBooking.IndexingTests.Unit.Search
         private readonly ITestOutputHelper _output;
         private readonly Mock<IRedisConnectionManager> _redisManagerMock;
         private readonly Mock<IPropertyRepository> _propertyRepoMock;
-        private readonly Mock<MultiLevelCache> _cacheMock;
-        private readonly Mock<AvailabilityProcessor> _availabilityMock;
-        private readonly Mock<ILogger<OptimizedSearchEngine>> _loggerMock;
+        private readonly Mock<IRedisCache> _cacheMock;
+        private readonly Mock<ILogger<SearchEngine>> _loggerMock;
         private readonly Mock<IDatabase> _databaseMock;
         private readonly IMemoryCache _memoryCache;
-        private readonly OptimizedSearchEngine _searchEngine;
+        private readonly SearchEngine _searchEngine;
         private readonly string _testId;
         
         public FilterTests(ITestOutputHelper output)
@@ -45,22 +42,19 @@ namespace YemenBooking.IndexingTests.Unit.Search
             // إعداد Mocks
             _redisManagerMock = new Mock<IRedisConnectionManager>();
             _propertyRepoMock = new Mock<IPropertyRepository>();
-            _cacheMock = new Mock<MultiLevelCache>(null, null, null);
-            _availabilityMock = new Mock<AvailabilityProcessor>(null, null, null, null);
-            _loggerMock = new Mock<ILogger<OptimizedSearchEngine>>();
+            _cacheMock = new Mock<IRedisCache>();
+            _loggerMock = new Mock<ILogger<SearchEngine>>();
             _databaseMock = new Mock<IDatabase>();
             _memoryCache = new MemoryCache(new MemoryCacheOptions());
             
             _redisManagerMock.Setup(x => x.GetDatabase()).Returns(_databaseMock.Object);
             _redisManagerMock.Setup(x => x.IsConnectedAsync()).ReturnsAsync(true);
             
-            _searchEngine = new OptimizedSearchEngine(
+            var serviceProviderMock = new Mock<IServiceProvider>();
+            _searchEngine = new SearchEngine(
                 _redisManagerMock.Object,
-                _propertyRepoMock.Object,
-                _cacheMock.Object,
-                _availabilityMock.Object,
-                _loggerMock.Object,
-                _memoryCache
+                serviceProviderMock.Object,
+                _loggerMock.Object
             );
         }
         
@@ -472,7 +466,7 @@ namespace YemenBooking.IndexingTests.Unit.Search
             SetupPropertyDetails(availableProperties.Concat(unavailableProperties).ToArray());
         }
         
-        private void SetupSortingTest(List<PropertyIndexDocument> properties)
+        private void SetupSortingTest(List<PropertySearchItem> properties)
         {
             var propertyIds = properties.Select(p => p.Id).ToArray();
             
@@ -543,66 +537,60 @@ namespace YemenBooking.IndexingTests.Unit.Search
             }
         }
         
-        private PropertyIndexDocument CreatePropertyWithPrice(Guid id, decimal price)
+        private PropertySearchItem CreateTestDocument(Guid id, string city = null, decimal price = 0)
         {
-            return new PropertyIndexDocument
+            return new PropertySearchItem
             {
-                Id = id,
+                Id = id.ToString(),
                 Name = $"Property {id}",
-                MinPrice = price,
-                IsActive = true,
-                IsApproved = true
+                MinPrice = price
             };
         }
         
-        private PropertyIndexDocument CreatePropertyWithCapacity(Guid id, int capacity)
+        private PropertySearchItem CreatePropertyWithPrice(Guid id, decimal price)
         {
-            return new PropertyIndexDocument
+            return new PropertySearchItem
             {
-                Id = id,
+                Id = id.ToString(),
                 Name = $"Property {id}",
-                MaxCapacity = capacity,
-                IsActive = true,
-                IsApproved = true
+                MinPrice = price
             };
         }
         
-        private List<PropertyIndexDocument> CreatePropertiesForSorting()
+        private PropertySearchItem CreatePropertyWithCapacity(Guid id, int capacity)
         {
-            return new List<PropertyIndexDocument>
+            return new PropertySearchItem
             {
-                new PropertyIndexDocument
+                Id = id.ToString(),
+                Name = $"Property {id}",
+                MaxCapacity = capacity
+            };
+        }
+        
+        private List<PropertySearchItem> CreatePropertiesForSorting()
+        {
+            return new List<PropertySearchItem>
+            {
+                new PropertySearchItem
                 {
-                    Id = Guid.NewGuid(),
+                    Id = Guid.NewGuid().ToString(),
                     Name = "Property A",
                     MinPrice = 300,
-                    AverageRating = 3.5m,
-                    CreatedAt = DateTime.UtcNow.AddDays(-10),
-                    BookingCount = 5,
-                    IsActive = true,
-                    IsApproved = true
+                    AverageRating = 3.5m
                 },
-                new PropertyIndexDocument
+                new PropertySearchItem
                 {
-                    Id = Guid.NewGuid(),
+                    Id = Guid.NewGuid().ToString(),
                     Name = "Property B",
                     MinPrice = 100,
-                    AverageRating = 4.8m,
-                    CreatedAt = DateTime.UtcNow.AddDays(-5),
-                    BookingCount = 15,
-                    IsActive = true,
-                    IsApproved = true
+                    AverageRating = 4.8m
                 },
-                new PropertyIndexDocument
+                new PropertySearchItem
                 {
-                    Id = Guid.NewGuid(),
+                    Id = Guid.NewGuid().ToString(),
                     Name = "Property C",
                     MinPrice = 200,
-                    AverageRating = 4.2m,
-                    CreatedAt = DateTime.UtcNow.AddDays(-1),
-                    BookingCount = 10,
-                    IsActive = true,
-                    IsApproved = true
+                    AverageRating = 4.2m
                 }
             };
         }

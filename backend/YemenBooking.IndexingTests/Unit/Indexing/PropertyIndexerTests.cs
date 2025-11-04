@@ -8,7 +8,8 @@ using Microsoft.Extensions.Logging;
 using YemenBooking.Application.Features.SearchAndFilters.Services;
 using YemenBooking.Core.Entities;
 using YemenBooking.Core.Interfaces.Repositories;
-using YemenBooking.Application.Infrastructure.Services;
+using YemenBooking.Infrastructure.Redis.Core;
+using YemenBooking.Infrastructure.Redis.Core.Interfaces;
 using YemenBooking.Infrastructure.Redis.Indexing;
 using YemenBooking.IndexingTests.Infrastructure.Builders;
 using StackExchange.Redis;
@@ -25,12 +26,10 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
         private readonly ITestOutputHelper _output;
         private readonly Mock<IRedisConnectionManager> _redisManagerMock;
         private readonly Mock<IPropertyRepository> _propertyRepoMock;
-        private readonly Mock<IUnitAvailabilityRepository> _availabilityRepoMock;
-        private readonly Mock<IBookingRepository> _bookingRepoMock;
-        private readonly Mock<IConfiguration> _configMock;
-        private readonly Mock<ILogger<SmartIndexingLayer>> _loggerMock;
+        private readonly Mock<IServiceProvider> _serviceProviderMock;
+        private readonly Mock<ILogger<IndexingService>> _loggerMock;
         private readonly Mock<IDatabase> _databaseMock;
-        private readonly SmartIndexingLayer _indexingLayer;
+        private readonly IndexingService _indexingService;
         private readonly string _testId;
         
         public PropertyIndexerTests(ITestOutputHelper output)
@@ -41,10 +40,8 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
             // إعداد Mocks
             _redisManagerMock = new Mock<IRedisConnectionManager>();
             _propertyRepoMock = new Mock<IPropertyRepository>();
-            _availabilityRepoMock = new Mock<IUnitAvailabilityRepository>();
-            _bookingRepoMock = new Mock<IBookingRepository>();
-            _configMock = new Mock<IConfiguration>();
-            _loggerMock = new Mock<ILogger<SmartIndexingLayer>>();
+            _serviceProviderMock = new Mock<IServiceProvider>();
+            _loggerMock = new Mock<ILogger<IndexingService>>();
             _databaseMock = new Mock<IDatabase>();
             
             // إعداد السلوك الافتراضي
@@ -52,12 +49,9 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
             _redisManagerMock.Setup(x => x.IsConnectedAsync()).ReturnsAsync(true);
             
             // إنشاء الطبقة المختبرة
-            _indexingLayer = new SmartIndexingLayer(
+            _indexingService = new IndexingService(
+                _serviceProviderMock.Object,
                 _redisManagerMock.Object,
-                _propertyRepoMock.Object,
-                _availabilityRepoMock.Object,
-                _bookingRepoMock.Object,
-                _configMock.Object,
                 _loggerMock.Object
             );
         }
@@ -88,10 +82,9 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
                 .ReturnsAsync(true);
             
             // Act
-            var result = await _indexingLayer.IndexPropertyAsync(property);
+            await _indexingService.OnPropertyCreatedAsync(property.Id);
             
-            // Assert
-            result.Should().BeTrue();
+            // Assert - التحقق من النجاح
             
             // التحقق من استدعاء العمليات الأساسية
             _databaseMock.Verify(x => x.HashSetAsync(
@@ -126,10 +119,9 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
             property.IsActive = false;
             
             // Act
-            var result = await _indexingLayer.IndexPropertyAsync(property);
+            await _indexingService.OnPropertyCreatedAsync(property.Id);
             
-            // Assert
-            result.Should().BeFalse();
+            // Assert - يجب عدم الفهرسة
             
             // التحقق من عدم استدعاء عمليات Redis
             _databaseMock.Verify(x => x.HashSetAsync(
@@ -149,10 +141,9 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
             property.IsApproved = false;
             
             // Act
-            var result = await _indexingLayer.IndexPropertyAsync(property);
+            await _indexingService.OnPropertyCreatedAsync(property.Id);
             
-            // Assert
-            result.Should().BeFalse();
+            // Assert - يجب عدم الفهرسة
             
             // التحقق من عدم استدعاء عمليات Redis
             _databaseMock.Verify(x => x.HashSetAsync(
@@ -199,10 +190,9 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
                 .ReturnsAsync(true);
             
             // Act
-            var result = await _indexingLayer.UpdatePropertyIndexAsync(property);
+            await _indexingService.OnPropertyUpdatedAsync(property.Id);
             
-            // Assert
-            result.Should().BeTrue();
+            // Assert - التحقق من النجاح
             
             // التحقق من إزالة العقار من المدينة القديمة
             _databaseMock.Verify(x => x.SetRemoveAsync(
@@ -257,10 +247,9 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
                 .ReturnsAsync(true);
             
             // Act
-            var result = await _indexingLayer.RemovePropertyFromIndexesAsync(propertyId);
+            await _indexingService.OnPropertyDeletedAsync(propertyId);
             
-            // Assert
-            result.Should().BeTrue();
+            // Assert - التحقق من النجاح
             
             // التحقق من حذف hash العقار
             _databaseMock.Verify(x => x.KeyDeleteAsync(
@@ -298,10 +287,9 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
                 .ThrowsAsync(new RedisException("Connection failed"));
             
             // Act
-            var result = await _indexingLayer.IndexPropertyAsync(property);
+            await _indexingService.OnPropertyCreatedAsync(property.Id);
             
-            // Assert
-            result.Should().BeFalse();
+            // Assert - يجب عدم الفهرسة
             
             _output.WriteLine($"✅ Handled Redis error gracefully");
         }
@@ -326,10 +314,9 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
                 .ReturnsAsync(true);
             
             // Act
-            var result = await _indexingLayer.IndexUnitAsync(unit);
+            await _indexingService.OnUnitCreatedAsync(unit.Id, unit.PropertyId);
             
-            // Assert
-            result.Should().BeTrue();
+            // Assert - التحقق من النجاح
             
             // التحقق من فهرسة الوحدة
             _databaseMock.Verify(x => x.HashSetAsync(

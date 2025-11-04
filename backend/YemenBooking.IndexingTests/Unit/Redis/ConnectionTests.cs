@@ -6,7 +6,8 @@ using Moq;
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
-using YemenBooking.Application.Infrastructure.Services;
+using YemenBooking.Infrastructure.Redis.Core;
+using YemenBooking.Infrastructure.Redis.Core.Interfaces;
 using StackExchange.Redis;
 
 namespace YemenBooking.IndexingTests.Unit.Redis
@@ -413,6 +414,19 @@ namespace YemenBooking.IndexingTests.Unit.Redis
             {
                 await server.FlushDatabaseAsync(database);
             }
+        }
+        
+        public ConnectionInfo GetConnectionInfo()
+        {
+            return new ConnectionInfo
+            {
+                IsConnected = _multiplexer?.IsConnected ?? false,
+                Endpoint = _configuration.GetConnectionString("Redis") ?? "localhost:6379",
+                ResponseTime = TimeSpan.Zero,
+                TotalConnections = 1,
+                FailedConnections = 0,
+                LastReconnectTime = DateTime.UtcNow
+            };
         }
         
         public (string Host, int Port) ParseEndpoint(string endpoint)

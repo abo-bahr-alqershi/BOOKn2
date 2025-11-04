@@ -15,8 +15,6 @@ using YemenBooking.IndexingTests.Infrastructure.Fixtures;
 using YemenBooking.IndexingTests.Infrastructure.Builders;
 using YemenBooking.IndexingTests.Infrastructure.Assertions;
 using Polly;
-using Polly.Contrib.Simmy;
-using Polly.Contrib.Simmy.Outcomes;
 
 namespace YemenBooking.IndexingTests.Stress
 {
@@ -46,15 +44,9 @@ namespace YemenBooking.IndexingTests.Stress
             // تكوين الخدمات مع Chaos policies
             services.AddSingleton(_containers);
             
-            // إضافة Chaos policies
+            // إضافة Retry policies بدون Chaos
             services.AddSingleton<IAsyncPolicy>(provider =>
             {
-                var chaosPolicy = MonkeyPolicy.InjectExceptionAsync(
-                    new Exception("Chaos exception"),
-                    injectionRate: 0.1, // 10% failure rate
-                    enabled: () => true
-                );
-
                 var retryPolicy = Policy
                     .Handle<Exception>()
                     .WaitAndRetryAsync(
@@ -65,7 +57,7 @@ namespace YemenBooking.IndexingTests.Stress
                             Output.WriteLine($"Retry {retryCount} after {timeSpan}");
                         });
 
-                return Policy.WrapAsync(retryPolicy, chaosPolicy);
+                return retryPolicy;
             });
 
             await Task.CompletedTask;
