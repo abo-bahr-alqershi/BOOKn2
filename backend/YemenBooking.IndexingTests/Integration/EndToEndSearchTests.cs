@@ -16,6 +16,12 @@ using YemenBooking.IndexingTests.Infrastructure;
 using YemenBooking.IndexingTests.Infrastructure.Fixtures;
 using YemenBooking.IndexingTests.Infrastructure.Builders;
 using YemenBooking.IndexingTests.Infrastructure.Assertions;
+using YemenBooking.IndexingTests.Infrastructure.Extensions;
+using YemenBooking.Infrastructure.Redis.Core.Interfaces;
+using YemenBooking.Infrastructure.Redis.Core;
+using YemenBooking.Infrastructure.Redis.Indexing;
+using YemenBooking.Core.Interfaces.Repositories;
+using YemenBooking.Infrastructure.Data.Repositories;
 
 namespace YemenBooking.IndexingTests.Integration
 {
@@ -59,7 +65,7 @@ namespace YemenBooking.IndexingTests.Integration
             });
             
             // تسجيل الخدمات
-            services.AddScoped<IIndexingService, RedisIndexingSystem>();
+            services.AddScoped<IIndexingService, IndexingService>();
             services.AddScoped<IPropertyRepository, PropertyRepository>();
             services.AddScoped<IUnitRepository, UnitRepository>();
             services.AddScoped<IBookingRepository, BookingRepository>();

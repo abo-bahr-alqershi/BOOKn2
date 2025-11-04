@@ -8,13 +8,16 @@ using Xunit.Abstractions;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using YemenBooking.Application.Features.SearchAndFilters.Services;
+using YemenBooking.Infrastructure.Data.Context;
 using YemenBooking.Core.Entities;
 using YemenBooking.Core.Indexing.Models;
 using YemenBooking.IndexingTests.Infrastructure;
 using YemenBooking.IndexingTests.Infrastructure.Fixtures;
 using YemenBooking.IndexingTests.Infrastructure.Builders;
 using YemenBooking.IndexingTests.Infrastructure.Assertions;
+using YemenBooking.IndexingTests.Infrastructure.Extensions;
 using Polly;
+using Microsoft.EntityFrameworkCore;
 
 namespace YemenBooking.IndexingTests.Stress
 {
@@ -41,27 +44,181 @@ namespace YemenBooking.IndexingTests.Stress
 
         protected override async Task ConfigureServicesAsync(IServiceCollection services)
         {
-            // تكوين الخدمات مع Chaos policies
+            // تكوين الخدمات مع Chaos Engineering الصحيح
             services.AddSingleton(_containers);
             
-            // إضافة Retry policies بدون Chaos
+            // تسجيل Chaos Injection Service
+            services.AddSingleton<IChaosInjector, ChaosInjector>();
+            
+            // إضافة Chaos Policies باستخدام Polly مع custom chaos injection
             services.AddSingleton<IAsyncPolicy>(provider =>
             {
-                var retryPolicy = Policy
+                var chaosInjector = provider.GetService<IChaosInjector>();
+                
+                // 1. Circuit Breaker - للحماية من الانهيار الكامل
+                var circuitBreaker = Policy
                     .Handle<Exception>()
+                    .CircuitBreakerAsync(
+                        handledEventsAllowedBeforeBreaking: 5,
+                        durationOfBreak: TimeSpan.FromSeconds(10),
+                        onBreak: (exception, duration) =>
+                        {
+                            Output.WriteLine($"🔴 Circuit breaker OPENED for {duration.TotalSeconds}s due to: {exception?.Message}");
+                        },
+                        onReset: () =>
+                        {
+                            Output.WriteLine($"🟢 Circuit breaker RESET - System recovered");
+                        },
+                        onHalfOpen: () =>
+                        {
+                            Output.WriteLine($"🟡 Circuit breaker HALF-OPEN - Testing...");
+                        });
+                
+                // 2. Retry Policy مع Exponential Backoff + Jitter
+                var retryPolicy = Policy
+                    .Handle<Exception>(ex => !(ex is InvalidOperationException && ex.Message.Contains("Circuit")))
                     .WaitAndRetryAsync(
-                        3,
-                        retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
+                        retryCount: 3,
+                        sleepDurationProvider: retryAttempt => 
+                        {
+                            var exponentialDelay = TimeSpan.FromSeconds(Math.Pow(2, retryAttempt));
+                            var jitter = TimeSpan.FromMilliseconds(_random.Next(0, 1000));
+                            return exponentialDelay + jitter;
+                        },
                         onRetry: (exception, timeSpan, retryCount, context) =>
                         {
-                            Output.WriteLine($"Retry {retryCount} after {timeSpan}");
+                            Output.WriteLine($"🔄 Retry {retryCount}/{3} after {timeSpan.TotalSeconds:F2}s: {exception?.Message}");
                         });
-
-                return retryPolicy;
+                
+                // 3. Timeout Policy - لمحاكاة بطء الشبكة
+                var timeoutPolicy = Policy.TimeoutAsync(
+                    seconds: 30,
+                    onTimeoutAsync: async (context, timespan, task) =>
+                    {
+                        Output.WriteLine($"⏱️ Timeout after {timespan.TotalSeconds}s");
+                        await Task.CompletedTask;
+                    });
+                
+                // 4. Bulkhead Isolation - لمنع استنفاد الموارد
+                var bulkheadPolicy = Policy.BulkheadAsync(
+                    maxParallelization: Environment.ProcessorCount * 2,
+                    maxQueuingActions: 10,
+                    onBulkheadRejectedAsync: async context =>
+                    {
+                        Output.WriteLine($"🚫 Bulkhead rejected - System overloaded");
+                        await Task.CompletedTask;
+                    });
+                
+                // دمج السياسات بالترتيب الصحيح
+                var combinedPolicy = Policy.WrapAsync(
+                    retryPolicy,        // المحاولة عند الفشل
+                    circuitBreaker,     // الحماية من الانهيار
+                    timeoutPolicy,      // الحماية من البطء
+                    bulkheadPolicy      // عزل العمليات
+                );
+                
+                return combinedPolicy;
+            });
+            
+            // إضافة خدمات أخرى مطلوبة للـ Chaos Testing
+            services.AddScoped<IIndexingService, IndexingService>();
+            services.AddDbContext<YemenBookingDbContext>(options =>
+            {
+                options.UseNpgsql(_containers.PostgresConnectionString);
+                options.EnableSensitiveDataLogging();
+                options.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
+                
+                // محاكاة timeout عشوائية
+                var shouldTimeout = _random.Next(0, 100) < 10; // 10% احتمال
+                options.CommandTimeout(shouldTimeout ? 1 : 30);
             });
 
             await Task.CompletedTask;
         }
+        
+        #region Chaos Injection Service
+        
+        public interface IChaosInjector
+        {
+            Task InjectChaosAsync(string operationType);
+            bool ShouldInjectFailure(double probability);
+            Task InjectLatencyAsync(int minMs, int maxMs);
+            Exception GenerateRandomException();
+        }
+        
+        public class ChaosInjector : IChaosInjector
+        {
+            private readonly Random _random = new Random();
+            private readonly ITestOutputHelper _output;
+            
+            public ChaosInjector()
+            {
+                _output = null; // يمكن حقنه لاحقاً
+            }
+            
+            public async Task InjectChaosAsync(string operationType)
+            {
+                // 20% احتمال حقن فوضى
+                if (ShouldInjectFailure(0.2))
+                {
+                    var chaosType = _random.Next(0, 4);
+                    
+                    switch (chaosType)
+                    {
+                        case 0: // Exception
+                            throw GenerateRandomException();
+                        
+                        case 1: // Latency
+                            await InjectLatencyAsync(500, 5000);
+                            break;
+                        
+                        case 2: // Resource exhaustion
+                            var memory = new byte[_random.Next(1000000, 10000000)];
+                            await Task.Delay(100);
+                            GC.Collect(); // تنظيف لتجنب OOM
+                            break;
+                        
+                        case 3: // CPU spike
+                            var endTime = DateTime.UtcNow.AddMilliseconds(_random.Next(100, 500));
+                            while (DateTime.UtcNow < endTime)
+                            {
+                                // CPU intensive operation
+                                Math.Sqrt(_random.NextDouble());
+                            }
+                            break;
+                    }
+                }
+            }
+            
+            public bool ShouldInjectFailure(double probability)
+            {
+                return _random.NextDouble() < probability;
+            }
+            
+            public async Task InjectLatencyAsync(int minMs, int maxMs)
+            {
+                var delay = _random.Next(minMs, maxMs);
+                _output?.WriteLine($"⏳ Injecting {delay}ms latency");
+                await Task.Delay(delay);
+            }
+            
+            public Exception GenerateRandomException()
+            {
+                var exceptions = new Exception[]
+                {
+                    new InvalidOperationException("Chaos: Simulated operation failure"),
+                    new TimeoutException("Chaos: Simulated timeout"),
+                    new OutOfMemoryException("Chaos: Simulated memory exhaustion"),
+                    new TaskCanceledException("Chaos: Simulated cancellation"),
+                    new HttpRequestException("Chaos: Simulated network failure"),
+                    new DbUpdateException("Chaos: Simulated database failure", new Exception())
+                };
+                
+                return exceptions[_random.Next(exceptions.Length)];
+            }
+        }
+        
+        #endregion
 
         #region Chaos Test Cases
 

@@ -15,6 +15,7 @@ using YemenBooking.Infrastructure.Redis.Core.Interfaces;
 using YemenBooking.Infrastructure.Redis.Indexing;
 using YemenBooking.IndexingTests.Infrastructure.Builders;
 using YemenBooking.IndexingTests.Infrastructure.Assertions;
+using YemenBooking.IndexingTests.Infrastructure.Extensions;
 using StackExchange.Redis;
 
 namespace YemenBooking.IndexingTests.Unit.Search
@@ -48,7 +49,7 @@ namespace YemenBooking.IndexingTests.Unit.Search
             _memoryCache = new MemoryCache(new MemoryCacheOptions());
             
             _redisManagerMock.Setup(x => x.GetDatabase()).Returns(_databaseMock.Object);
-            _redisManagerMock.Setup(x => x.IsConnectedAsync()).ReturnsAsync(true);
+            _redisManagerMock.Setup(x => x.IsConnectedAsync()).Returns(Task.FromResult(true));
             
             // إنشاء محرك البحث
             var serviceProviderMock = new Mock<IServiceProvider>();
@@ -69,7 +70,7 @@ namespace YemenBooking.IndexingTests.Unit.Search
             SetupBasicSearch(propertyIds);
             
             // Act
-            var result = await _searchEngine.SearchAsync(request);
+            var result = await _searchEngine.ExecuteSearchAsync(request);
             
             // Assert
             result.Should().HaveCount(propertyIds.Length);
@@ -91,7 +92,7 @@ namespace YemenBooking.IndexingTests.Unit.Search
             SetupTextSearch(searchText, matchingIds);
             
             // Act
-            var result = await _searchEngine.SearchAsync(request);
+            var result = await _searchEngine.ExecuteSearchAsync(request);
             
             // Assert
             result.Should().HaveCount(matchingIds.Length);
@@ -124,7 +125,7 @@ namespace YemenBooking.IndexingTests.Unit.Search
             SetupTextSearch("hotel", new[] { propertyId });
             
             // Act
-            var result = await _searchEngine.SearchAsync(request);
+            var result = await _searchEngine.ExecuteSearchAsync(request);
             
             // Assert
             result.Should().HaveAtLeast(1);
@@ -142,7 +143,7 @@ namespace YemenBooking.IndexingTests.Unit.Search
             SetupPrefixSearch("فن", new[] { propertyId });
             
             // Act
-            var result = await _searchEngine.SearchAsync(request);
+            var result = await _searchEngine.ExecuteSearchAsync(request);
             
             // Assert
             result.Should().HaveAtLeast(1);
@@ -162,7 +163,7 @@ namespace YemenBooking.IndexingTests.Unit.Search
             SetupMultiWordSearch(new[] { "فندق", "صنعاء" }, new[] { matchingId });
             
             // Act
-            var result = await _searchEngine.SearchAsync(request);
+            var result = await _searchEngine.ExecuteSearchAsync(request);
             
             // Assert
             result.Should().ContainProperty(matchingId);
@@ -191,7 +192,7 @@ namespace YemenBooking.IndexingTests.Unit.Search
                 var request = TestDataBuilder.TextSearchRequest(text);
                 
                 // Act
-                var result = await _searchEngine.SearchAsync(request);
+                var result = await _searchEngine.ExecuteSearchAsync(request);
                 
                 // Assert
                 result.Should().NotBeNull();
@@ -211,7 +212,7 @@ namespace YemenBooking.IndexingTests.Unit.Search
             SetupBasicSearch(propertyIds);
             
             // Act
-            var result = await _searchEngine.SearchAsync(request);
+            var result = await _searchEngine.ExecuteSearchAsync(request);
             
             // Assert
             result.Should().HaveAtLeast(propertyIds.Length);
@@ -238,7 +239,7 @@ namespace YemenBooking.IndexingTests.Unit.Search
                 PageSize = pageSize
             };
             
-            var result1 = await _searchEngine.SearchAsync(request1);
+            var result1 = await _searchEngine.ExecuteSearchAsync(request1);
             
             result1.Should().BeOnPage(1);
             result1.Should().HavePageSize(pageSize);
@@ -253,7 +254,7 @@ namespace YemenBooking.IndexingTests.Unit.Search
                 PageSize = pageSize
             };
             
-            var result2 = await _searchEngine.SearchAsync(request2);
+            var result2 = await _searchEngine.ExecuteSearchAsync(request2);
             
             result2.Should().BeOnPage(2);
             result2.Properties.Count.Should().Be(pageSize);
@@ -265,7 +266,7 @@ namespace YemenBooking.IndexingTests.Unit.Search
                 PageSize = pageSize
             };
             
-            var result3 = await _searchEngine.SearchAsync(request3);
+            var result3 = await _searchEngine.ExecuteSearchAsync(request3);
             
             result3.Should().BeOnPage(3);
             result3.Properties.Count.Should().Be(5); // 25 - 20
@@ -287,7 +288,7 @@ namespace YemenBooking.IndexingTests.Unit.Search
             SetupHighlightedSearch(searchText, propertyId, propertyName);
             
             // Act
-            var result = await _searchEngine.SearchAsync(request);
+            var result = await _searchEngine.ExecuteSearchAsync(request);
             
             // Assert
             result.Should().HaveAtLeast(1);

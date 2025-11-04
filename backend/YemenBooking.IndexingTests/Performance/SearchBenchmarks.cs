@@ -8,6 +8,7 @@ using BenchmarkDotNet.Jobs;
 using BenchmarkDotNet.Order;
 using Microsoft.Extensions.DependencyInjection;
 using YemenBooking.Application.Features.SearchAndFilters.Services;
+using YemenBooking.Core.Entities;
 using YemenBooking.Core.Indexing.Models;
 using YemenBooking.IndexingTests.Infrastructure.Fixtures;
 using YemenBooking.IndexingTests.Infrastructure.Builders;
@@ -28,7 +29,7 @@ namespace YemenBooking.IndexingTests.Performance
         private IIndexingService _indexingService;
         private List<PropertySearchRequest> _searchRequests;
         private TestContainerFixture _containers;
-        private IServiceProvider _serviceProvider;
+        private ServiceProvider _serviceProvider;
 
         [GlobalSetup]
         public async Task Setup()
@@ -55,7 +56,8 @@ namespace YemenBooking.IndexingTests.Performance
         public async Task Cleanup()
         {
             _serviceProvider?.Dispose();
-            await _containers.DisposeAsync();
+            if (_containers != null)
+                await _containers.DisposeAsync();
         }
 
         private void ConfigureServices(IServiceCollection services)
@@ -108,7 +110,7 @@ namespace YemenBooking.IndexingTests.Performance
                     City = "صنعاء",
                     MinPrice = 100,
                     MaxPrice = 500,
-                    PropertyTypeId = 1,
+                    PropertyType = "30000000-0000-0000-0000-000000000001",
                     PageNumber = 1,
                     PageSize = 20
                 },
@@ -120,10 +122,10 @@ namespace YemenBooking.IndexingTests.Performance
                     City = "عدن",
                     MinPrice = 500,
                     MaxPrice = 2000,
-                    PropertyTypeId = 2,
-                    Amenities = new List<int> { 1, 2, 3 },
-                    CheckInDate = DateTime.Now.AddDays(7),
-                    CheckOutDate = DateTime.Now.AddDays(14),
+                    PropertyType = "30000000-0000-0000-0000-000000000002",
+                    RequiredAmenityIds = new List<string> { "10000000-0000-0000-0000-000000000001", "10000000-0000-0000-0000-000000000002" },
+                    CheckIn = DateTime.Now.AddDays(7),
+                    CheckOut = DateTime.Now.AddDays(14),
                     PageNumber = 1,
                     PageSize = 50
                 }

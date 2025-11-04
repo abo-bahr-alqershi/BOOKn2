@@ -46,7 +46,7 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
             
             // إعداد السلوك الافتراضي
             _redisManagerMock.Setup(x => x.GetDatabase()).Returns(_databaseMock.Object);
-            _redisManagerMock.Setup(x => x.IsConnectedAsync()).ReturnsAsync(true);
+            _redisManagerMock.Setup(x => x.IsConnectedAsync()).Returns(Task.FromResult(true));
             
             // إنشاء الطبقة المختبرة
             _indexingService = new IndexingService(
@@ -66,20 +66,20 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
                 It.IsAny<RedisKey>(),
                 It.IsAny<HashEntry[]>(),
                 It.IsAny<CommandFlags>()))
-                .ReturnsAsync(true);
+                .Returns(Task.FromResult(true));
             
             _databaseMock.Setup(x => x.SetAddAsync(
                 It.IsAny<RedisKey>(),
                 It.IsAny<RedisValue>(),
                 It.IsAny<CommandFlags>()))
-                .ReturnsAsync(true);
+                .Returns(Task.FromResult(true));
             
             _databaseMock.Setup(x => x.SortedSetAddAsync(
                 It.IsAny<RedisKey>(),
                 It.IsAny<RedisValue>(),
                 It.IsAny<double>(),
                 It.IsAny<CommandFlags>()))
-                .ReturnsAsync(true);
+                .Returns(Task.FromResult(true));
             
             // Act
             await _indexingService.OnPropertyCreatedAsync(property.Id);
@@ -175,19 +175,19 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
                 It.IsAny<RedisKey>(),
                 It.IsAny<HashEntry[]>(),
                 It.IsAny<CommandFlags>()))
-                .ReturnsAsync(true);
+                .Returns(Task.FromResult(true));
             
             _databaseMock.Setup(x => x.SetRemoveAsync(
                 It.IsAny<RedisKey>(),
                 It.IsAny<RedisValue>(),
                 It.IsAny<CommandFlags>()))
-                .ReturnsAsync(true);
+                .Returns(Task.FromResult(true));
             
             _databaseMock.Setup(x => x.SetAddAsync(
                 It.IsAny<RedisKey>(),
                 It.IsAny<RedisValue>(),
                 It.IsAny<CommandFlags>()))
-                .ReturnsAsync(true);
+                .Returns(Task.FromResult(true));
             
             // Act
             await _indexingService.OnPropertyUpdatedAsync(property.Id);
@@ -232,19 +232,19 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
             _databaseMock.Setup(x => x.KeyDeleteAsync(
                 It.IsAny<RedisKey>(),
                 It.IsAny<CommandFlags>()))
-                .ReturnsAsync(true);
+                .Returns(Task.FromResult(true));
             
             _databaseMock.Setup(x => x.SetRemoveAsync(
                 It.IsAny<RedisKey>(),
                 It.IsAny<RedisValue>(),
                 It.IsAny<CommandFlags>()))
-                .ReturnsAsync(true);
+                .Returns(Task.FromResult(true));
             
             _databaseMock.Setup(x => x.SortedSetRemoveAsync(
                 It.IsAny<RedisKey>(),
                 It.IsAny<RedisValue>(),
                 It.IsAny<CommandFlags>()))
-                .ReturnsAsync(true);
+                .Returns(Task.FromResult(true));
             
             // Act
             await _indexingService.OnPropertyDeletedAsync(propertyId);

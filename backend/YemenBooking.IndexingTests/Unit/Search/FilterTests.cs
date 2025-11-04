@@ -15,6 +15,7 @@ using YemenBooking.Infrastructure.Redis.Core.Interfaces;
 using YemenBooking.Infrastructure.Redis.Indexing;
 using YemenBooking.IndexingTests.Infrastructure.Builders;
 using YemenBooking.IndexingTests.Infrastructure.Assertions;
+using YemenBooking.IndexingTests.Infrastructure.Extensions;
 using StackExchange.Redis;
 
 namespace YemenBooking.IndexingTests.Unit.Search
@@ -260,13 +261,13 @@ namespace YemenBooking.IndexingTests.Unit.Search
         }
         
         [Fact]
-        public async Task SearchAsync_WithDynamicFields_ShouldFilterCorrectly()
+        public async Task SearchAsync_WithDynamicFields_ShouldFilterByDynamicFields()
         {
             // Arrange
-            var dynamicFilters = new Dictionary<string, object>
+            var dynamicFilters = new Dictionary<string, string>
             {
                 ["pet_friendly"] = "true",
-                ["smoking_allowed"] = "false"
+                ["has_pool"] = "yes"
             };
             
             var request = new PropertySearchRequest
@@ -405,8 +406,7 @@ namespace YemenBooking.IndexingTests.Unit.Search
             SetupPropertyDetails(new[] { propertyId },
                 city: "صنعاء",
                 propertyType: "30000000-0000-0000-0000-000000000001",
-                minPrice: 200,
-                rating: 4.5m,
+                price: 200,
                 capacity: 4);
         }
         
