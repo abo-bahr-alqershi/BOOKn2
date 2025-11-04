@@ -48,7 +48,7 @@ namespace YemenBooking.IndexingTests.Unit.Search
             _databaseMock = new Mock<IDatabase>();
             _memoryCache = new MemoryCache(new MemoryCacheOptions());
             
-            _redisManagerMock.Setup(x => x.GetDatabase()).Returns(_databaseMock.Object);
+            _redisManagerMock.Setup(x => x.GetDatabase(It.IsAny<int>())).Returns(_databaseMock.Object);
             _redisManagerMock.Setup(x => x.IsConnectedAsync()).Returns(Task.FromResult(true));
             
             // إنشاء محرك البحث

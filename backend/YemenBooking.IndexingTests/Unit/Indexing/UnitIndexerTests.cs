@@ -58,7 +58,7 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
             _transactionMock = new Mock<ITransaction>();
             
             // إعداد السلوك الافتراضي
-            _redisManagerMock.Setup(x => x.GetDatabase()).Returns(_databaseMock.Object);
+            _redisManagerMock.Setup(x => x.GetDatabase(It.IsAny<int>())).Returns(_databaseMock.Object);
             _redisManagerMock.Setup(x => x.IsConnectedAsync()).Returns(Task.FromResult(true));
             
             // إعداد Service Scope للعزل

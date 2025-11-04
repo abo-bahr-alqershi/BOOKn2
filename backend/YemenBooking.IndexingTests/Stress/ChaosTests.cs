@@ -7,7 +7,14 @@ using Xunit;
 using Xunit.Abstractions;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
+using Microsoft.EntityFrameworkCore;
+using Testcontainers.PostgreSql;
 using YemenBooking.Application.Features.SearchAndFilters.Services;
+using YemenBooking.Infrastructure.Redis.Indexing;
+using YemenBooking.Infrastructure.Redis.Core;
+using YemenBooking.Infrastructure.Redis.Core.Interfaces;
 using YemenBooking.Infrastructure.Data.Context;
 using YemenBooking.Core.Entities;
 using YemenBooking.Core.Indexing.Models;
@@ -15,24 +22,22 @@ using YemenBooking.IndexingTests.Infrastructure;
 using YemenBooking.IndexingTests.Infrastructure.Fixtures;
 using YemenBooking.IndexingTests.Infrastructure.Builders;
 using YemenBooking.IndexingTests.Infrastructure.Assertions;
-using YemenBooking.IndexingTests.Infrastructure.Extensions;
 using Polly;
-using Polly.CircuitBreaker;
-using Microsoft.EntityFrameworkCore;
-using YemenBooking.Infrastructure.Redis.Indexing;
+using Npgsql;
 using System.Net.Http;
 
 namespace YemenBooking.IndexingTests.Stress
 {
     /// <summary>
-    /// اختبارات الفوضى (Chaos Testing)
-    /// تحاكي الأخطاء والمشاكل غير المتوقعة
+    /// اختبارات Chaos Engineering
+    /// محاكاة السيناريوهات الكارثية والأخطاء المتوقعة  
+    /// استخدام PostgreSQL مع Testcontainers للعزل الكامل
     /// </summary>
     [Collection("TestContainers")]
     public class ChaosTests : TestBase
     {
+        private readonly Random _random = new();
         private readonly TestContainerFixture _containers;
-        private readonly Random _random = new Random();
         private readonly SemaphoreSlim _concurrencyLimiter;
 
         public ChaosTests(TestContainerFixture containers, ITestOutputHelper output)
@@ -44,14 +49,53 @@ namespace YemenBooking.IndexingTests.Stress
                 maxCount: Environment.ProcessorCount * 4
             );
         }
-
+        
         protected override async Task ConfigureServicesAsync(IServiceCollection services)
         {
-            // تكوين الخدمات مع Chaos Engineering الصحيح
-            services.AddSingleton(_containers);
+            // إضافة Configuration
+            var configuration = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string>
+                {
+                    ["Redis:ConnectionString"] = _containers.RedisConnectionString,
+                    ["Redis:DefaultDatabase"] = "0",
+                    ["Redis:ConnectTimeout"] = "5000",
+                    ["Redis:ConnectRetry"] = "3"
+                })
+                .Build();
+            services.AddSingleton<IConfiguration>(configuration);
             
-            // تسجيل Chaos Injection Service
+            // تكوين قاعدة البيانات من الحاوية
+            services.AddDbContext<YemenBookingDbContext>(options =>
+            {
+                options.UseNpgsql(_containers.PostgresConnectionString, npgsqlOptions =>
+                {
+                    npgsqlOptions.CommandTimeout(1); // إعداد timeout قصير للاختبار  
+                    npgsqlOptions.EnableRetryOnFailure(
+                        maxRetryCount: 3,
+                        maxRetryDelay: TimeSpan.FromSeconds(1),
+                        errorCodesToAdd: null);
+                });
+                options.EnableSensitiveDataLogging();
+                options.EnableServiceProviderCaching(false);
+                options.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
+            });
+            
+            // تسجيل خدمات Redis
+            services.AddSingleton<IRedisConnectionManager>(provider => 
+            {
+                var logger = provider.GetRequiredService<ILogger<RedisConnectionManager>>();
+                var config = provider.GetRequiredService<IConfiguration>();
+                return new RedisConnectionManager(logger, config);
+            });
+            
+            // تسجيل الخدمات
+            services.AddScoped<IIndexingService, IndexingService>();
             services.AddSingleton<IChaosInjector, ChaosInjector>();
+            services.AddLogging(builder => 
+            {
+                builder.AddConsole();
+                builder.SetMinimumLevel(LogLevel.Debug);
+            });
             
             // إضافة Chaos Policies باستخدام Polly مع custom chaos injection
             services.AddSingleton<IAsyncPolicy>(provider =>
@@ -115,18 +159,6 @@ namespace YemenBooking.IndexingTests.Stress
                 
                 return combinedPolicy;
             });
-            
-            // إضافة خدمات أخرى مطلوبة للـ Chaos Testing
-            services.AddScoped<IIndexingService, IndexingService>();
-            services.AddDbContext<YemenBookingDbContext>(options =>
-            {
-                options.UseSqlite(ConnectionString, sqliteOptions =>
-                {
-                    sqliteOptions.CommandTimeout(1); // إعداد timeout قصير للاختبار
-                });
-                options.EnableServiceProviderCaching(false);
-                options.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
-            });
 
             await Task.CompletedTask;
         }
@@ -144,11 +176,11 @@ namespace YemenBooking.IndexingTests.Stress
         public class ChaosInjector : IChaosInjector
         {
             private readonly Random _random = new Random();
-            private readonly ITestOutputHelper _output;
+            private readonly ILogger<ChaosInjector> _logger;
             
-            public ChaosInjector()
+            public ChaosInjector(ILogger<ChaosInjector> logger = null)
             {
-                _output = null; // يمكن حقنه لاحقاً
+                _logger = logger;
             }
             
             public async Task InjectChaosAsync(string operationType)
@@ -193,7 +225,7 @@ namespace YemenBooking.IndexingTests.Stress
             public async Task InjectLatencyAsync(int minMs, int maxMs)
             {
                 var delay = _random.Next(minMs, maxMs);
-                _output?.WriteLine($"⏳ Injecting {delay}ms latency");
+                _logger?.LogWarning($"⏳ Injecting {delay}ms latency");
                 await Task.Delay(delay);
             }
             
@@ -359,14 +391,15 @@ namespace YemenBooking.IndexingTests.Stress
                 }
 
                 // Assert: النظام يجب أن يستمر في العمل
-                var searchResult = await IndexingService.SearchAsync(new PropertySearchRequest
+                var result = await IndexingService.SearchAsync(new PropertySearchRequest
                 {
                     PageNumber = 1,
                     PageSize = 100
                 });
 
-                searchResult.Should().NotBeNull();
-                searchResult.TotalCount.Should().BeGreaterThan(0);
+                result.Should().NotBeNull();
+                result.Properties.Should().NotBeNull();
+                result.TotalCount.Should().BeGreaterThan(0);
             }
             finally
             {
@@ -423,15 +456,16 @@ namespace YemenBooking.IndexingTests.Stress
             // Assert: التحقق من الاتساق النهائي
             await Task.Delay(TimeSpan.FromSeconds(2)); // انتظار الاتساق
 
-            var searchResult = await IndexingService.SearchAsync(new PropertySearchRequest
+            var result = await IndexingService.SearchAsync(new PropertySearchRequest
             {
                 PageNumber = 1,
                 PageSize = 100
             });
 
             // يجب أن تكون النتيجة متسقة (موجود أو محذوف، ليس حالة وسطية)
-            searchResult.Should().NotBeNull();
-            Output.WriteLine($"Final state: {searchResult.TotalCount} properties");
+            result.Should().NotBeNull();
+            result.Properties.Should().NotBeNull();
+            Output.WriteLine($"Final state: {result.TotalCount} properties");
         }
 
         [Fact]
@@ -467,14 +501,15 @@ namespace YemenBooking.IndexingTests.Stress
             await Task.WhenAll(tasks);
 
             // Assert: النظام يجب أن يستمر في العمل
-            var searchResult = await IndexingService.SearchAsync(new PropertySearchRequest
+            var result = await IndexingService.SearchAsync(new PropertySearchRequest
             {
                 PageNumber = 1,
                 PageSize = 100
             });
 
-            searchResult.Should().NotBeNull();
-            Output.WriteLine($"✅ Indexed {searchResult.TotalCount} properties despite timeouts");
+            result.Should().NotBeNull();
+            result.Properties.Should().NotBeNull();
+            Output.WriteLine($"✅ Indexed {result.TotalCount} properties despite timeouts");
         }
 
         [Fact]

@@ -7,6 +7,8 @@ using Xunit;
 using Xunit.Abstractions;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
 using Microsoft.EntityFrameworkCore;
 using YemenBooking.Application.Features.SearchAndFilters.Services;
 using YemenBooking.Infrastructure.Data.Context;
@@ -48,6 +50,18 @@ namespace YemenBooking.IndexingTests.Integration
         
         protected override async Task ConfigureServicesAsync(IServiceCollection services)
         {
+            // إضافة Configuration
+            var configuration = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string>
+                {
+                    ["Redis:ConnectionString"] = _containers.RedisConnectionString,
+                    ["Redis:DefaultDatabase"] = "0",
+                    ["Redis:ConnectTimeout"] = "5000",
+                    ["Redis:ConnectRetry"] = "3"
+                })
+                .Build();
+            services.AddSingleton<IConfiguration>(configuration);
+            
             // تكوين قاعدة البيانات من الحاوية
             services.AddDbContext<YemenBookingDbContext>(options =>
             {
@@ -56,12 +70,12 @@ namespace YemenBooking.IndexingTests.Integration
                 options.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
             });
             
-            // تكوين Redis من الحاوية
-            services.AddSingleton<IRedisConnectionManager>(sp =>
+            // تسجيل خدمات Redis
+            services.AddSingleton<IRedisConnectionManager>(provider => 
             {
-                var manager = new RedisConnectionManager(_containers.RedisConnectionString);
-                manager.InitializeAsync().GetAwaiter().GetResult();
-                return manager;
+                var logger = provider.GetRequiredService<ILogger<RedisConnectionManager>>();
+                var config = provider.GetRequiredService<IConfiguration>();
+                return new RedisConnectionManager(logger, config);
             });
             
             // تسجيل الخدمات
@@ -71,11 +85,7 @@ namespace YemenBooking.IndexingTests.Integration
             services.AddScoped<IBookingRepository, BookingRepository>();
             
             // إضافة logging
-            services.AddLogging(builder =>
-            {
-                builder.AddConsole();
-                builder.SetMinimumLevel(LogLevel.Information);
-            });
+            services.AddLogging();
             
             await Task.CompletedTask;
         }

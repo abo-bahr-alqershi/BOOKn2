@@ -43,15 +43,12 @@ namespace YemenBooking.IndexingTests.Infrastructure.Assertions
                 await Task.Delay(delay);
             }
             
-            var failureMessage = message ?? "Assertion did not become true within timeout";
+            var errorMessage = message ?? "Assertion did not become true within timeout";
             if (lastException != null)
             {
-                throw new AssertionFailedException($"{failureMessage}. Last error: {lastException.Message}");
+                errorMessage += $"\nLast Exception: {lastException.Message}";
             }
-            else
-            {
-                throw new AssertionFailedException(failureMessage);
-            }
+            throw new AssertionFailedException(errorMessage);
         }
         
         /// <summary>

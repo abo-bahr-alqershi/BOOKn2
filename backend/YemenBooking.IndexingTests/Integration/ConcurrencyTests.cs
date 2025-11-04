@@ -9,6 +9,7 @@ using FluentAssertions;
 using FluentAssertions.Extensions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
 using Microsoft.EntityFrameworkCore;
 using YemenBooking.Application.Features.SearchAndFilters.Services;
 using YemenBooking.Infrastructure.Redis.Indexing;
@@ -47,6 +48,18 @@ namespace YemenBooking.IndexingTests.Integration
         
         protected override async Task ConfigureServicesAsync(IServiceCollection services)
         {
+            // إضافة Configuration
+            var configuration = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string>
+                {
+                    ["Redis:ConnectionString"] = _containers.RedisConnectionString,
+                    ["Redis:DefaultDatabase"] = "0",
+                    ["Redis:ConnectTimeout"] = "5000",
+                    ["Redis:ConnectRetry"] = "3"
+                })
+                .Build();
+            services.AddSingleton<IConfiguration>(configuration);
+            
             // تكوين قاعدة البيانات من الحاوية
             services.AddDbContext<YemenBookingDbContext>(options =>
             {
@@ -58,9 +71,9 @@ namespace YemenBooking.IndexingTests.Integration
             // تسجيل خدمات Redis
             services.AddSingleton<IRedisConnectionManager>(provider => 
             {
-                var redisManager = new RedisConnectionManager(_containers.RedisConnectionString);
-                redisManager.InitializeAsync().GetAwaiter().GetResult();
-                return redisManager;
+                var logger = provider.GetRequiredService<ILogger<RedisConnectionManager>>();
+                var config = provider.GetRequiredService<IConfiguration>();
+                return new RedisConnectionManager(logger, config);
             });
             
             // تسجيل الخدمات
