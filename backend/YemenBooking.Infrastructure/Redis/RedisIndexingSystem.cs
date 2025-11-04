@@ -768,8 +768,29 @@ namespace YemenBooking.Infrastructure.Redis
                         // ✅ بث الصفحات بدلاً من تحميل كل العقارات في الذاكرة
                         var pageSize = 100;
                         var pageNumber = 1;
+                        var maxIterations = 10000; // ✅ حد أقصى للتكرارات لمنع الحلقات اللانهائية
+                        var iterationCount = 0;
+                        var rebuildStartTime = DateTime.UtcNow;
+                        var maxRebuildDuration = TimeSpan.FromMinutes(30); // ✅ حد زمني أقصى
+                        
                         while (!cancellationToken.IsCancellationRequested)
                         {
+                            // ✅ حماية ضد الحلقات اللانهائية بالتكرار
+                            iterationCount++;
+                            if (iterationCount > maxIterations)
+                            {
+                                _logger.LogError("⚠️ تم الوصول للحد الأقصى للتكرارات ({Max}). إيقاف إعادة البناء.", maxIterations);
+                                break;
+                            }
+                            
+                            // ✅ حماية ضد الحلقات اللانهائية بالوقت
+                            if (DateTime.UtcNow - rebuildStartTime > maxRebuildDuration)
+                            {
+                                _logger.LogError("⚠️ تم تجاوز الحد الزمني الأقصى ({Minutes} دقيقة). إيقاف إعادة البناء.", 
+                                    maxRebuildDuration.TotalMinutes);
+                                break;
+                            }
+                            
                             // تمديد القفل كنبض (heartbeat)
                             await db.KeyExpireAsync(lockKey, TimeSpan.FromMinutes(15));
 
