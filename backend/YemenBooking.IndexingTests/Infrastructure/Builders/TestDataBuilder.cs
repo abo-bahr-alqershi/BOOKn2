@@ -52,9 +52,9 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
                 .RuleFor(p => p.OwnerId, f => Guid.NewGuid())
                 .RuleFor(p => p.IsActive, f => true)
                 .RuleFor(p => p.IsApproved, f => true)
-                .RuleFor(p => p.AverageRating, f => f.Random.Decimal(3, 5))
-                .RuleFor(p => p.Latitude, (f, p) => f.Address.Latitude())
-                .RuleFor(p => p.Longitude, (f, p) => f.Address.Longitude())
+                .RuleFor(p => p.AverageRating, (f, p) => f.Random.Decimal(3, 5))
+                .RuleFor(p => p.Latitude, f => f.Random.Decimal(12.0m, 17.0m))
+                .RuleFor(p => p.Longitude, f => f.Random.Decimal(42.0m, 45.0m))
                 .RuleFor(p => p.CreatedAt, f => DateTime.UtcNow)
                 .RuleFor(p => p.UpdatedAt, f => DateTime.UtcNow);
             
