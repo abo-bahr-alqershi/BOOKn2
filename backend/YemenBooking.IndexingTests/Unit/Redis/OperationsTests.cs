@@ -334,9 +334,9 @@ namespace YemenBooking.IndexingTests.Unit.Redis
             
             // Assert
             popped.Should().NotBeNull();
-            members.Should().Contain(popped.Value);
+            members.Should().Contain((RedisValue)popped);
             remaining.Should().HaveCount(2);
-            remaining.Should().NotContain(popped.Value);
+            remaining.Should().NotContain((RedisValue)popped);
             
             Output.WriteLine($"✅ Set pop operation successful");
             Output.WriteLine($"   Popped: {popped}");
@@ -554,10 +554,10 @@ namespace YemenBooking.IndexingTests.Unit.Redis
             executed.Should().BeTrue("المعاملة يجب أن تنفذ بنجاح");
             
             // All tasks should be completed
-            task1.Result.Should().BeTrue();
-            task2.Result.Should().BeTrue();
-            task3.Result.Should().Be(5);
-            task4.Result.Should().Be(15);
+            (await task1).Should().BeTrue();
+            (await task2).Should().BeTrue();
+            (await task3).Should().Be(5);
+            (await task4).Should().Be(15);
             
             // Verify values
             var value1 = await database.StringGetAsync(key1);
@@ -595,7 +595,7 @@ namespace YemenBooking.IndexingTests.Unit.Redis
             
             // Assert
             executed.Should().BeTrue();
-            setTask.Result.Should().BeTrue();
+            (await setTask).Should().BeTrue();
             
             var value = await database.StringGetAsync(targetKey);
             value.Should().Be("success");
@@ -622,7 +622,8 @@ namespace YemenBooking.IndexingTests.Unit.Redis
             // Act - Subscribe
             await subscriber.SubscribeAsync(channel, (ch, message) =>
             {
-                receivedMessages.Add(message);
+                if (!message.IsNullOrEmpty)
+                    receivedMessages.Add(message.ToString());
                 if (receivedMessages.Count >= 3)
                 {
                     messageReceivedEvent.TrySetResult(true);

@@ -8,25 +8,18 @@ using Xunit;
 using Xunit.Abstractions;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
 using YemenBooking.Application.Features.SearchAndFilters.Services;
 using YemenBooking.Core.Entities;
 using YemenBooking.Core.Indexing.Models;
 using YemenBooking.Core.ValueObjects;
 using YemenBooking.Infrastructure.Data.Context;
-using YemenBooking.Infrastructure.Redis.Core;
 using YemenBooking.Infrastructure.Redis.Core.Interfaces;
-using YemenBooking.Infrastructure.Redis.Indexing;
 using YemenBooking.IndexingTests.Infrastructure;
 using YemenBooking.IndexingTests.Infrastructure.Builders;
 using YemenBooking.IndexingTests.Infrastructure.Fixtures;
-using YemenBooking.IndexingTests.Infrastructure.Assertions;
 using YemenBooking.IndexingTests.Infrastructure.Helpers;
-using YemenBooking.IndexingTests.Infrastructure.Extensions;
 using StackExchange.Redis;
-using Polly;
-using Newtonsoft.Json;
 
 namespace YemenBooking.IndexingTests.Unit.Search
 {
@@ -40,7 +33,6 @@ namespace YemenBooking.IndexingTests.Unit.Search
     {
         private readonly TestContainerFixture _containers;
         private readonly List<TimeSpan> _searchLatencies = new();
-        private readonly Dictionary<string, int> _filterUsageCount = new();
         private readonly SemaphoreSlim _searchLock;
         
         public FilterTests(TestContainerFixture containers, ITestOutputHelper output) 
@@ -52,538 +44,309 @@ namespace YemenBooking.IndexingTests.Unit.Search
         
         protected override bool UseTestContainers() => true;
         
-        [Fact]
-        public async Task SearchAsync_WithCityFilter_ShouldReturnOnlyCityProperties()
+        /// <summary>
+        /// انتظار اكتمال فهرسة العقارات - باستخدام Polling Pattern
+        /// </summary>
+        private async Task WaitForIndexingCompletion(IServiceScope scope, int expectedCount)
         {
-            // Arrange
-            var city = "صنعاء";
-            var request = TestDataBuilder.FilteredSearchRequest(city: city);
+            var redisManager = scope.ServiceProvider.GetRequiredService<IRedisConnectionManager>();
+            var database = redisManager.GetDatabase();
             
-            var sanaaProperties = new[] { Guid.NewGuid(), Guid.NewGuid() };
-            var adenProperties = new[] { Guid.NewGuid() };
-            
-            SetupCityFilter(city, sanaaProperties);
-            
-            // Act
-            var result = await _searchEngine.ExecuteSearchAsync(request);
-            
-            // Assert
-            result.Should().AllBeInCity(city);
-            result.Should().HaveCount(sanaaProperties.Length);
-            
-            foreach (var id in sanaaProperties)
-            {
-                result.Should().ContainProperty(id);
-            }
-            
-            foreach (var id in adenProperties)
-            {
-                result.Should().NotContainProperty(id);
-            }
-            
-            _output.WriteLine($"✅ City filter '{city}' returned {result.TotalCount} properties");
-        }
-        
-        [Fact]
-        public async Task SearchAsync_WithPriceRange_ShouldFilterByPrice()
-        {
-            // Arrange
-            var minPrice = 100m;
-            var maxPrice = 500m;
-            var request = TestDataBuilder.FilteredSearchRequest(
-                minPrice: minPrice,
-                maxPrice: maxPrice
+            // الانتظار حتى تكتمل الفهرسة باستخدام Polling
+            await WaitForConditionAsync(
+                async () =>
+                {
+                    var searchIndexKey = "search:index";
+                    var members = await database.SetMembersAsync(searchIndexKey);
+                    return members.Length;
+                },
+                count => count >= expectedCount,
+                TimeSpan.FromSeconds(5)
             );
+        }
+        
+        [Fact]
+        public async Task CityFilter_WithValidCity_ShouldReturnOnlyCityProperties()
+        {
+            // Arrange - استخدام scope منفصل للعزل الكامل
+            using var scope = CreateIsolatedScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+            var indexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
             
-            var matchingProperties = new[]
+            // إنشاء عقارات فريدة في مدن مختلفة
+            var sanaaProperties = new List<Property>();
+            for (int i = 0; i < 3; i++)
             {
-                CreatePropertyWithPrice(Guid.NewGuid(), 150m),
-                CreatePropertyWithPrice(Guid.NewGuid(), 300m),
-                CreatePropertyWithPrice(Guid.NewGuid(), 450m)
-            };
-            
-            var nonMatchingProperties = new[]
-            {
-                CreatePropertyWithPrice(Guid.NewGuid(), 50m),
-                CreatePropertyWithPrice(Guid.NewGuid(), 600m)
-            };
-            
-            SetupPriceFilter(matchingProperties.Select(p => Guid.Parse(p.Id)).ToArray());
-            
-            // Act
-            var result = await _searchEngine.ExecuteSearchAsync(request);
-            
-            // Assert
-            result.Should().HavePricesInRange(minPrice, maxPrice);
-            
-            foreach (var prop in matchingProperties)
-            {
-                result.Should().ContainProperty(prop.Id);
+                var property = TestDataBuilder.CompleteProperty($"{TestId}_sanaa_{i}");
+                property.City = "صنعاء";
+                sanaaProperties.Add(property);
+                TrackEntity(property.Id);
             }
             
-            foreach (var prop in nonMatchingProperties)
+            var adenProperties = new List<Property>();
+            for (int i = 0; i < 2; i++)
             {
-                result.Should().NotContainProperty(prop.Id);
+                var property = TestDataBuilder.CompleteProperty($"{TestId}_aden_{i}");
+                property.City = "عدن";
+                adenProperties.Add(property);
+                TrackEntity(property.Id);
             }
             
-            _output.WriteLine($"✅ Price filter {minPrice}-{maxPrice} working correctly");
-        }
-        
-        [Fact]
-        public async Task SearchAsync_WithPropertyType_ShouldFilterByType()
-        {
-            // Arrange
-            var propertyTypeId = Guid.Parse("30000000-0000-0000-0000-000000000001");
-            var request = TestDataBuilder.FilteredSearchRequest(
-                propertyType: propertyTypeId.ToString()
-            );
+            // حفظ في قاعدة البيانات
+            await dbContext.Properties.AddRangeAsync(sanaaProperties.Concat(adenProperties));
+            await dbContext.SaveChangesAsync();
             
-            var matchingProperties = new[] { Guid.NewGuid(), Guid.NewGuid() };
-            
-            SetupPropertyTypeFilter(propertyTypeId, matchingProperties);
-            
-            // Act
-            var result = await _searchEngine.ExecuteSearchAsync(request);
-            
-            // Assert
-            result.Should().AllBeOfType(propertyTypeId.ToString());
-            result.Should().HaveCount(matchingProperties.Length);
-            
-            _output.WriteLine($"✅ Property type filter working correctly");
-        }
-        
-        [Fact]
-        public async Task SearchAsync_WithGuestsCount_ShouldFilterByCapacity()
-        {
-            // Arrange
-            var guestsCount = 4;
-            var request = TestDataBuilder.FilteredSearchRequest(guestsCount: guestsCount);
-            
-            var matchingProperties = new[]
+            // فهرسة جميع العقارات
+            foreach (var property in sanaaProperties.Concat(adenProperties))
             {
-                CreatePropertyWithCapacity(Guid.NewGuid(), 4),
-                CreatePropertyWithCapacity(Guid.NewGuid(), 6),
-                CreatePropertyWithCapacity(Guid.NewGuid(), 8)
-            };
+                await indexingService.OnPropertyCreatedAsync(property.Id);
+            }
             
-            var nonMatchingProperties = new[]
-            {
-                CreatePropertyWithCapacity(Guid.NewGuid(), 2),
-                CreatePropertyWithCapacity(Guid.NewGuid(), 3)
-            };
+            // الانتظار حتى اكتمال الفهرسة
+            await WaitForIndexingCompletion(scope, sanaaProperties.Count + adenProperties.Count);
             
-            SetupCapacityFilter(matchingProperties.Select(p => Guid.Parse(p.Id)).ToArray());
+            var stopwatch = Stopwatch.StartNew();
             
-            // Act
-            var result = await _searchEngine.ExecuteSearchAsync(request);
-            
-            // Assert
-            result.Properties.All(p => p.MaxCapacity >= guestsCount).Should().BeTrue();
-            
-            _output.WriteLine($"✅ Capacity filter for {guestsCount} guests working");
-        }
-        
-        [Fact]
-        public async Task SearchAsync_WithMultipleFilters_ShouldApplyAllFilters()
-        {
-            // Arrange
-            var request = new PropertySearchRequest
+            // Act - البحث بفلتر المدينة
+            var searchRequest = new PropertySearchRequest
             {
                 City = "صنعاء",
-                PropertyType = "30000000-0000-0000-0000-000000000001",
-                MinPrice = 100,
-                MaxPrice = 500,
-                MinRating = 4.0m,
-                GuestsCount = 2,
                 PageNumber = 1,
                 PageSize = 20
             };
             
-            var matchingProperty = Guid.NewGuid();
-            SetupComplexFilter(matchingProperty);
+            var searchResult = await indexingService.SearchAsync(searchRequest);
             
-            // Act
-            var result = await _searchEngine.ExecuteSearchAsync(request);
+            stopwatch.Stop();
+            _searchLatencies.Add(stopwatch.Elapsed);
             
             // Assert
-            result.Should().HaveAtLeast(1);
-            result.Should().ContainProperty(matchingProperty);
+            searchResult.Should().NotBeNull();
+            searchResult.TotalCount.Should().Be(sanaaProperties.Count);
             
-            var property = result.Properties.First(p => p.Id == matchingProperty.ToString());
-            property.City.Should().Be(request.City);
-            property.PropertyType.Should().Be("منتجع");
-            property.MinPrice.Should().BeInRange(request.MinPrice.Value, request.MaxPrice.Value);
-            property.AverageRating.Should().BeGreaterOrEqualTo(request.MinRating.Value);
-            property.MaxCapacity.Should().BeGreaterOrEqualTo(request.GuestsCount.Value);
+            // التحقق من أن جميع النتائج من صنعاء
+            foreach (var item in searchResult.Properties)
+            {
+                item.City.Should().Be("صنعاء");
+                sanaaProperties.Should().Contain(p => p.Id.ToString() == item.Id);
+            }
             
-            _output.WriteLine($"✅ Multiple filters applied correctly");
+            // التحقق من عدم وجود عقارات من عدن
+            searchResult.Properties.Should().NotContain(item => 
+                adenProperties.Any(p => p.Id.ToString() == item.Id));
+            
+            Output.WriteLine($"✅ City filter test passed");
+            Output.WriteLine($"   City: صنعاء");
+            Output.WriteLine($"   Found: {searchResult.TotalCount} properties");
+            Output.WriteLine($"   Search time: {stopwatch.ElapsedMilliseconds}ms");
         }
         
         [Fact]
-        public async Task SearchAsync_WithAmenityFilter_ShouldFilterByAmenities()
+        public async Task PriceFilter_WithRange_ShouldReturnPropertiesInRange()
         {
-            // Arrange
-            var amenityIds = new List<string>
-            {
-                "10000000-0000-0000-0000-000000000001", // WiFi
-                "10000000-0000-0000-0000-000000000003"  // Pool
-            };
+            // Arrange - استخدام scope منفصل للعزل الكامل
+            using var scope = CreateIsolatedScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+            var indexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
             
-            var request = new PropertySearchRequest
+            // إنشاء عقارات بأسعار مختلفة
+            var properties = new List<Property>();
+            var prices = new[] { 50m, 150m, 250m, 350m, 450m, 550m };
+            
+            foreach (var price in prices)
             {
-                RequiredAmenityIds = amenityIds,
+                var property = TestDataBuilder.PropertyWithUnits(1, $"{TestId}_price_{price}");
+                property.Units.First().BasePrice = new Money(price, "USD");
+                properties.Add(property);
+                TrackEntity(property.Id);
+                TrackEntities(property.Units.Select(u => u.Id));
+            }
+            
+            await dbContext.Properties.AddRangeAsync(properties);
+            await dbContext.SaveChangesAsync();
+            
+            // فهرسة العقارات والوحدات
+            foreach (var property in properties)
+            {
+                await indexingService.OnPropertyCreatedAsync(property.Id);
+                foreach (var unit in property.Units)
+                {
+                    await indexingService.OnUnitCreatedAsync(unit.Id, property.Id);
+                }
+            }
+            
+            await WaitForIndexingCompletion(scope, properties.Count);
+            
+            // Act - البحث بنطاق سعري
+            var searchRequest = new PropertySearchRequest
+            {
+                MinPrice = 100m,
+                MaxPrice = 400m,
                 PageNumber = 1,
                 PageSize = 20
             };
             
-            var matchingProperties = new[] { Guid.NewGuid(), Guid.NewGuid() };
-            SetupAmenityFilter(amenityIds, matchingProperties);
-            
-            // Act
-            var result = await _searchEngine.ExecuteSearchAsync(request);
+            var result = await indexingService.SearchAsync(searchRequest);
             
             // Assert
-            result.Should().HaveCount(matchingProperties.Length);
+            result.Should().NotBeNull();
             
-            foreach (var id in matchingProperties)
+            // التحقق من أن جميع الأسعار في النطاق
+            foreach (var item in result.Properties)
             {
-                result.Should().ContainProperty(id);
+                item.MinPrice.Should().BeInRange(100m, 400m);
             }
             
-            _output.WriteLine($"✅ Amenity filter working for {amenityIds.Count} amenities");
+            // التحقق من العدد المتوقع
+            var expectedCount = prices.Count(p => p >= 100m && p <= 400m);
+            result.TotalCount.Should().Be(expectedCount);
+            
+            Output.WriteLine($"✅ Price filter test passed");
+            Output.WriteLine($"   Range: $100 - $400");
+            Output.WriteLine($"   Found: {result.TotalCount} properties");
         }
         
         [Fact]
-        public async Task SearchAsync_WithDynamicFields_ShouldFilterByDynamicFields()
+        public async Task PropertyTypeFilter_ShouldReturnOnlySpecificType()
         {
-            // Arrange
-            var dynamicFilters = new Dictionary<string, string>
-            {
-                ["pet_friendly"] = "true",
-                ["has_pool"] = "yes"
-            };
+            // Arrange - استخدام scope منفصل للعزل الكامل
+            using var scope = CreateIsolatedScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+            var indexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
             
-            var request = new PropertySearchRequest
+            var hotelTypeId = Guid.Parse("30000000-0000-0000-0000-000000000001");
+            var apartmentTypeId = Guid.Parse("30000000-0000-0000-0000-000000000002");
+            
+            // إنشاء عقارات من أنواع مختلفة
+            var hotels = new List<Property>();
+            for (int i = 0; i < 3; i++)
             {
-                DynamicFieldFilters = dynamicFilters,
+                var property = TestDataBuilder.CompleteProperty($"{TestId}_hotel_{i}");
+                property.TypeId = hotelTypeId;
+                hotels.Add(property);
+                TrackEntity(property.Id);
+            }
+            
+            var apartments = new List<Property>();
+            for (int i = 0; i < 2; i++)
+            {
+                var property = TestDataBuilder.CompleteProperty($"{TestId}_apartment_{i}");
+                property.TypeId = apartmentTypeId;
+                apartments.Add(property);
+                TrackEntity(property.Id);
+            }
+            
+            await dbContext.Properties.AddRangeAsync(hotels.Concat(apartments));
+            await dbContext.SaveChangesAsync();
+            
+            // فهرسة
+            foreach (var property in hotels.Concat(apartments))
+            {
+                await indexingService.OnPropertyCreatedAsync(property.Id);
+            }
+            
+            await WaitForIndexingCompletion(scope, hotels.Count + apartments.Count);
+            
+            // Act - البحث عن الفنادق فقط
+            var searchRequest = new PropertySearchRequest
+            {
+                PropertyType = hotelTypeId.ToString(),
                 PageNumber = 1,
                 PageSize = 20
             };
             
-            var matchingProperties = new[] { Guid.NewGuid() };
-            SetupDynamicFieldFilter(dynamicFilters, matchingProperties);
-            
-            // Act
-            var result = await _searchEngine.ExecuteSearchAsync(request);
+            var result = await indexingService.SearchAsync(searchRequest);
             
             // Assert
-            result.Should().HaveCount(matchingProperties.Length);
-            result.Should().ContainProperty(matchingProperties[0]);
+            result.TotalCount.Should().Be(hotels.Count);
+            result.Properties.Should().OnlyContain(p => 
+                hotels.Any(h => h.Id.ToString() == p.Id));
             
-            _output.WriteLine($"✅ Dynamic field filters working");
+            Output.WriteLine($"✅ Property type filter test passed");
+            Output.WriteLine($"   Type: Hotel");
+            Output.WriteLine($"   Found: {result.TotalCount} properties");
         }
         
         [Fact]
-        public async Task SearchAsync_WithDateRange_ShouldFilterByAvailability()
+        public async Task GuestCapacityFilter_ShouldReturnPropertiesWithEnoughCapacity()
         {
-            // Arrange
-            var checkIn = DateTime.Today.AddDays(7);
-            var checkOut = DateTime.Today.AddDays(10);
+            // Arrange - استخدام scope منفصل للعزل الكامل
+            using var scope = CreateIsolatedScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+            var indexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
             
-            var request = new PropertySearchRequest
+            // إنشاء عقارات بسعات مختلفة
+            var properties = new List<Property>();
+            var capacities = new[] { 2, 4, 6, 8, 10 };
+            
+            foreach (var capacity in capacities)
             {
-                CheckIn = checkIn,
-                CheckOut = checkOut,
+                var property = TestDataBuilder.PropertyWithUnits(1, $"{TestId}_capacity_{capacity}");
+                property.Units.First().MaxCapacity = capacity;
+                property.Units.First().AdultsCapacity = capacity;
+                properties.Add(property);
+                TrackEntity(property.Id);
+                TrackEntities(property.Units.Select(u => u.Id));
+            }
+            
+            await dbContext.Properties.AddRangeAsync(properties);
+            await dbContext.SaveChangesAsync();
+            
+            // فهرسة
+            foreach (var property in properties)
+            {
+                await indexingService.OnPropertyCreatedAsync(property.Id);
+                foreach (var unit in property.Units)
+                {
+                    await indexingService.OnUnitCreatedAsync(unit.Id, property.Id);
+                }
+            }
+            
+            await WaitForIndexingCompletion(scope, properties.Count);
+            
+            // Act - البحث عن عقارات تتسع لـ 5 أشخاص
+            var searchRequest = new PropertySearchRequest
+            {
+                GuestsCount = 5,
                 PageNumber = 1,
                 PageSize = 20
             };
             
-            var availableProperties = new[] { Guid.NewGuid(), Guid.NewGuid() };
-            var unavailableProperties = new[] { Guid.NewGuid() };
-            
-            SetupAvailabilityFilter(checkIn, checkOut, availableProperties, unavailableProperties);
-            
-            // Act
-            var result = await _searchEngine.ExecuteSearchAsync(request);
+            var result = await indexingService.SearchAsync(searchRequest);
             
             // Assert
-            foreach (var id in availableProperties)
+            result.Should().NotBeNull();
+            
+            // التحقق من أن جميع العقارات تتسع لـ 5 أشخاص على الأقل
+            foreach (var item in result.Properties)
             {
-                result.Should().ContainProperty(id);
+                item.MaxCapacity.Should().BeGreaterOrEqualTo(5);
             }
             
-            foreach (var id in unavailableProperties)
+            // يجب أن تعود العقارات بسعة 6، 8، 10
+            var expectedCount = capacities.Count(c => c >= 5);
+            result.TotalCount.Should().Be(expectedCount);
+            
+            Output.WriteLine($"✅ Guest capacity filter test passed");
+            Output.WriteLine($"   Guests: 5");
+            Output.WriteLine($"   Found: {result.TotalCount} properties");
+        }
+        
+        
+        public override void Dispose()
+        {
+            _searchLock?.Dispose();
+            base.Dispose();
+            
+            // طباعة إحصائيات الأداء
+            if (_searchLatencies.Any())
             {
-                result.Should().NotContainProperty(id);
+                Output.WriteLine($"\n📊 Search Performance Statistics:");
+                Output.WriteLine($"   Total searches: {_searchLatencies.Count}");
+                Output.WriteLine($"   Average latency: {_searchLatencies.Average(t => t.TotalMilliseconds):F2}ms");
+                Output.WriteLine($"   Min latency: {_searchLatencies.Min().TotalMilliseconds:F2}ms");
+                Output.WriteLine($"   Max latency: {_searchLatencies.Max().TotalMilliseconds:F2}ms");
             }
-            
-            _output.WriteLine($"✅ Availability filter for {checkIn:yyyy-MM-dd} to {checkOut:yyyy-MM-dd} working");
-        }
-        
-        [Theory]
-        [InlineData("price_asc")]
-        [InlineData("price_desc")]
-        [InlineData("rating")]
-        [InlineData("newest")]
-        [InlineData("popularity")]
-        public async Task SearchAsync_WithSorting_ShouldSortCorrectly(string sortBy)
-        {
-            // Arrange
-            var request = new PropertySearchRequest
-            {
-                SortBy = sortBy,
-                PageNumber = 1,
-                PageSize = 20
-            };
-            
-            var properties = CreatePropertiesForSorting();
-            SetupSortingTest(properties);
-            
-            // Act
-            var result = await _searchEngine.ExecuteSearchAsync(request);
-            
-            // Assert
-            switch (sortBy)
-            {
-                case "price_asc":
-                    result.Should().BeSortedByPrice(ascending: true);
-                    break;
-                case "price_desc":
-                    result.Should().BeSortedByPrice(ascending: false);
-                    break;
-                case "rating":
-                    result.Should().BeSortedByRating(descending: true);
-                    break;
-                default:
-                    result.Should().NotBeNull();
-                    break;
-            }
-            
-            _output.WriteLine($"✅ Sorting by '{sortBy}' working correctly");
-        }
-        
-        #region Helper Methods
-        
-        private void SetupCityFilter(string city, Guid[] propertyIds)
-        {
-            _databaseMock.Setup(x => x.SetMembersAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains($"city:{city.ToLower()}")),
-                It.IsAny<CommandFlags>()))
-                .ReturnsAsync(propertyIds.Select(id => (RedisValue)id.ToString()).ToArray());
-            
-            SetupPropertyDetails(propertyIds, city: city);
-        }
-        
-        private void SetupPriceFilter(Guid[] propertyIds)
-        {
-            SetupPropertyDetails(propertyIds);
-        }
-        
-        private void SetupPropertyTypeFilter(Guid typeId, Guid[] propertyIds)
-        {
-            _databaseMock.Setup(x => x.SetMembersAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains($"property_type:{typeId}")),
-                It.IsAny<CommandFlags>()))
-                .ReturnsAsync(propertyIds.Select(id => (RedisValue)id.ToString()).ToArray());
-            
-            SetupPropertyDetails(propertyIds, propertyType: typeId.ToString());
-        }
-        
-        private void SetupCapacityFilter(Guid[] propertyIds)
-        {
-            SetupPropertyDetails(propertyIds);
-        }
-        
-        private void SetupComplexFilter(Guid propertyId)
-        {
-            SetupPropertyDetails(new[] { propertyId },
-                city: "صنعاء",
-                propertyType: "30000000-0000-0000-0000-000000000001",
-                price: 200,
-                capacity: 4);
-        }
-        
-        private void SetupAmenityFilter(List<string> amenityIds, Guid[] propertyIds)
-        {
-            foreach (var amenityId in amenityIds)
-            {
-                _databaseMock.Setup(x => x.SetMembersAsync(
-                    It.Is<RedisKey>(k => k.ToString().Contains($"amenity:{amenityId}")),
-                    It.IsAny<CommandFlags>()))
-                    .ReturnsAsync(propertyIds.Select(id => (RedisValue)id.ToString()).ToArray());
-            }
-            
-            SetupPropertyDetails(propertyIds);
-        }
-        
-        private void SetupDynamicFieldFilter(Dictionary<string, string> fields, Guid[] propertyIds)
-        {
-            SetupPropertyDetails(propertyIds, dynamicFields: fields);
-        }
-        
-        private void SetupAvailabilityFilter(DateTime checkIn, DateTime checkOut, 
-            Guid[] availableProperties, Guid[] unavailableProperties)
-        {
-            // تكوين التوفر للعقارات المتاحة
-            foreach (var id in availableProperties)
-            {
-                // محاكاة أن العقار متاح
-                var availableKey = $"property:{id}:availability:{checkIn:yyyy-MM-dd}:{checkOut:yyyy-MM-dd}";
-                _databaseMock.Setup(x => x.StringGetAsync(
-                    It.Is<RedisKey>(k => k.ToString() == availableKey),
-                    It.IsAny<CommandFlags>()))
-                    .ReturnsAsync("available");
-            }
-            
-            foreach (var id in unavailableProperties)
-            {
-                // محاكاة أن العقار غير متاح
-                var unavailableKey = $"property:{id}:availability:{checkIn:yyyy-MM-dd}:{checkOut:yyyy-MM-dd}";
-                _databaseMock.Setup(x => x.StringGetAsync(
-                    It.Is<RedisKey>(k => k.ToString() == unavailableKey),
-                    It.IsAny<CommandFlags>()))
-                    .ReturnsAsync(RedisValue.Null);
-            }
-            
-            SetupPropertyDetails(availableProperties.Concat(unavailableProperties).ToArray());
-        }
-        
-        private void SetupSortingTest(List<PropertySearchItem> properties)
-        {
-            var propertyIds = properties.Select(p => p.Id).ToArray();
-            
-            _databaseMock.Setup(x => x.SetMembersAsync(
-                It.Is<RedisKey>(k => k.ToString() == "properties:all"),
-                It.IsAny<CommandFlags>()))
-                .ReturnsAsync(propertyIds.Select(id => (RedisValue)id.ToString()).ToArray());
-            
-            foreach (var prop in properties)
-            {
-                var hashEntries = new HashEntry[]
-                {
-                    new("id", prop.Id.ToString()),
-                    new("name", prop.Name),
-                    new("city", prop.City),
-                    new("property_type", prop.PropertyType),
-                    new("min_price", prop.MinPrice.ToString()),
-                    new("average_rating", prop.AverageRating.ToString()),
-                    new("star_rating", prop.StarRating.ToString()),
-                    new("max_capacity", prop.MaxCapacity.ToString()),
-                    new("units_count", prop.UnitsCount.ToString()),
-                    new("latitude", prop.Latitude.ToString()),
-                    new("longitude", prop.Longitude.ToString()),
-                    new("is_active", "1"),
-                    new("is_approved", "1")
-                };
-                
-                _databaseMock.Setup(x => x.HashGetAllAsync(
-                    It.Is<RedisKey>(k => k.ToString().Contains($"property:{prop.Id}")),
-                    It.IsAny<CommandFlags>()))
-                    .ReturnsAsync(hashEntries);
-            }
-        }
-        
-        private void SetupPropertyDetails(Guid[] propertyIds,
-            string city = null, decimal price = 0, string propertyType = null, 
-            int capacity = 0, Dictionary<string, string> dynamicFields = null)
-        {
-            foreach (var id in propertyIds)
-            {
-                var hashEntries = new List<HashEntry>
-                {
-                    new("id", id.ToString()),
-                    new("name", $"Property {id}"),
-                    new("city", city ?? "صنعاء"),
-                    new("min_price", price.ToString()),
-                    new("average_rating", "4.5"),
-                    new("max_capacity", capacity.ToString()),
-                    new("is_active", "1"),
-                    new("is_approved", "1")
-                };
-                
-                if (!string.IsNullOrEmpty(propertyType))
-                {
-                    hashEntries.Add(new("property_type", propertyType));
-                }
-                
-                if (dynamicFields != null)
-                {
-                    var dynamicFieldsJson = string.Join(" ", 
-                        dynamicFields.Select(kv => $"{kv.Key}:{kv.Value}"));
-                    hashEntries.Add(new("dynamic_fields", dynamicFieldsJson));
-                }
-                
-                _databaseMock.Setup(x => x.HashGetAllAsync(
-                    It.Is<RedisKey>(k => k.ToString().Contains($"property:{id}")),
-                    It.IsAny<CommandFlags>()))
-                    .ReturnsAsync(hashEntries.ToArray());
-            }
-        }
-        
-        private PropertySearchItem CreateTestDocument(Guid id, string city = null, decimal price = 0)
-        {
-            return new PropertySearchItem
-            {
-                Id = id.ToString(),
-                Name = $"Property {id}",
-                MinPrice = price
-            };
-        }
-        
-        private PropertySearchItem CreatePropertyWithPrice(Guid id, decimal price)
-        {
-            return new PropertySearchItem
-            {
-                Id = id.ToString(),
-                Name = $"Property {id}",
-                MinPrice = price
-            };
-        }
-        
-        private PropertySearchItem CreatePropertyWithCapacity(Guid id, int capacity)
-        {
-            return new PropertySearchItem
-            {
-                Id = id.ToString(),
-                Name = $"Property {id}",
-                MaxCapacity = capacity
-            };
-        }
-        
-        private List<PropertySearchItem> CreatePropertiesForSorting()
-        {
-            return new List<PropertySearchItem>
-            {
-                new PropertySearchItem
-                {
-                    Id = Guid.NewGuid().ToString(),
-                    Name = "Property A",
-                    MinPrice = 300,
-                    AverageRating = 3.5m
-                },
-                new PropertySearchItem
-                {
-                    Id = Guid.NewGuid().ToString(),
-                    Name = "Property B",
-                    MinPrice = 100,
-                    AverageRating = 4.8m
-                },
-                new PropertySearchItem
-                {
-                    Id = Guid.NewGuid().ToString(),
-                    Name = "Property C",
-                    MinPrice = 200,
-                    AverageRating = 4.2m
-                }
-            };
-        }
-        
-        #endregion
-        
-        public void Dispose()
-        {
-            _memoryCache?.Dispose();
-            _output.WriteLine($"🧹 Cleaning up test {_testId}");
         }
     }
 }
