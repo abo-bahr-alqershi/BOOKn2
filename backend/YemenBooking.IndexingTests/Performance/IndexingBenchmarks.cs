@@ -12,14 +12,6 @@ using YemenBooking.Infrastructure.Data.Context;
 using YemenBooking.Core.Entities;
 using YemenBooking.IndexingTests.Infrastructure.Builders;
 
-// Temporary PricingRule class for testing
-public class PricingRule
-{
-    public string RuleType { get; set; }
-    public decimal Percentage { get; set; }
-    public DateTime StartDate { get; set; }
-    public DateTime EndDate { get; set; }
-}
 
 namespace YemenBooking.IndexingTests.Performance
 {
