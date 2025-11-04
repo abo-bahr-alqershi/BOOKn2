@@ -11,25 +11,30 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
 {
     /// <summary>
     /// بناء البيانات الاختبارية باستخدام Object Mother Pattern
-    /// كل بيانات فريدة ومعزولة - بدون static state
-    /// Thread-safe implementation with atomic counters
+    /// كل بيانات فريدة ومعزولة تماماً - بدون أي static state
+    /// يطبق مبدأ العزل الكامل - كل بيانات لها GUID فريد
     /// </summary>
     public static class TestDataBuilder
     {
-        // Thread-safe counter for unique IDs
-        private static int _globalCounter = 0;
-        
-        // Thread-local Random to avoid concurrency issues
-        private static readonly ThreadLocal<Random> _threadLocalRandom = 
-            new ThreadLocal<Random>(() => new Random(Guid.NewGuid().GetHashCode()));
+        // بدون static counter - استخدام GUIDs فقط للعزل الكامل
         
         /// <summary>
-        /// الحصول على معرف فريد باستخدام Guid و counter آمن
+        /// الحصول على معرف فريد باستخدام GUID كامل
         /// </summary>
-        private static string GetUniqueId()
+        private static string GetUniqueId(string prefix = "")
         {
-            var counter = Interlocked.Increment(ref _globalCounter);
-            return $"{counter}_{Guid.NewGuid():N}".Substring(0, 16);
+            // استخدام GUID كامل لضمان الفرادة المطلقة
+            var uniqueGuid = Guid.NewGuid().ToString("N");
+            return string.IsNullOrEmpty(prefix) ? uniqueGuid : $"{prefix}_{uniqueGuid}";
+        }
+        
+        /// <summary>
+        /// الحصول على Random آمن للخيط الحالي
+        /// </summary>
+        private static Random GetThreadSafeRandom()
+        {
+            // إنشاء Random جديد لكل استخدام بناءً على GUID
+            return new Random(Guid.NewGuid().GetHashCode());
         }
         
         #region Property Builders
@@ -39,12 +44,14 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
         /// </summary>
         public static Property SimpleProperty(string testId = null)
         {
-            var uniqueId = GetUniqueId();
+            // استخدام GUID كامل لكل عقار
+            var propertyGuid = Guid.NewGuid();
+            var uniqueName = GetUniqueId("PROP");
             testId ??= Guid.NewGuid().ToString("N");
             
             var faker = new Faker<Property>("ar")
-                .RuleFor(p => p.Id, f => Guid.NewGuid())
-                .RuleFor(p => p.Name, f => $"TEST_PROP_{uniqueId}_{testId}")
+                .RuleFor(p => p.Id, f => propertyGuid)
+                .RuleFor(p => p.Name, f => $"TEST_PROP_{uniqueName}_{testId}")
                 .RuleFor(p => p.Description, f => f.Lorem.Paragraph())
                 .RuleFor(p => p.City, f => f.PickRandom("صنعاء", "عدن", "تعز", "الحديدة", "إب"))
                 .RuleFor(p => p.Address, f => f.Address.FullAddress())
@@ -160,18 +167,21 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
         /// </summary>
         public static YemenBooking.Core.Entities.Unit SimpleUnit(string testId = null)
         {
-            var uniqueId = GetUniqueId();
+            // استخدام GUID كامل لكل وحدة
+            var unitGuid = Guid.NewGuid();
+            var uniqueName = GetUniqueId("UNIT");
             testId ??= Guid.NewGuid().ToString("N");
             
             var faker = new Faker<YemenBooking.Core.Entities.Unit>("ar")
-                .RuleFor(u => u.Id, f => Guid.NewGuid())
-                .RuleFor(u => u.Name, f => $"TEST_UNIT_{uniqueId}_{testId}")
+                .RuleFor(u => u.Id, f => unitGuid)
+                .RuleFor(u => u.Name, f => $"TEST_UNIT_{uniqueName}_{testId}")
                 .RuleFor(u => u.UnitTypeId, f => GetRandomUnitTypeId())
                 .RuleFor(u => u.AdultsCapacity, f => f.Random.Int(1, 4))
                 .RuleFor(u => u.ChildrenCapacity, f => f.Random.Int(0, 2))
                 .RuleFor(u => u.MaxCapacity, f => f.Random.Int(1, 6))
                 .RuleFor(u => u.BasePrice, f => new Money(f.Random.Decimal(50, 1000), "YER"))
                 .RuleFor(u => u.IsAvailable, f => true)
+                .RuleFor(u => u.IsActive, f => true)
                 .RuleFor(u => u.CreatedAt, f => DateTime.UtcNow)
                 .RuleFor(u => u.UpdatedAt, f => DateTime.UtcNow);
             
@@ -302,7 +312,8 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
                 Guid.Parse("30000000-0000-0000-0000-000000000005"), // شاليه
             };
             
-            return types[_threadLocalRandom.Value.Next(types.Length)];
+            var random = GetThreadSafeRandom();
+            return types[random.Next(types.Length)];
         }
         
         private static Guid GetRandomUnitTypeId()
@@ -315,7 +326,8 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
                 Guid.Parse("20000000-0000-0000-0000-000000000004"), // شقة
             };
             
-            return types[_threadLocalRandom.Value.Next(types.Length)];
+            var random = GetThreadSafeRandom();
+            return types[random.Next(types.Length)];
         }
         
         private static Guid GetRandomAmenityId()
@@ -329,7 +341,8 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
                 Guid.Parse("10000000-0000-0000-0000-000000000005"), // صالة رياضية
             };
             
-            return amenities[_threadLocalRandom.Value.Next(amenities.Length)];
+            var random = GetThreadSafeRandom();
+            return amenities[random.Next(amenities.Length)];
         }
         
         #endregion
@@ -344,7 +357,12 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
             testId ??= Guid.NewGuid().ToString("N");
             
             return Enumerable.Range(0, count)
-                .Select(i => SimpleProperty($"{testId}_{i}"))
+                .Select(i => 
+                {
+                    // كل عقار له GUID فريد
+                    var uniqueTestId = $"{testId}_{Guid.NewGuid():N}";
+                    return SimpleProperty(uniqueTestId);
+                })
                 .ToList();
         }
         
@@ -356,7 +374,12 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
             testId ??= Guid.NewGuid().ToString("N");
             
             return Enumerable.Range(0, count)
-                .Select(i => UnitForProperty(propertyId, $"{testId}_{i}"))
+                .Select(i =>
+                {
+                    // كل وحدة لها GUID فريد
+                    var uniqueTestId = $"{testId}_{Guid.NewGuid():N}";
+                    return UnitForProperty(propertyId, uniqueTestId);
+                })
                 .ToList();
         }
         
