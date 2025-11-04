@@ -56,7 +56,7 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
                 .RuleFor(p => p.City, f => f.PickRandom("صنعاء", "عدن", "تعز", "الحديدة", "إب"))
                 .RuleFor(p => p.Address, f => f.Address.FullAddress())
                 .RuleFor(p => p.TypeId, f => GetRandomPropertyTypeId())
-                .RuleFor(p => p.OwnerId, f => Guid.NewGuid())
+                .RuleFor(p => p.OwnerId, f => Guid.Parse("50000000-0000-0000-0000-000000000001")) // Test User ID
                 .RuleFor(p => p.IsActive, f => true)
                 .RuleFor(p => p.IsApproved, f => true)
                 .RuleFor(p => p.AverageRating, (f, p) => f.Random.Decimal(3, 5))

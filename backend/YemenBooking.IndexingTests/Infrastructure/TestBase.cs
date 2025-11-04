@@ -310,9 +310,32 @@ namespace YemenBooking.IndexingTests.Infrastructure
                     }
                 };
                 
+                // إضافة بيانات Users الأساسية (مطلوبة للعقارات)
+                var testUser = new User
+                {
+                    Id = Guid.Parse("50000000-0000-0000-0000-000000000001"),
+                    Name = "Test User",
+                    Email = "test@test.com",
+                    Password = "TestPassword123!", // كلمة مرور اختبارية
+                    Phone = "+967777777777",
+                    EmailConfirmed = true,
+                    PhoneNumberConfirmed = true,
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow
+                };
+                
                 // حفظ البيانات بالترتيب الصحيح حسب العلاقات
                 
-                // 1. Cities أولاً (لا تعتمد على أي جدول آخر)
+                // 1. Users أولاً (لا يعتمد على أي جدول آخر)
+                if (!DbContext.Users.Any(u => u.Id == testUser.Id))
+                {
+                    await DbContext.Users.AddAsync(testUser);
+                    await DbContext.SaveChangesAsync();
+                    DbContext.ChangeTracker.Clear();
+                    Output.WriteLine("✅ Users added successfully");
+                }
+                
+                // 2. Cities (لا تعتمد على أي جدول آخر)
                 if (!DbContext.Cities.Any(c => c.Name == cities[0].Name))
                 {
                     await DbContext.Cities.AddRangeAsync(cities);
