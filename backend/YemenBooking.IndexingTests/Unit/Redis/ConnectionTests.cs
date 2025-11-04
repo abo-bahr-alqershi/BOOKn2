@@ -1,446 +1,482 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
+using System.Net;
+using System.Diagnostics;
 using Xunit;
 using Xunit.Abstractions;
-using Moq;
 using FluentAssertions;
-using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using YemenBooking.Infrastructure.Redis.Core;
 using YemenBooking.Infrastructure.Redis.Core.Interfaces;
+using YemenBooking.IndexingTests.Infrastructure;
+using YemenBooking.IndexingTests.Infrastructure.Fixtures;
+using YemenBooking.IndexingTests.Infrastructure.Assertions;
 using StackExchange.Redis;
+using Testcontainers.Redis;
+using Polly;
 
 namespace YemenBooking.IndexingTests.Unit.Redis
 {
     /// <summary>
-    /// اختبارات اتصال Redis
+    /// اختبارات اتصال Redis الحقيقية
+    /// تستخدم Redis حقيقي عبر TestContainers
+    /// تطبق جميع مبادئ العزل الكامل والحتمية
     /// </summary>
-    public class ConnectionTests : IDisposable
+    [Collection("TestContainers")]
+    public class ConnectionTests : TestBase
     {
-        private readonly ITestOutputHelper _output;
-        private readonly Mock<ILogger> _loggerMock;
-        private readonly Mock<IConfiguration> _configMock;
-        private readonly Mock<IConnectionMultiplexer> _multiplexerMock;
-        private readonly Mock<IDatabase> _databaseMock;
-        private readonly Mock<IServer> _serverMock;
-        private readonly string _testId;
+        private readonly TestContainerFixture _containers;
+        private readonly SemaphoreSlim _connectionLock;
+        private readonly List<TimeSpan> _connectionLatencies = new();
+        private readonly List<(DateTime Time, bool Success)> _connectionAttempts = new();
         
-        public ConnectionTests(ITestOutputHelper output)
+        public ConnectionTests(TestContainerFixture containers, ITestOutputHelper output) 
+            : base(output)
         {
-            _output = output;
-            _testId = Guid.NewGuid().ToString("N");
-            
-            _loggerMock = new Mock<ILogger>();
-            _configMock = new Mock<IConfiguration>();
-            _multiplexerMock = new Mock<IConnectionMultiplexer>();
-            _databaseMock = new Mock<IDatabase>();
-            _serverMock = new Mock<IServer>();
-            
-            SetupDefaultConfiguration();
+            _containers = containers;
+            _connectionLock = new SemaphoreSlim(1, 1);
         }
         
-        private void SetupDefaultConfiguration()
-        {
-            _configMock.Setup(x => x["Redis:EndPoint"]).Returns("localhost:6379");
-            _configMock.Setup(x => x["Redis:Password"]).Returns("");
-            _configMock.Setup(x => x["Redis:Database"]).Returns("0");
-            _configMock.Setup(x => x["Redis:ConnectTimeout"]).Returns("5000");
-            _configMock.Setup(x => x["Redis:SyncTimeout"]).Returns("5000");
-            _configMock.Setup(x => x["Redis:AsyncTimeout"]).Returns("5000");
-            _configMock.Setup(x => x["Redis:KeepAlive"]).Returns("60");
-            _configMock.Setup(x => x["Redis:ConnectRetry"]).Returns("3");
-            _configMock.Setup(x => x["Redis:AbortOnConnectFail"]).Returns("false");
-            _configMock.Setup(x => x["Redis:AllowAdmin"]).Returns("true");
-        }
+        protected override bool UseTestContainers() => true;
         
         [Fact]
-        public async Task InitializeAsync_WithValidConfig_ShouldConnect()
+        public async Task Connection_WithValidConfig_ShouldEstablishSuccessfully()
         {
-            // Arrange
-            _multiplexerMock.Setup(x => x.IsConnected).Returns(true);
-            _multiplexerMock.Setup(x => x.GetDatabase(It.IsAny<int>(), It.IsAny<object>()))
-                .Returns(_databaseMock.Object);
-            _multiplexerMock.Setup(x => x.GetEndPoints(It.IsAny<bool>()))
-                .Returns(new[] { System.Net.IPEndPoint.Parse("127.0.0.1:6379") });
-            _multiplexerMock.Setup(x => x.GetServer(It.IsAny<System.Net.EndPoint>(), It.IsAny<object>()))
-                .Returns(_serverMock.Object);
+            // Arrange - استخدام scope منفصل للعزل الكامل
+            using var scope = CreateIsolatedScope();
+            var redisManager = scope.ServiceProvider.GetRequiredService<IRedisConnectionManager>();
             
-            var manager = new TestableRedisConnectionManager(
-                _configMock.Object,
-                _loggerMock.Object,
-                _multiplexerMock.Object
-            );
+            var stopwatch = Stopwatch.StartNew();
             
             // Act
-            await manager.InitializeAsync();
-            var isConnected = await manager.IsConnectedAsync();
+            var isConnected = await redisManager.IsConnectedAsync();
+            
+            stopwatch.Stop();
+            _connectionLatencies.Add(stopwatch.Elapsed);
+            _connectionAttempts.Add((DateTime.UtcNow, isConnected));
             
             // Assert
-            isConnected.Should().BeTrue();
-            _output.WriteLine($"✅ Redis connection initialized successfully");
+            isConnected.Should().BeTrue("Redis should be connected with valid configuration");
+            
+            // التحقق من معلومات الاتصال
+            var connectionInfo = redisManager.GetConnectionInfo();
+            connectionInfo.Should().NotBeNull();
+            connectionInfo.IsConnected.Should().BeTrue();
+            connectionInfo.Endpoint.Should().NotBeNullOrWhiteSpace();
+            
+            // التحقق من زمن الاستجابة
+            stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(2), 
+                "Connection should be established quickly");
+            
+            Output.WriteLine($"✅ Redis connection established successfully in {stopwatch.ElapsedMilliseconds}ms");
+            Output.WriteLine($"   Endpoint: {connectionInfo.Endpoint}");
         }
         
         [Fact]
-        public async Task InitializeAsync_WithInvalidEndpoint_ShouldHandleGracefully()
+        public async Task Connection_WithInvalidEndpoint_ShouldHandleGracefully()
         {
-            // Arrange
-            _configMock.Setup(x => x["Redis:EndPoint"]).Returns("invalid:endpoint:format");
+            // Arrange - إنشاء configuration بـ endpoint خاطئ
+            using var scope = CreateIsolatedScope();
+            var services = new ServiceCollection();
             
-            var manager = new TestableRedisConnectionManager(
-                _configMock.Object,
-                _loggerMock.Object,
-                null
-            );
+            var invalidConfig = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string>
+                {
+                    ["ConnectionStrings:Redis"] = "invalid-host:99999",
+                    ["Redis:ConnectTimeout"] = "1000",
+                    ["Redis:ConnectRetry"] = "1",
+                    ["Redis:AbortOnConnectFail"] = "true"
+                })
+                .Build();
             
-            // Act
-            await manager.InitializeAsync();
-            var isConnected = await manager.IsConnectedAsync();
+            services.AddSingleton<IConfiguration>(invalidConfig);
+            services.AddSingleton<IRedisConnectionManager, RedisConnectionManager>();
+            services.AddLogging();
             
-            // Assert
-            isConnected.Should().BeFalse();
-            
-            _loggerMock.Verify(
-                x => x.Log(
-                    LogLevel.Error,
-                    It.IsAny<EventId>(),
-                    It.IsAny<It.IsAnyType>(),
-                    It.IsAny<Exception>(),
-                    It.IsAny<Func<It.IsAnyType, Exception, string>>()),
-                Times.AtLeastOnce);
-            
-            _output.WriteLine($"✅ Invalid endpoint handled gracefully");
-        }
-        
-        [Fact]
-        public void GetDatabase_WhenConnected_ShouldReturnDatabase()
-        {
-            // Arrange
-            _multiplexerMock.Setup(x => x.IsConnected).Returns(true);
-            _multiplexerMock.Setup(x => x.GetDatabase(It.IsAny<int>(), It.IsAny<object>()))
-                .Returns(_databaseMock.Object);
-            
-            var manager = new TestableRedisConnectionManager(
-                _configMock.Object,
-                _loggerMock.Object,
-                _multiplexerMock.Object
-            );
-            
-            // Act
-            var database = manager.GetDatabase();
-            
-            // Assert
-            database.Should().NotBeNull();
-            database.Should().BeSameAs(_databaseMock.Object);
-            
-            _output.WriteLine($"✅ Database retrieved successfully");
-        }
-        
-        [Fact]
-        public void GetDatabase_WhenNotConnected_ShouldThrowException()
-        {
-            // Arrange
-            _multiplexerMock.Setup(x => x.IsConnected).Returns(false);
-            
-            var manager = new TestableRedisConnectionManager(
-                _configMock.Object,
-                _loggerMock.Object,
-                _multiplexerMock.Object
-            );
+            var provider = services.BuildServiceProvider();
+            var redisManager = provider.GetRequiredService<IRedisConnectionManager>();
             
             // Act & Assert
-            var action = () => manager.GetDatabase();
-            action.Should().Throw<InvalidOperationException>()
-                .WithMessage("*not connected*");
+            var isConnected = await redisManager.IsConnectedAsync();
+            isConnected.Should().BeFalse("Should not connect with invalid endpoint");
             
-            _output.WriteLine($"✅ Disconnected state handled correctly");
+            Output.WriteLine($"✅ Invalid endpoint handled gracefully");
         }
         
         [Fact]
-        public void GetServer_WhenConnected_ShouldReturnServer()
+        public async Task GetDatabase_WhenConnected_ShouldReturnValidDatabase()
         {
             // Arrange
-            var endpoint = System.Net.IPEndPoint.Parse("127.0.0.1:6379");
-            
-            _multiplexerMock.Setup(x => x.IsConnected).Returns(true);
-            _multiplexerMock.Setup(x => x.GetEndPoints(It.IsAny<bool>()))
-                .Returns(new[] { endpoint });
-            _multiplexerMock.Setup(x => x.GetServer(It.IsAny<System.Net.EndPoint>(), It.IsAny<object>()))
-                .Returns(_serverMock.Object);
-            
-            var manager = new TestableRedisConnectionManager(
-                _configMock.Object,
-                _loggerMock.Object,
-                _multiplexerMock.Object
-            );
+            using var scope = CreateIsolatedScope();
+            var redisManager = scope.ServiceProvider.GetRequiredService<IRedisConnectionManager>();
             
             // Act
-            var server = manager.GetServer();
+            var database = redisManager.GetDatabase();
             
             // Assert
-            server.Should().NotBeNull();
-            server.Should().BeSameAs(_serverMock.Object);
+            database.Should().NotBeNull("Database object should be returned when connected");
             
-            _output.WriteLine($"✅ Server retrieved successfully");
+            // التحقق من أن Database يعمل بشكل صحيح
+            var testKey = $"test:{TestId}:db_test";
+            var testValue = "test_value";
+            
+            await database.StringSetAsync(testKey, testValue);
+            var retrievedValue = await database.StringGetAsync(testKey);
+            
+            retrievedValue.Should().Be(testValue);
+            await database.KeyDeleteAsync(testKey);
+            
+            Output.WriteLine($"✅ Database retrieved and verified successfully");
         }
         
         [Fact]
-        public async Task IsConnectedAsync_WithActiveConnection_ShouldReturnTrue()
+        public async Task GetDatabase_WithSpecificDbNumber_ShouldReturnCorrectDatabase()
         {
             // Arrange
-            _multiplexerMock.Setup(x => x.IsConnected).Returns(true);
-            _databaseMock.Setup(x => x.PingAsync(It.IsAny<CommandFlags>()))
-                .ReturnsAsync(TimeSpan.FromMilliseconds(10));
-            _multiplexerMock.Setup(x => x.GetDatabase(It.IsAny<int>(), It.IsAny<object>()))
-                .Returns(_databaseMock.Object);
+            using var scope = CreateIsolatedScope();
+            var redisManager = scope.ServiceProvider.GetRequiredService<IRedisConnectionManager>();
             
-            var manager = new TestableRedisConnectionManager(
-                _configMock.Object,
-                _loggerMock.Object,
-                _multiplexerMock.Object
-            );
-            
-            // Act
-            var isConnected = await manager.IsConnectedAsync();
+            // Act - استخدام قاعدة بيانات مختلفة (DB 1)
+            var database1 = redisManager.GetDatabase(1);
+            var database2 = redisManager.GetDatabase(2);
             
             // Assert
-            isConnected.Should().BeTrue();
+            database1.Should().NotBeNull();
+            database2.Should().NotBeNull();
             
-            _output.WriteLine($"✅ Connection status checked successfully");
+            // التأكد من عزل قواعد البيانات
+            var testKey = $"test:{TestId}:db_isolation";
+            
+            await database1.StringSetAsync(testKey, "value1");
+            await database2.StringSetAsync(testKey, "value2");
+            
+            var value1 = await database1.StringGetAsync(testKey);
+            var value2 = await database2.StringGetAsync(testKey);
+            
+            value1.Should().Be("value1");
+            value2.Should().Be("value2");
+            
+            // تنظيف
+            await database1.KeyDeleteAsync(testKey);
+            await database2.KeyDeleteAsync(testKey);
+            
+            Output.WriteLine($"✅ Multiple databases isolated correctly");
         }
         
         [Fact]
-        public async Task IsConnectedAsync_WithPingFailure_ShouldReturnFalse()
+        public async Task GetServer_WhenConnected_ShouldReturnValidServer()
         {
             // Arrange
-            _multiplexerMock.Setup(x => x.IsConnected).Returns(true);
-            _databaseMock.Setup(x => x.PingAsync(It.IsAny<CommandFlags>()))
-                .ThrowsAsync(new RedisException("Ping failed"));
-            _multiplexerMock.Setup(x => x.GetDatabase(It.IsAny<int>(), It.IsAny<object>()))
-                .Returns(_databaseMock.Object);
-            
-            var manager = new TestableRedisConnectionManager(
-                _configMock.Object,
-                _loggerMock.Object,
-                _multiplexerMock.Object
-            );
+            using var scope = CreateIsolatedScope();
+            var redisManager = scope.ServiceProvider.GetRequiredService<IRedisConnectionManager>();
             
             // Act
-            var isConnected = await manager.IsConnectedAsync();
+            var server = redisManager.GetServer();
             
             // Assert
-            isConnected.Should().BeFalse();
+            server.Should().NotBeNull("Server object should be returned when connected");
             
-            _output.WriteLine($"✅ Ping failure handled correctly");
+            // التحقق من معلومات الخادم
+            var info = await server.InfoAsync();
+            info.Should().NotBeNull();
+            info.Should().NotBeEmpty();
+            
+            // التحقق من قدرات الخادم
+            server.IsConnected.Should().BeTrue();
+            var features = server.Features;
+            features.Should().NotBeNull();
+            
+            Output.WriteLine($"✅ Server retrieved successfully");
+            Output.WriteLine($"   Server endpoint: {server.EndPoint}");
+            Output.WriteLine($"   Version: {server.Version}");
+        }
+        
+        [Fact]
+        public async Task Ping_ShouldReturnLatency()
+        {
+            // Arrange
+            using var scope = CreateIsolatedScope();
+            var redisManager = scope.ServiceProvider.GetRequiredService<IRedisConnectionManager>();
+            var database = redisManager.GetDatabase();
+            
+            // Act - قياس زمن الاستجابة
+            var pingTimes = new List<TimeSpan>();
+            
+            for (int i = 0; i < 10; i++)
+            {
+                var stopwatch = Stopwatch.StartNew();
+                var pingResult = await database.PingAsync();
+                stopwatch.Stop();
+                
+                pingTimes.Add(pingResult);
+                _connectionLatencies.Add(stopwatch.Elapsed);
+                
+                await Task.Delay(10); // تأخير صغير بين الطلبات
+            }
+            
+            // Assert
+            pingTimes.Should().NotBeEmpty();
+            pingTimes.Should().OnlyContain(t => t < TimeSpan.FromSeconds(1), 
+                "All pings should complete in less than 1 second");
+            
+            var avgPing = TimeSpan.FromMilliseconds(pingTimes.Average(t => t.TotalMilliseconds));
+            avgPing.Should().BeLessThan(TimeSpan.FromMilliseconds(100), 
+                "Average ping should be less than 100ms for local Redis");
+            
+            Output.WriteLine($"✅ Ping test completed");
+            Output.WriteLine($"   Average ping: {avgPing.TotalMilliseconds:F2}ms");
+            Output.WriteLine($"   Min ping: {pingTimes.Min().TotalMilliseconds:F2}ms");
+            Output.WriteLine($"   Max ping: {pingTimes.Max().TotalMilliseconds:F2}ms");
+        }
+        
+        [Fact]
+        public async Task ConcurrentConnections_ShouldHandleMultipleClientsCorrectly()
+        {
+            // Arrange
+            const int concurrentClients = 20;
+            var tasks = new List<Task<bool>>();
+            
+            // Act - إنشاء عملاء متعددين بشكل متزامن
+            for (int i = 0; i < concurrentClients; i++)
+            {
+                var clientIndex = i;
+                tasks.Add(Task.Run(async () =>
+                {
+                    using var scope = CreateIsolatedScope();
+                    var redisManager = scope.ServiceProvider.GetRequiredService<IRedisConnectionManager>();
+                    
+                    // كل عميل يقوم بعملية
+                    var database = redisManager.GetDatabase();
+                    var key = $"test:{TestId}:client_{clientIndex}";
+                    var value = $"value_{clientIndex}";
+                    
+                    await database.StringSetAsync(key, value);
+                    var retrieved = await database.StringGetAsync(key);
+                    await database.KeyDeleteAsync(key);
+                    
+                    return retrieved == value;
+                }));
+            }
+            
+            var results = await Task.WhenAll(tasks);
+            
+            // Assert
+            results.Should().OnlyContain(r => r == true, 
+                "All concurrent clients should complete their operations successfully");
+            
+            Output.WriteLine($"✅ {concurrentClients} concurrent connections handled successfully");
+        }
+        
+        [Fact]
+        public async Task ConnectionResilience_WithTemporaryFailure_ShouldRecover()
+        {
+            // Arrange
+            using var scope = CreateIsolatedScope();
+            var redisManager = scope.ServiceProvider.GetRequiredService<IRedisConnectionManager>();
+            
+            // Act - محاولة عمليات متعددة مع retry policy
+            var retryPolicy = Policy
+                .HandleResult<bool>(r => !r)
+                .Or<RedisException>()
+                .WaitAndRetryAsync(
+                    retryCount: 3,
+                    sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
+                    onRetry: (outcome, timespan, retryCount, context) =>
+                    {
+                        Output.WriteLine($"   Retry #{retryCount} after {timespan.TotalSeconds}s");
+                    });
+            
+            var result = await retryPolicy.ExecuteAsync(async () =>
+            {
+                try
+                {
+                    var db = redisManager.GetDatabase();
+                    await db.PingAsync();
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Output.WriteLine($"   Connection attempt failed: {ex.Message}");
+                    return false;
+                }
+            });
+            
+            // Assert
+            result.Should().BeTrue("Connection should be resilient with retry policy");
+            
+            Output.WriteLine($"✅ Connection resilience verified");
+        }
+        
+        [Fact]
+        public async Task FlushDatabase_ShouldClearAllKeys()
+        {
+            // Arrange
+            using var scope = CreateIsolatedScope();
+            var redisManager = scope.ServiceProvider.GetRequiredService<IRedisConnectionManager>();
+            var database = redisManager.GetDatabase(15); // استخدام DB منفصل للاختبار
+            
+            // إضافة بيانات اختبارية
+            var testKeys = new List<string>();
+            for (int i = 0; i < 10; i++)
+            {
+                var key = $"test:{TestId}:flush_{i}";
+                testKeys.Add(key);
+                await database.StringSetAsync(key, $"value_{i}");
+            }
+            
+            // التحقق من وجود المفاتيح
+            foreach (var key in testKeys)
+            {
+                var exists = await database.KeyExistsAsync(key);
+                exists.Should().BeTrue($"Key {key} should exist before flush");
+            }
+            
+            // Act - مسح قاعدة البيانات
+            var server = redisManager.GetServer();
+            await server.FlushDatabaseAsync(15);
+            
+            // Assert - التحقق من حذف جميع المفاتيح
+            foreach (var key in testKeys)
+            {
+                var exists = await database.KeyExistsAsync(key);
+                exists.Should().BeFalse($"Key {key} should not exist after flush");
+            }
+            
+            Output.WriteLine($"✅ Database flushed successfully");
+        }
+        
+        [Fact]
+        public async Task ConnectionInfo_ShouldProvideAccurateMetrics()
+        {
+            // Arrange
+            using var scope = CreateIsolatedScope();
+            var redisManager = scope.ServiceProvider.GetRequiredService<IRedisConnectionManager>();
+            
+            // Act - إجراء عدة عمليات لتوليد إحصائيات
+            var database = redisManager.GetDatabase();
+            
+            for (int i = 0; i < 5; i++)
+            {
+                var key = $"test:{TestId}:metric_{i}";
+                await database.StringSetAsync(key, $"value_{i}");
+                await database.StringGetAsync(key);
+                await database.KeyDeleteAsync(key);
+                
+                _connectionAttempts.Add((DateTime.UtcNow, true));
+            }
+            
+            // الحصول على معلومات الاتصال
+            var connectionInfo = redisManager.GetConnectionInfo();
+            
+            // Assert
+            connectionInfo.Should().NotBeNull();
+            connectionInfo.IsConnected.Should().BeTrue();
+            connectionInfo.Endpoint.Should().NotBeNullOrWhiteSpace();
+            connectionInfo.TotalConnections.Should().BeGreaterThan(0);
+            
+            Output.WriteLine($"✅ Connection metrics retrieved");
+            Output.WriteLine($"   Endpoint: {connectionInfo.Endpoint}");
+            Output.WriteLine($"   Connected: {connectionInfo.IsConnected}");
+            Output.WriteLine($"   Total connections: {connectionInfo.TotalConnections}");
+            Output.WriteLine($"   Failed connections: {connectionInfo.FailedConnections}");
+            
+            // طباعة إحصائيات الأداء
+            if (_connectionLatencies.Any())
+            {
+                Output.WriteLine($"\n📊 Performance Statistics:");
+                Output.WriteLine($"   Average latency: {_connectionLatencies.Average(t => t.TotalMilliseconds):F2}ms");
+                Output.WriteLine($"   Min latency: {_connectionLatencies.Min().TotalMilliseconds:F2}ms");
+                Output.WriteLine($"   Max latency: {_connectionLatencies.Max().TotalMilliseconds:F2}ms");
+            }
         }
         
         [Theory]
-        [InlineData("localhost:6379", "localhost", 6379)]
-        [InlineData("127.0.0.1:6380", "127.0.0.1", 6380)]
-        [InlineData("redis.example.com:6379", "redis.example.com", 6379)]
-        public void ParseEndpoint_WithValidFormats_ShouldParseCorrectly(
-            string endpoint, string expectedHost, int expectedPort)
+        [InlineData(1)]
+        [InlineData(5)]
+        [InlineData(10)]
+        [InlineData(50)]
+        public async Task StressTest_MultipleOperations_ShouldHandleLoad(int operationCount)
         {
             // Arrange
-            _configMock.Setup(x => x["Redis:EndPoint"]).Returns(endpoint);
+            using var scope = CreateIsolatedScope();
+            var redisManager = scope.ServiceProvider.GetRequiredService<IRedisConnectionManager>();
+            var database = redisManager.GetDatabase();
             
-            var manager = new TestableRedisConnectionManager(
-                _configMock.Object,
-                _loggerMock.Object,
-                null
-            );
+            var stopwatch = Stopwatch.StartNew();
+            var errors = new List<Exception>();
             
-            // Act
-            var (host, port) = manager.ParseEndpoint(endpoint);
-            
-            // Assert
-            host.Should().Be(expectedHost);
-            port.Should().Be(expectedPort);
-            
-            _output.WriteLine($"✅ Endpoint '{endpoint}' parsed correctly");
-        }
-        
-        [Fact]
-        public async Task ReconnectAsync_AfterDisconnection_ShouldReestablishConnection()
-        {
-            // Arrange
-            var isConnectedSequence = new Queue<bool>(new[] { false, false, true });
-            
-            _multiplexerMock.Setup(x => x.IsConnected)
-                .Returns(() => isConnectedSequence.Dequeue());
-            
-            _multiplexerMock.Setup(x => x.GetDatabase(It.IsAny<int>(), It.IsAny<object>()))
-                .Returns(_databaseMock.Object);
-            
-            var manager = new TestableRedisConnectionManager(
-                _configMock.Object,
-                _loggerMock.Object,
-                _multiplexerMock.Object
-            );
-            
-            // Act
-            var result1 = await manager.IsConnectedAsync();
-            await manager.ReconnectAsync();
-            var result2 = await manager.IsConnectedAsync();
-            
-            // Assert
-            result1.Should().BeFalse();
-            result2.Should().BeTrue();
-            
-            _output.WriteLine($"✅ Reconnection successful");
-        }
-        
-        [Fact]
-        public void Dispose_ShouldCloseConnection()
-        {
-            // Arrange
-            _multiplexerMock.Setup(x => x.IsConnected).Returns(true);
-            
-            var manager = new TestableRedisConnectionManager(
-                _configMock.Object,
-                _loggerMock.Object,
-                _multiplexerMock.Object
-            );
-            
-            // Act
-            manager.Dispose();
-            
-            // Assert
-            _multiplexerMock.Verify(x => x.Close(It.IsAny<bool>()), Times.Once);
-            _multiplexerMock.Verify(x => x.Dispose(), Times.Once);
-            
-            _output.WriteLine($"✅ Connection disposed properly");
-        }
-        
-        public void Dispose()
-        {
-            _output.WriteLine($"🧹 Cleaning up test {_testId}");
-        }
-    }
-    
-    /// <summary>
-    /// Testable version of RedisConnectionManager for unit testing
-    /// </summary>
-    internal class TestableRedisConnectionManager : IRedisConnectionManager
-    {
-        private readonly IConfiguration _configuration;
-        private readonly ILogger _logger;
-        private readonly IConnectionMultiplexer _multiplexer;
-        
-        public TestableRedisConnectionManager(
-            IConfiguration configuration,
-            ILogger logger,
-            IConnectionMultiplexer multiplexer)
-        {
-            _configuration = configuration;
-            _logger = logger;
-            _multiplexer = multiplexer;
-        }
-        
-        public async Task InitializeAsync()
-        {
-            try
+            // Act - تنفيذ عمليات متعددة
+            var tasks = Enumerable.Range(0, operationCount).Select(async i =>
             {
-                if (_multiplexer != null && _multiplexer.IsConnected)
+                try
                 {
-                    _logger.LogInformation("Redis connected successfully");
+                    var key = $"test:{TestId}:stress_{i}";
+                    
+                    // عملية كتابة
+                    await database.StringSetAsync(key, $"value_{i}", TimeSpan.FromSeconds(10));
+                    
+                    // عملية قراءة
+                    var value = await database.StringGetAsync(key);
+                    
+                    // عملية تحديث
+                    await database.StringSetAsync(key, $"updated_{i}");
+                    
+                    // عملية حذف
+                    await database.KeyDeleteAsync(key);
+                    
+                    return true;
                 }
-                await Task.CompletedTask;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to initialize Redis connection");
-            }
-        }
-        
-        public async Task<bool> IsConnectedAsync()
-        {
-            try
-            {
-                if (_multiplexer == null || !_multiplexer.IsConnected)
+                catch (Exception ex)
+                {
+                    lock (errors)
+                    {
+                        errors.Add(ex);
+                    }
                     return false;
-                
-                var db = _multiplexer.GetDatabase();
-                await db.PingAsync();
-                return true;
-            }
-            catch
+                }
+            });
+            
+            var results = await Task.WhenAll(tasks);
+            stopwatch.Stop();
+            
+            // Assert
+            var successCount = results.Count(r => r);
+            var successRate = (successCount * 100.0) / operationCount;
+            
+            successRate.Should().BeGreaterOrEqualTo(95, 
+                $"At least 95% of operations should succeed, but only {successRate:F2}% succeeded");
+            
+            errors.Should().HaveCountLessOrEqualTo((int)(operationCount * 0.05), 
+                "Error rate should be less than 5%");
+            
+            var opsPerSecond = operationCount / stopwatch.Elapsed.TotalSeconds;
+            
+            Output.WriteLine($"✅ Stress test completed");
+            Output.WriteLine($"   Operations: {operationCount}");
+            Output.WriteLine($"   Success rate: {successRate:F2}%");
+            Output.WriteLine($"   Errors: {errors.Count}");
+            Output.WriteLine($"   Duration: {stopwatch.ElapsedMilliseconds}ms");
+            Output.WriteLine($"   Ops/sec: {opsPerSecond:F2}");
+        }
+        
+        public override void Dispose()
+        {
+            _connectionLock?.Dispose();
+            base.Dispose();
+            
+            // طباعة ملخص الأداء
+            if (_connectionAttempts.Any())
             {
-                return false;
+                var successRate = (_connectionAttempts.Count(a => a.Success) * 100.0) / _connectionAttempts.Count;
+                Output.WriteLine($"\n📈 Test Summary:");
+                Output.WriteLine($"   Total attempts: {_connectionAttempts.Count}");
+                Output.WriteLine($"   Success rate: {successRate:F2}%");
             }
-        }
-        
-        public IDatabase GetDatabase()
-        {
-            if (_multiplexer == null || !_multiplexer.IsConnected)
-                throw new InvalidOperationException("Redis is not connected");
-            
-            return _multiplexer.GetDatabase();
-        }
-        
-        public IDatabase GetDatabase(int db)
-        {
-            if (_multiplexer == null || !_multiplexer.IsConnected)
-                throw new InvalidOperationException("Redis is not connected");
-            
-            return _multiplexer.GetDatabase(db);
-        }
-        
-        public ISubscriber GetSubscriber()
-        {
-            if (_multiplexer == null || !_multiplexer.IsConnected)
-                throw new InvalidOperationException("Redis is not connected");
-            
-            return _multiplexer.GetSubscriber();
-        }
-        
-        public IServer GetServer()
-        {
-            if (_multiplexer == null || !_multiplexer.IsConnected)
-                throw new InvalidOperationException("Redis is not connected");
-            
-            var endpoint = _multiplexer.GetEndPoints().FirstOrDefault();
-            return endpoint != null ? _multiplexer.GetServer(endpoint) : null;
-        }
-        
-        public async Task ReconnectAsync()
-        {
-            await InitializeAsync();
-        }
-        
-        public async Task FlushDatabaseAsync(int database = 0)
-        {
-            var server = GetServer();
-            if (server != null)
-            {
-                await server.FlushDatabaseAsync(database);
-            }
-        }
-        
-        public ConnectionInfo GetConnectionInfo()
-        {
-            return new ConnectionInfo
-            {
-                IsConnected = _multiplexer?.IsConnected ?? false,
-                Endpoint = _configuration.GetConnectionString("Redis") ?? "localhost:6379",
-                ResponseTime = TimeSpan.Zero,
-                TotalConnections = 1,
-                FailedConnections = 0,
-                LastReconnectTime = DateTime.UtcNow
-            };
-        }
-        
-        public (string Host, int Port) ParseEndpoint(string endpoint)
-        {
-            var parts = endpoint.Split(':');
-            var host = parts[0];
-            var port = parts.Length > 1 && int.TryParse(parts[1], out var p) ? p : 6379;
-            return (host, port);
-        }
-        
-        public void Dispose()
-        {
-            _multiplexer?.Close(true);
-            _multiplexer?.Dispose();
         }
     }
 }

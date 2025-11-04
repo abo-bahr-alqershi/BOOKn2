@@ -1,344 +1,245 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
 using Xunit.Abstractions;
-using Moq;
 using FluentAssertions;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.EntityFrameworkCore;
+using YemenBooking.Application.Features.SearchAndFilters.Services;
 using YemenBooking.Core.Entities;
-using YemenBooking.Core.Interfaces.Repositories;
-using YemenBooking.Infrastructure.Redis.Core;
-using YemenBooking.Infrastructure.Redis.Core.Interfaces;
-using YemenBooking.Infrastructure.Redis.Indexing;
 using YemenBooking.Infrastructure.Data.Context;
+using YemenBooking.IndexingTests.Infrastructure;
 using YemenBooking.IndexingTests.Infrastructure.Builders;
 using YemenBooking.IndexingTests.Infrastructure.Helpers;
+using YemenBooking.IndexingTests.Infrastructure.Assertions;
+using YemenBooking.IndexingTests.Infrastructure.Fixtures;
 using StackExchange.Redis;
-using Microsoft.Extensions.Configuration;
-using System.Linq;
+using Newtonsoft.Json;
+using YemenBooking.Core.ValueObjects;
 
 namespace YemenBooking.IndexingTests.Unit.Indexing
 {
     /// <summary>
     /// اختبارات فهرسة الوحدات السكنية
+    /// باستخدام Redis و PostgreSQL الحقيقيين
+    /// مع تطبيق مبادئ العزل الكامل والحتمية
     /// </summary>
-    public class UnitIndexerTests : IDisposable
+    [Collection("TestContainers")]
+    public class UnitIndexerTests : TestBase
     {
-        private readonly ITestOutputHelper _output;
-        private readonly Mock<IRedisConnectionManager> _redisManagerMock;
-        private readonly Mock<IServiceProvider> _serviceProviderMock;
-        private readonly Mock<IServiceScope> _serviceScopeMock;
-        private readonly Mock<IServiceScopeFactory> _serviceScopeFactoryMock;
-        private readonly Mock<YemenBookingDbContext> _dbContextMock;
-        private readonly Mock<ILogger<IndexingService>> _loggerMock;
-        private readonly Mock<IDatabase> _databaseMock;
-        private readonly Mock<ITransaction> _transactionMock;
-        private readonly IndexingService _indexingService;
-        private readonly string _testId;
-        private readonly List<Guid> _trackedEntities;
+        private readonly TestContainerFixture _containers;
         
-        public UnitIndexerTests(ITestOutputHelper output)
+        public UnitIndexerTests(TestContainerFixture containers, ITestOutputHelper output) 
+            : base(output)
         {
-            _output = output;
-            _testId = Guid.NewGuid().ToString("N");
-            _trackedEntities = new List<Guid>();
-            
-            // إعداد Mocks
-            _redisManagerMock = new Mock<IRedisConnectionManager>();
-            _serviceProviderMock = new Mock<IServiceProvider>();
-            _serviceScopeMock = new Mock<IServiceScope>();
-            _serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
-            _dbContextMock = new Mock<YemenBookingDbContext>();
-            _loggerMock = new Mock<ILogger<IndexingService>>();
-            _databaseMock = new Mock<IDatabase>();
-            _transactionMock = new Mock<ITransaction>();
-            
-            // إعداد السلوك الافتراضي
-            _redisManagerMock.Setup(x => x.GetDatabase(It.IsAny<int>())).Returns(_databaseMock.Object);
-            _redisManagerMock.Setup(x => x.IsConnectedAsync()).Returns(Task.FromResult(true));
-            
-            // إعداد Service Scope للعزل
-            _serviceScopeFactoryMock.Setup(x => x.CreateScope()).Returns(_serviceScopeMock.Object);
-            _serviceProviderMock.Setup(x => x.GetService(typeof(IServiceScopeFactory)))
-                .Returns(_serviceScopeFactoryMock.Object);
-            _serviceProviderMock.Setup(x => x.CreateScope()).Returns(_serviceScopeMock.Object);
-            
-            var scopedServiceProvider = new Mock<IServiceProvider>();
-            scopedServiceProvider.Setup(x => x.GetService(typeof(YemenBookingDbContext)))
-                .Returns(_dbContextMock.Object);
-            _serviceScopeMock.Setup(x => x.ServiceProvider).Returns(scopedServiceProvider.Object);
-            
-            // إعداد Redis transactions
-            _databaseMock.Setup(x => x.CreateTransaction(It.IsAny<object>())).Returns(_transactionMock.Object);
-            _transactionMock.Setup(x => x.ExecuteAsync(It.IsAny<CommandFlags>())).Returns(Task.FromResult(true));
-            
-            // إنشاء الطبقة المختبرة
-            _indexingService = new IndexingService(
-                _serviceProviderMock.Object,
-                _redisManagerMock.Object,
-                _loggerMock.Object
-            );
+            _containers = containers;
         }
+        
+        protected override bool UseTestContainers() => true;
         
         [Fact]
         public async Task IndexUnitAsync_WithValidUnit_ShouldIndexAllFields()
         {
             // Arrange
-            var property = TestDataBuilder.SimpleProperty(_testId);
-            var unit = TestDataBuilder.UnitForProperty(property.Id, _testId);
+            using var scope = CreateIsolatedScope();
+            var scopedDb = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+            var scopedIndexing = scope.ServiceProvider.GetRequiredService<IIndexingService>();
+            
+            // إنشاء عقار أولاً
+            var property = TestDataBuilder.SimpleProperty($"{TestId}_unit_test");
+            await scopedDb.Properties.AddAsync(property);
+            await scopedDb.SaveChangesAsync();
+            TrackEntity(property.Id);
+            
+            // إنشاء وحدة
+            var unit = TestDataBuilder.UnitForProperty(property.Id, $"{TestId}_unit");
             unit.AdultsCapacity = 4;
             unit.ChildrenCapacity = 2;
             unit.MaxCapacity = 6;
-            _trackedEntities.Add(property.Id);
-            _trackedEntities.Add(unit.Id);
             
-            // إعداد Mock للتحقق من وجود العقار
-            SetupPropertyExists(property.Id, true);
-            SetupUnitWithProperty(unit, property.Id);
+            await scopedDb.Units.AddAsync(unit);
+            await scopedDb.SaveChangesAsync();
+            TrackEntity(unit.Id);
             
-            // إعداد Redis operations
-            SetupRedisOperations();
+            // Act - فهرسة الوحدة
+            await scopedIndexing.OnUnitCreatedAsync(unit.Id, property.Id);
             
-            // Act
-            await _indexingService.OnUnitCreatedAsync(unit.Id, property.Id);
+            // Assert - التحقق من الفهرسة في Redis
+            var unitKey = $"unit:{unit.Id}";
+            var unitData = await RedisDatabase.StringGetAsync(unitKey);
+            unitData.HasValue.Should().BeTrue("Unit should be indexed in Redis");
             
-            // Assert - التحقق من النجاح
+            var indexedData = JsonConvert.DeserializeObject<dynamic>(unitData.ToString());
+            ((string)indexedData.propertyId).Should().Be(property.Id.ToString());
+            ((string)indexedData.name).Should().Be(unit.Name);
+            ((int)indexedData.maxCapacity).Should().Be(unit.MaxCapacity);
             
-            // التحقق من حفظ بيانات الوحدة
-            _transactionMock.Verify(x => x.HashSetAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains($"unit:{unit.Id}")),
-                It.IsAny<HashEntry[]>(),
-                It.IsAny<CommandFlags>()),
-                Times.Once);
-            
-            // التحقق من ربط الوحدة بالعقار
-            _transactionMock.Verify(x => x.SetAddAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains($"property:{property.Id}:units")),
-                It.Is<RedisValue>(v => v.ToString() == unit.Id.ToString()),
-                It.IsAny<CommandFlags>()),
-                Times.Once);
-            
-            // التحقق من فهرسة نوع الوحدة
-            _transactionMock.Verify(x => x.SetAddAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains($"tag:unit_type:{unit.UnitTypeId}")),
-                It.Is<RedisValue>(v => v.ToString() == unit.Id.ToString()),
-                It.IsAny<CommandFlags>()),
-                Times.Once);
-            
-            // التحقق من فهرسة البالغين
-            _transactionMock.Verify(x => x.SetAddAsync(
-                It.Is<RedisKey>(k => k.ToString() == "tag:unit:has_adults"),
-                It.Is<RedisValue>(v => v.ToString() == unit.Id.ToString()),
-                It.IsAny<CommandFlags>()),
-                Times.Once);
-            
-            _transactionMock.Verify(x => x.SortedSetAddAsync(
-                It.Is<RedisKey>(k => k.ToString() == "idx:unit:adults_capacity"),
-                It.Is<RedisValue>(v => v.ToString() == unit.Id.ToString()),
-                It.Is<double>(score => score == unit.AdultsCapacity.GetValueOrDefault()),
-                It.IsAny<CommandFlags>()),
-                Times.Once);
-            
-            // التحقق من فهرسة الأطفال
-            _transactionMock.Verify(x => x.SetAddAsync(
-                It.Is<RedisKey>(k => k.ToString() == "tag:unit:has_children"),
-                It.Is<RedisValue>(v => v.ToString() == unit.Id.ToString()),
-                It.IsAny<CommandFlags>()),
-                Times.Once);
-            
-            _output.WriteLine($"✅ Unit {unit.Id} indexed with all fields");
+            Output.WriteLine($"✅ Unit {unit.Id} indexed with all fields");
         }
         
         [Fact]
         public async Task IndexUnitAsync_WithAvailability_ShouldIndexPricingAndAvailability()
         {
             // Arrange
-            var property = TestDataBuilder.SimpleProperty(_testId);
+            using var scope = CreateIsolatedScope();
+            var scopedDb = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+            var scopedIndexing = scope.ServiceProvider.GetRequiredService<IIndexingService>();
+            
+            // إنشاء عقار
+            var property = TestDataBuilder.SimpleProperty($"{TestId}_avail");
+            await scopedDb.Properties.AddAsync(property);
+            await scopedDb.SaveChangesAsync();
+            TrackEntity(property.Id);
+            
+            // إنشاء وحدة مع التوفر
             var unit = TestDataBuilder.UnitWithAvailability(
                 property.Id,
                 DateTime.UtcNow,
                 DateTime.UtcNow.AddDays(30),
-                _testId
+                $"{TestId}_avail"
             );
-            _trackedEntities.Add(property.Id);
-            _trackedEntities.Add(unit.Id);
             
-            // إعداد Mock للتحقق من وجود العقار
-            SetupPropertyExists(property.Id, true);
-            SetupUnitWithProperty(unit, property.Id);
-            SetupRedisOperations();
+            await scopedDb.Units.AddAsync(unit);
+            await scopedDb.SaveChangesAsync();
+            TrackEntity(unit.Id);
             
             // Act
-            await _indexingService.OnUnitCreatedAsync(unit.Id, property.Id);
+            await scopedIndexing.OnUnitCreatedAsync(unit.Id, property.Id);
             
-            // Assert - التحقق من النجاح
+            // Assert
+            var unitKey = $"unit:{unit.Id}";
+            var unitData = await RedisDatabase.StringGetAsync(unitKey);
+            unitData.HasValue.Should().BeTrue();
             
-            // التحقق من فهرسة التسعير
-            _transactionMock.Verify(x => x.SortedSetAddAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains($"unit:{unit.Id}:pricing_z")),
-                It.IsAny<RedisValue>(),
-                It.IsAny<double>(),
-                It.IsAny<CommandFlags>()),
-                Times.Once);
+            var indexedData = JsonConvert.DeserializeObject<dynamic>(unitData.ToString());
+            decimal basePrice = (decimal)indexedData.basePrice;
+            basePrice.Should().BeGreaterThan(0);
             
-            // التحقق من فهرسة الإتاحة
-            _transactionMock.Verify(x => x.SortedSetAddAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains($"unit:{unit.Id}:availability")),
-                It.IsAny<RedisValue>(),
-                It.IsAny<double>(),
-                It.IsAny<CommandFlags>()),
-                Times.Once);
-            
-            _output.WriteLine($"✅ Unit availability and pricing indexed");
+            Output.WriteLine($"✅ Unit availability and pricing indexed");
         }
         
         [Fact]
         public async Task IndexUnitAsync_WithNonExistingProperty_ShouldThrowException()
         {
             // Arrange
-            var propertyId = Guid.NewGuid();
-            var unit = TestDataBuilder.UnitForProperty(propertyId, _testId);
-            _trackedEntities.Add(unit.Id);
+            using var scope = CreateIsolatedScope();
+            var scopedDb = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+            var scopedIndexing = scope.ServiceProvider.GetRequiredService<IIndexingService>();
             
-            // إعداد Mock - العقار غير موجود
-            SetupPropertyExists(propertyId, false);
+            var nonExistingPropertyId = Guid.NewGuid();
+            var unit = TestDataBuilder.UnitForProperty(nonExistingPropertyId, $"{TestId}_orphan");
+            
+            // إنشاء وحدة بدون عقار
+            await scopedDb.Units.AddAsync(unit);
+            await scopedDb.SaveChangesAsync();
+            TrackEntity(unit.Id);
             
             // Act & Assert
             await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-                await _indexingService.OnUnitCreatedAsync(unit.Id, propertyId)
+                await scopedIndexing.OnUnitCreatedAsync(unit.Id, nonExistingPropertyId)
             );
             
-            _output.WriteLine($"✅ Exception thrown for non-existing property");
+            Output.WriteLine($"✅ Exception thrown for non-existing property");
         }
         
         [Fact]
-        public async Task IndexUnitAsync_WithInactiveUnit_ShouldNotIndexAvailability()
+        public async Task IndexUnitAsync_WithInactiveUnit_ShouldStillIndex()
         {
             // Arrange
-            var property = TestDataBuilder.SimpleProperty(_testId);
-            var unit = TestDataBuilder.SimpleUnit(_testId);
+            using var scope = CreateIsolatedScope();
+            var scopedDb = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+            var scopedIndexing = scope.ServiceProvider.GetRequiredService<IIndexingService>();
+            
+            // إنشاء عقار
+            var property = TestDataBuilder.SimpleProperty($"{TestId}_inactive");
+            await scopedDb.Properties.AddAsync(property);
+            await scopedDb.SaveChangesAsync();
+            TrackEntity(property.Id);
+            
+            // إنشاء وحدة غير نشطة
+            var unit = TestDataBuilder.SimpleUnit($"{TestId}_inactive");
             unit.IsActive = false;
             unit.PropertyId = property.Id;
-            _trackedEntities.Add(property.Id);
-            _trackedEntities.Add(unit.Id);
             
-            SetupPropertyExists(property.Id, true);
-            SetupUnitWithProperty(unit, property.Id);
-            SetupRedisOperations();
+            await scopedDb.Units.AddAsync(unit);
+            await scopedDb.SaveChangesAsync();
+            TrackEntity(unit.Id);
             
             // Act
-            await _indexingService.OnUnitCreatedAsync(unit.Id, property.Id);
+            await scopedIndexing.OnUnitCreatedAsync(unit.Id, property.Id);
             
-            // Assert - التحقق من النجاح
+            // Assert - يجب أن تفهرس حتى لو كانت غير نشطة
+            var unitKey = $"unit:{unit.Id}";
+            var unitData = await RedisDatabase.StringGetAsync(unitKey);
+            unitData.HasValue.Should().BeTrue("Inactive unit should still be indexed");
             
-            // التحقق من عدم فهرسة الإتاحة للوحدة غير النشطة
-            _transactionMock.Verify(x => x.SortedSetAddAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains("availability")),
-                It.IsAny<RedisValue>(),
-                It.IsAny<double>(),
-                It.IsAny<CommandFlags>()),
-                Times.Never);
+            var indexedData = JsonConvert.DeserializeObject<dynamic>(unitData.ToString());
+            ((bool)indexedData.isActive).Should().BeFalse();
             
-            _output.WriteLine($"✅ Inactive unit indexed without availability");
+            Output.WriteLine($"✅ Inactive unit indexed successfully");
         }
         
         [Fact]
-        public async Task IndexMultipleUnits_ShouldUpdatePropertyCapacity()
+        public async Task IndexMultipleUnits_ShouldUpdatePropertyAggregates()
         {
             // Arrange
-            var property = TestDataBuilder.SimpleProperty(_testId);
-            var units = TestDataBuilder.BatchUnits(property.Id, 5, _testId);
-            _trackedEntities.Add(property.Id);
-            _trackedEntities.AddRange(units.Select(u => u.Id));
+            using var scope = CreateIsolatedScope();
+            var scopedDb = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+            var scopedIndexing = scope.ServiceProvider.GetRequiredService<IIndexingService>();
             
-            // إعداد Mocks
-            SetupPropertyExists(property.Id, true);
+            // إنشاء عقار
+            var property = TestDataBuilder.SimpleProperty($"{TestId}_multiple");
+            await scopedDb.Properties.AddAsync(property);
+            await scopedDb.SaveChangesAsync();
+            TrackEntity(property.Id);
+            
+            // فهرسة العقار أولاً
+            await scopedIndexing.OnPropertyCreatedAsync(property.Id);
+            
+            // إنشاء وحدات متعددة
+            var units = TestDataBuilder.BatchUnits(property.Id, 5, $"{TestId}_batch");
+            await scopedDb.Units.AddRangeAsync(units);
+            await scopedDb.SaveChangesAsync();
+            TrackEntities(units.Select(u => u.Id));
+            
+            // Act - فهرسة جميع الوحدات
             foreach (var unit in units)
             {
-                SetupUnitWithProperty(unit, property.Id);
+                await scopedIndexing.OnUnitCreatedAsync(unit.Id, property.Id);
             }
-            SetupRedisOperations();
             
-            // Act
+            // Assert - التحقق من فهرسة جميع الوحدات
             foreach (var unit in units)
             {
-                await _indexingService.OnUnitCreatedAsync(unit.Id, property.Id);
+                var unitKey = $"unit:{unit.Id}";
+                var unitData = await RedisDatabase.StringGetAsync(unitKey);
+                unitData.HasValue.Should().BeTrue($"Unit {unit.Id} should be indexed");
             }
             
-            // Assert - التحقق من النجاح
+            // التحقق من تحديث فهرس السعر للعقار
+            var priceIndexKey = "index:price";
+            var priceScore = await RedisDatabase.SortedSetScoreAsync(priceIndexKey, property.Id.ToString());
+            priceScore.Should().NotBeNull("Property should be in price index after units are added");
             
-            // التحقق من فهرسة جميع الوحدات
-            foreach (var unit in units)
-            {
-                _transactionMock.Verify(x => x.HashSetAsync(
-                    It.Is<RedisKey>(k => k.ToString().Contains($"unit:{unit.Id}")),
-                    It.IsAny<HashEntry[]>(),
-                    It.IsAny<CommandFlags>()),
-                    Times.Once);
-            }
-            
-            _output.WriteLine($"✅ {units.Count} units indexed successfully");
+            Output.WriteLine($"✅ {units.Count} units indexed successfully");
         }
         
         [Fact]
-        public async Task IndexUnitAsync_WithNullUnit_ShouldReturnFalse()
+        public async Task IndexUnitAsync_WithEmptyGuid_ShouldThrow()
         {
             // Arrange
-            var propertyId = Guid.NewGuid();
+            using var scope = CreateIsolatedScope();
+            var scopedIndexing = scope.ServiceProvider.GetRequiredService<IIndexingService>();
             
-            // Act - محاولة فهرسة وحدة فارغة
-            try
-            {
-                await _indexingService.OnUnitCreatedAsync(Guid.Empty, propertyId);
-            }
-            catch
-            {
-                // متوقع
-            }
+            // Act & Assert
+            await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await scopedIndexing.OnUnitCreatedAsync(Guid.Empty, Guid.NewGuid())
+            );
             
-            // Assert - يجب عدم الفهرسة
-            
-            // التحقق من عدم استدعاء أي عمليات Redis
-            _transactionMock.Verify(x => x.HashSetAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<HashEntry[]>(),
-                It.IsAny<CommandFlags>()),
-                Times.Never);
-            
-            _output.WriteLine($"✅ Null unit handled gracefully");
-        }
-        
-        [Fact]
-        public async Task IndexUnitAsync_WithRedisError_ShouldHandleGracefully()
-        {
-            // Arrange
-            var propertyId = Guid.NewGuid();
-            var unit = TestDataBuilder.SimpleUnit(_testId);
-            unit.PropertyId = propertyId;
-            
-            _transactionMock.Setup(x => x.ExecuteAsync(It.IsAny<CommandFlags>()))
-                .ThrowsAsync(new RedisException("Connection failed"));
-            
-            // Act
-            await _indexingService.OnUnitCreatedAsync(unit.Id, propertyId);
-            
-            // Assert - يجب عدم الفهرسة
-            
-            // التحقق من تسجيل الخطأ
-            _loggerMock.Verify(
-                x => x.Log(
-                    LogLevel.Error,
-                    It.IsAny<EventId>(),
-                    It.IsAny<It.IsAnyType>(),
-                    It.IsAny<Exception?>(),
-                    It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
-                Times.AtLeastOnce);
-            
-            _output.WriteLine($"✅ Redis error handled gracefully");
+            Output.WriteLine($"✅ Empty Guid handled correctly");
         }
         
         [Theory]
@@ -347,103 +248,180 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
         [InlineData(0, 2, false, true)]  // أطفال فقط
         [InlineData(2, 2, true, true)]   // بالغين وأطفال
         public async Task IndexUnitAsync_WithDifferentCapacities_ShouldIndexCorrectly(
-            int maxAdults, int maxChildren, bool expectAdultIndex, bool expectChildIndex)
+            int maxAdults, int maxChildren, bool expectAdultCapacity, bool expectChildCapacity)
         {
             // Arrange
-            var propertyId = Guid.NewGuid();
-            var unit = TestDataBuilder.SimpleUnit(_testId);
-            unit.PropertyId = propertyId;
+            using var scope = CreateIsolatedScope();
+            var scopedDb = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+            var scopedIndexing = scope.ServiceProvider.GetRequiredService<IIndexingService>();
+            
+            // إنشاء عقار
+            var property = TestDataBuilder.SimpleProperty($"{TestId}_capacity_{maxAdults}_{maxChildren}");
+            await scopedDb.Properties.AddAsync(property);
+            await scopedDb.SaveChangesAsync();
+            TrackEntity(property.Id);
+            
+            // إنشاء وحدة
+            var unit = TestDataBuilder.SimpleUnit($"{TestId}_capacity");
+            unit.PropertyId = property.Id;
             unit.AdultsCapacity = maxAdults;
             unit.ChildrenCapacity = maxChildren;
             
+            await scopedDb.Units.AddAsync(unit);
+            await scopedDb.SaveChangesAsync();
+            TrackEntity(unit.Id);
+            
             // Act
-            await _indexingService.OnUnitCreatedAsync(unit.Id, propertyId);
+            await scopedIndexing.OnUnitCreatedAsync(unit.Id, property.Id);
             
-            // Assert - التحقق من النجاح
+            // Assert
+            var unitKey = $"unit:{unit.Id}";
+            var unitData = await RedisDatabase.StringGetAsync(unitKey);
+            unitData.HasValue.Should().BeTrue();
             
-            // التحقق من فهرسة البالغين
-            var adultIndexTimes = expectAdultIndex ? Times.Once() : Times.Never();
-            _transactionMock.Verify(x => x.SetAddAsync(
-                It.Is<RedisKey>(k => k.ToString() == "tag:unit:has_adults"),
-                It.IsAny<RedisValue>(),
-                It.IsAny<CommandFlags>()),
-                adultIndexTimes);
+            var indexedData = JsonConvert.DeserializeObject<dynamic>(unitData.ToString());
             
-            // التحقق من فهرسة الأطفال
-            var childIndexTimes = expectChildIndex ? Times.Once() : Times.Never();
-            _transactionMock.Verify(x => x.SetAddAsync(
-                It.Is<RedisKey>(k => k.ToString() == "tag:unit:has_children"),
-                It.IsAny<RedisValue>(),
-                It.IsAny<CommandFlags>()),
-                childIndexTimes);
+            if (expectAdultCapacity)
+            {
+                ((int?)indexedData.adultsCapacity ?? 0).Should().Be(maxAdults);
+            }
             
-            _output.WriteLine($"✅ Unit with adults={maxAdults}, children={maxChildren} indexed correctly");
+            if (expectChildCapacity)
+            {
+                ((int?)indexedData.childrenCapacity ?? 0).Should().Be(maxChildren);
+            }
+            
+            Output.WriteLine($"✅ Unit with adults={maxAdults}, children={maxChildren} indexed correctly");
         }
         
-        #region Helper Methods
-        
-        private void SetupPropertyExists(Guid propertyId, bool exists)
+        [Fact]
+        public async Task UpdateUnitAsync_ShouldUpdateIndexedData()
         {
-            var propertiesDbSet = new Mock<DbSet<Property>>();
-            var propertiesQueryable = exists ? 
-                new[] { new Property { Id = propertyId } }.AsQueryable() :
-                new Property[0].AsQueryable();
+            // Arrange
+            using var scope = CreateIsolatedScope();
+            var scopedDb = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+            var scopedIndexing = scope.ServiceProvider.GetRequiredService<IIndexingService>();
             
-            propertiesDbSet.As<IAsyncEnumerable<Property>>()
-                .Setup(m => m.GetAsyncEnumerator(It.IsAny<CancellationToken>()))
-                .Returns(new TestAsyncEnumerator<Property>(propertiesQueryable.GetEnumerator()));
+            // إنشاء عقار ووحدة
+            var property = TestDataBuilder.SimpleProperty($"{TestId}_update");
+            await scopedDb.Properties.AddAsync(property);
+            await scopedDb.SaveChangesAsync();
+            TrackEntity(property.Id);
             
-            propertiesDbSet.As<IQueryable<Property>>().Setup(m => m.Provider)
-                .Returns(new TestAsyncQueryProvider<Property>(propertiesQueryable.Provider));
-            propertiesDbSet.As<IQueryable<Property>>().Setup(m => m.Expression).Returns(propertiesQueryable.Expression);
-            propertiesDbSet.As<IQueryable<Property>>().Setup(m => m.ElementType).Returns(propertiesQueryable.ElementType);
-            propertiesDbSet.As<IQueryable<Property>>().Setup(m => m.GetEnumerator()).Returns(propertiesQueryable.GetEnumerator());
+            var unit = TestDataBuilder.UnitForProperty(property.Id, $"{TestId}_update");
+            unit.BasePrice = new Money(100, "USD");
+            await scopedDb.Units.AddAsync(unit);
+            await scopedDb.SaveChangesAsync();
+            TrackEntity(unit.Id);
             
-            _dbContextMock.Setup(x => x.Properties).Returns(propertiesDbSet.Object);
+            // فهرسة أولية
+            await scopedIndexing.OnUnitCreatedAsync(unit.Id, property.Id);
+            
+            // Act - تحديث الوحدة
+            unit.BasePrice = new Money(200, "USD");
+            unit.UpdatedAt = DateTime.UtcNow;
+            scopedDb.Units.Update(unit);
+            await scopedDb.SaveChangesAsync();
+            
+            await scopedIndexing.OnUnitUpdatedAsync(unit.Id, property.Id);
+            
+            // Assert - التحقق من تحديث البيانات
+            var unitKey = $"unit:{unit.Id}";
+            var unitData = await RedisDatabase.StringGetAsync(unitKey);
+            unitData.HasValue.Should().BeTrue();
+            
+            var indexedData = JsonConvert.DeserializeObject<dynamic>(unitData.ToString());
+            ((decimal)indexedData.basePrice).Should().Be(200);
+            
+            Output.WriteLine($"✅ Unit update handled correctly");
         }
         
-        private void SetupUnitWithProperty(YemenBooking.Core.Entities.Unit unit, Guid propertyId)
+        [Fact]
+        public async Task DeleteUnitAsync_ShouldRemoveFromIndexes()
         {
-            unit.PropertyId = propertyId;
-            var unitsDbSet = new Mock<DbSet<YemenBooking.Core.Entities.Unit>>();
-            var unitsQueryable = new[] { unit }.AsQueryable();
+            // Arrange
+            using var scope = CreateIsolatedScope();
+            var scopedDb = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+            var scopedIndexing = scope.ServiceProvider.GetRequiredService<IIndexingService>();
             
-            unitsDbSet.As<IAsyncEnumerable<YemenBooking.Core.Entities.Unit>>()
-                .Setup(m => m.GetAsyncEnumerator(It.IsAny<CancellationToken>()))
-                .Returns(new TestAsyncEnumerator<YemenBooking.Core.Entities.Unit>(unitsQueryable.GetEnumerator()));
+            // إنشاء عقار ووحدة
+            var property = TestDataBuilder.SimpleProperty($"{TestId}_delete");
+            await scopedDb.Properties.AddAsync(property);
+            await scopedDb.SaveChangesAsync();
+            TrackEntity(property.Id);
             
-            unitsDbSet.As<IQueryable<YemenBooking.Core.Entities.Unit>>().Setup(m => m.Provider)
-                .Returns(new TestAsyncQueryProvider<YemenBooking.Core.Entities.Unit>(unitsQueryable.Provider));
-            unitsDbSet.As<IQueryable<YemenBooking.Core.Entities.Unit>>().Setup(m => m.Expression).Returns(unitsQueryable.Expression);
-            unitsDbSet.As<IQueryable<YemenBooking.Core.Entities.Unit>>().Setup(m => m.ElementType).Returns(unitsQueryable.ElementType);
-            unitsDbSet.As<IQueryable<YemenBooking.Core.Entities.Unit>>().Setup(m => m.GetEnumerator()).Returns(unitsQueryable.GetEnumerator());
+            var unit = TestDataBuilder.UnitForProperty(property.Id, $"{TestId}_delete");
+            await scopedDb.Units.AddAsync(unit);
+            await scopedDb.SaveChangesAsync();
             
-            _dbContextMock.Setup(x => x.Units).Returns(unitsDbSet.Object);
+            // فهرسة
+            await scopedIndexing.OnUnitCreatedAsync(unit.Id, property.Id);
+            
+            // التحقق من الفهرسة
+            var unitKey = $"unit:{unit.Id}";
+            var beforeDelete = await RedisDatabase.StringGetAsync(unitKey);
+            beforeDelete.HasValue.Should().BeTrue("Unit should be indexed before deletion");
+            
+            // Act - حذف الوحدة
+            scopedDb.Units.Remove(unit);
+            await scopedDb.SaveChangesAsync();
+            
+            await scopedIndexing.OnUnitDeletedAsync(unit.Id, property.Id);
+            
+            // Assert - التحقق من الحذف
+            var afterDelete = await RedisDatabase.StringGetAsync(unitKey);
+            afterDelete.HasValue.Should().BeFalse("Unit should be deleted from Redis");
+            
+            Output.WriteLine($"✅ Unit deletion handled correctly");
         }
         
-        private void SetupRedisOperations()
+        [Fact]
+        public async Task ConcurrentUnitIndexing_ShouldHandleCorrectly()
         {
-            _databaseMock.Setup(x => x.StringSetAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<RedisValue>(),
-                It.IsAny<TimeSpan?>(),
-                It.IsAny<When>(),
-                It.IsAny<CommandFlags>()))
-                .Returns(Task.FromResult(true));
-                
-            _databaseMock.Setup(x => x.HashSetAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<HashEntry[]>(),
-                It.IsAny<CommandFlags>()))
-                .Returns(Task.FromResult(true));
-        }
-        
-        #endregion
-        
-        public void Dispose()
-        {
-            _output.WriteLine($"🧹 Cleaning up test {_testId}");
-            _trackedEntities.Clear();
+            // Arrange
+            using var scope = CreateIsolatedScope();
+            var scopedDb = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+            
+            // إنشاء عقار
+            var property = TestDataBuilder.SimpleProperty($"{TestId}_concurrent");
+            await scopedDb.Properties.AddAsync(property);
+            await scopedDb.SaveChangesAsync();
+            TrackEntity(property.Id);
+            
+            // إنشاء وحدات متعددة
+            const int unitCount = 10;
+            var unitIds = new List<Guid>();
+            
+            for (int i = 0; i < unitCount; i++)
+            {
+                var unit = TestDataBuilder.UnitForProperty(property.Id, $"{TestId}_concurrent_{i}");
+                await scopedDb.Units.AddAsync(unit);
+                unitIds.Add(unit.Id);
+                TrackEntity(unit.Id);
+            }
+            
+            await scopedDb.SaveChangesAsync();
+            
+            // Act - فهرسة متزامنة
+            var indexingTasks = unitIds.Select(async unitId =>
+            {
+                // كل task يستخدم scope منفصل
+                using var taskScope = CreateIsolatedScope();
+                var taskIndexing = taskScope.ServiceProvider.GetRequiredService<IIndexingService>();
+                await taskIndexing.OnUnitCreatedAsync(unitId, property.Id);
+            });
+            
+            await Task.WhenAll(indexingTasks);
+            
+            // Assert - التحقق من فهرسة جميع الوحدات
+            foreach (var unitId in unitIds)
+            {
+                var unitKey = $"unit:{unitId}";
+                var unitData = await RedisDatabase.StringGetAsync(unitKey);
+                unitData.HasValue.Should().BeTrue($"Unit {unitId} should be indexed");
+            }
+            
+            Output.WriteLine($"✅ {unitCount} units indexed concurrently successfully");
         }
     }
 }

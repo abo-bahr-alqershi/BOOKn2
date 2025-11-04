@@ -444,10 +444,12 @@ namespace YemenBooking.IndexingTests.Infrastructure
                 {
                     var propertyTypeAmenities = new List<PropertyTypeAmenity>();
                     
-                    // الحصول على أنواع العقارات والمرافق
+                    // الحصول على كل أنواع العقارات
                     var hotelTypeId = Guid.Parse("30000000-0000-0000-0000-000000000003"); // فندق
                     var resortTypeId = Guid.Parse("30000000-0000-0000-0000-000000000001"); // منتجع
                     var apartmentTypeId = Guid.Parse("30000000-0000-0000-0000-000000000002"); // شقق مفروشة
+                    var villaTypeId = Guid.Parse("30000000-0000-0000-0000-000000000004"); // فيلا
+                    var chaletTypeId = Guid.Parse("30000000-0000-0000-0000-000000000005"); // شاليه
                     
                     var wifiId = Guid.Parse("10000000-0000-0000-0000-000000000001"); // WiFi
                     var parkingId = Guid.Parse("10000000-0000-0000-0000-000000000002"); // موقف سيارات
@@ -470,19 +472,36 @@ namespace YemenBooking.IndexingTests.Infrastructure
                     propertyTypeAmenities.Add(new PropertyTypeAmenity { Id = Guid.NewGuid(), PropertyTypeId = resortTypeId, AmenityId = restaurantId, IsDefault = true });
                     propertyTypeAmenities.Add(new PropertyTypeAmenity { Id = Guid.NewGuid(), PropertyTypeId = resortTypeId, AmenityId = gymId, IsDefault = true });
                     
-                    // شقق مفروشة - مرافق أساسية
+                    // شقق مفروشة - مرافق متوسطة
                     propertyTypeAmenities.Add(new PropertyTypeAmenity { Id = Guid.NewGuid(), PropertyTypeId = apartmentTypeId, AmenityId = wifiId, IsDefault = true });
-                    propertyTypeAmenities.Add(new PropertyTypeAmenity { Id = Guid.NewGuid(), PropertyTypeId = apartmentTypeId, AmenityId = parkingId, IsDefault = false });
+                    propertyTypeAmenities.Add(new PropertyTypeAmenity { Id = Guid.NewGuid(), PropertyTypeId = apartmentTypeId, AmenityId = parkingId, IsDefault = true });
+                    propertyTypeAmenities.Add(new PropertyTypeAmenity { Id = Guid.NewGuid(), PropertyTypeId = apartmentTypeId, AmenityId = poolId, IsDefault = false });
+                    
+                    // فيلا - مرافق فاخرة
+                    propertyTypeAmenities.Add(new PropertyTypeAmenity { Id = Guid.NewGuid(), PropertyTypeId = villaTypeId, AmenityId = wifiId, IsDefault = true });
+                    propertyTypeAmenities.Add(new PropertyTypeAmenity { Id = Guid.NewGuid(), PropertyTypeId = villaTypeId, AmenityId = parkingId, IsDefault = true });
+                    propertyTypeAmenities.Add(new PropertyTypeAmenity { Id = Guid.NewGuid(), PropertyTypeId = villaTypeId, AmenityId = poolId, IsDefault = true });
+                    propertyTypeAmenities.Add(new PropertyTypeAmenity { Id = Guid.NewGuid(), PropertyTypeId = villaTypeId, AmenityId = gymId, IsDefault = false });
+                    
+                    // شاليه - مرافق شاطئية
+                    propertyTypeAmenities.Add(new PropertyTypeAmenity { Id = Guid.NewGuid(), PropertyTypeId = chaletTypeId, AmenityId = wifiId, IsDefault = true });
+                    propertyTypeAmenities.Add(new PropertyTypeAmenity { Id = Guid.NewGuid(), PropertyTypeId = chaletTypeId, AmenityId = parkingId, IsDefault = true });
+                    propertyTypeAmenities.Add(new PropertyTypeAmenity { Id = Guid.NewGuid(), PropertyTypeId = chaletTypeId, AmenityId = poolId, IsDefault = true });
+                    propertyTypeAmenities.Add(new PropertyTypeAmenity { Id = Guid.NewGuid(), PropertyTypeId = chaletTypeId, AmenityId = restaurantId, IsDefault = false });
                     
                     await DbContext.PropertyTypeAmenities.AddRangeAsync(propertyTypeAmenities);
                     await DbContext.SaveChangesAsync();
                     DbContext.ChangeTracker.Clear();
-                    Output.WriteLine("✅ PropertyTypeAmenities relationships created successfully");
+                    Output.WriteLine($"✅ PropertyTypeAmenities relationships created: {propertyTypeAmenities.Count} links");
                 }
             }
             catch (Exception ex)
             {
                 Output.WriteLine($"⚠️ Error creating PropertyTypeAmenities: {ex.Message}");
+                if (ex.InnerException != null)
+                {
+                    Output.WriteLine($"   Inner: {ex.InnerException.Message}");
+                }
             }
         }
         
