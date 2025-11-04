@@ -62,6 +62,7 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
                 .RuleFor(p => p.AverageRating, (f, p) => f.Random.Decimal(3, 5))
                 .RuleFor(p => p.Latitude, f => f.Random.Decimal(12.0m, 17.0m))
                 .RuleFor(p => p.Longitude, f => f.Random.Decimal(42.0m, 45.0m))
+                .RuleFor(p => p.Currency, f => "YER")
                 .RuleFor(p => p.CreatedAt, f => DateTime.UtcNow)
                 .RuleFor(p => p.UpdatedAt, f => DateTime.UtcNow);
             

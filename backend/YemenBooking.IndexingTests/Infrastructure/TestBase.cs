@@ -20,6 +20,7 @@ using YemenBooking.IndexingTests.Infrastructure.Fixtures;
 using StackExchange.Redis;
 using Polly;
 using System.Diagnostics;
+using Microsoft.AspNetCore.Http;
 
 namespace YemenBooking.IndexingTests.Infrastructure
 {
@@ -179,6 +180,9 @@ namespace YemenBooking.IndexingTests.Infrastructure
             // تسجيل خدمة الفهرسة الحقيقية
             services.AddScoped<IIndexingService, IndexingService>();
             
+            // تسجيل IHttpContextAccessor المطلوب لـ DbContext
+            services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
+            
             // تسجيل Logging
             services.AddLogging(builder =>
             {
@@ -194,8 +198,123 @@ namespace YemenBooking.IndexingTests.Infrastructure
         /// </summary>
         protected virtual async Task InitializeDatabaseAsync()
         {
-            // سيتم تنفيذها في الفئات المشتقة
-            await Task.CompletedTask;
+            try
+            {
+                // إنشاء قاعدة البيانات والجداول إذا لزم
+                if (UseTestContainers() && ContainerFixture != null)
+                {
+                    // إنشاء قاعدة البيانات من EF Core migrations
+                    await DbContext.Database.EnsureDeletedAsync();
+                    await DbContext.Database.EnsureCreatedAsync();
+                }
+                else
+                {
+                    // لقواعد البيانات InMemory
+                    await DbContext.Database.EnsureCreatedAsync();
+                }
+                // إضافة بيانات Cities الأساسية
+                var cities = new[]
+                {
+                    new City { Name = "صنعاء", Country = "اليمن", ImagesJson = "[]" },
+                    new City { Name = "عدن", Country = "اليمن", ImagesJson = "[]" },
+                    new City { Name = "تعز", Country = "اليمن", ImagesJson = "[]" },
+                    new City { Name = "الحديدة", Country = "اليمن", ImagesJson = "[]" },
+                    new City { Name = "إب", Country = "اليمن", ImagesJson = "[]" }
+                };
+                
+                // إضافة بيانات PropertyTypes الأساسية
+                var propertyTypes = new[]
+                {
+                    new PropertyType { Id = Guid.Parse("30000000-0000-0000-0000-000000000001"), Name = "منتجع", Description = "منتجع سياحي" },
+                    new PropertyType { Id = Guid.Parse("30000000-0000-0000-0000-000000000002"), Name = "شقق مفروشة", Description = "شقق مفروشة للإيجار" },
+                    new PropertyType { Id = Guid.Parse("30000000-0000-0000-0000-000000000003"), Name = "فندق", Description = "فندق" },
+                    new PropertyType { Id = Guid.Parse("30000000-0000-0000-0000-000000000004"), Name = "فيلا", Description = "فيلا سكنية" },
+                    new PropertyType { Id = Guid.Parse("30000000-0000-0000-0000-000000000005"), Name = "شاليه", Description = "شاليه شاطئي" }
+                };
+                
+                // إضافة بيانات UnitTypes الأساسية
+                var unitTypes = new[]
+                {
+                    new UnitType { Id = Guid.Parse("20000000-0000-0000-0000-000000000001"), Name = "غرفة مفردة", Description = "غرفة لشخص واحد" },
+                    new UnitType { Id = Guid.Parse("20000000-0000-0000-0000-000000000002"), Name = "غرفة مزدوجة", Description = "غرفة لشخصين" },
+                    new UnitType { Id = Guid.Parse("20000000-0000-0000-0000-000000000003"), Name = "جناح", Description = "جناح فندقي" },
+                    new UnitType { Id = Guid.Parse("20000000-0000-0000-0000-000000000004"), Name = "شقة", Description = "شقة كاملة" }
+                };
+                
+                // إضافة بيانات Amenities الأساسية
+                var amenities = new[]
+                {
+                    new Amenity { Id = Guid.Parse("10000000-0000-0000-0000-000000000001"), Name = "WiFi", Description = "WiFi Internet", Icon = "wifi" },
+                    new Amenity { Id = Guid.Parse("10000000-0000-0000-0000-000000000002"), Name = "موقف سيارات", Description = "موقف سيارات مجاني", Icon = "parking" },
+                    new Amenity { Id = Guid.Parse("10000000-0000-0000-0000-000000000003"), Name = "مسبح", Description = "مسبح", Icon = "pool" },
+                    new Amenity { Id = Guid.Parse("10000000-0000-0000-0000-000000000004"), Name = "مطعم", Description = "مطعم في الموقع", Icon = "restaurant" },
+                    new Amenity { Id = Guid.Parse("10000000-0000-0000-0000-000000000005"), Name = "صالة رياضية", Description = "صالة رياضية مجهزة", Icon = "gym" }
+                };
+                
+                // إضافة بيانات Currency الأساسية
+                var currencies = new[]
+                {
+                    new Currency { 
+                        Code = "YER", 
+                        ArabicCode = "ر.ي",
+                        Name = "Yemeni Rial",
+                        ArabicName = "ريال يمني", 
+                        IsDefault = true,
+                        ExchangeRate = null
+                    },
+                    new Currency { 
+                        Code = "USD", 
+                        ArabicCode = "$",
+                        Name = "US Dollar",
+                        ArabicName = "دولار أمريكي", 
+                        IsDefault = false,
+                        ExchangeRate = 250m
+                    },
+                    new Currency { 
+                        Code = "SAR", 
+                        ArabicCode = "ر.س",
+                        Name = "Saudi Riyal",
+                        ArabicName = "ريال سعودي", 
+                        IsDefault = false,
+                        ExchangeRate = 67m
+                    }
+                };
+                
+                // تجنب الإضافة المكررة إذا كانت البيانات موجودة بالفعل
+                if (!DbContext.Cities.Any(c => c.Name == cities[0].Name))
+                {
+                    await DbContext.Cities.AddRangeAsync(cities);
+                }
+                
+                if (!DbContext.PropertyTypes.Any(pt => pt.Id == propertyTypes[0].Id))
+                {
+                    await DbContext.PropertyTypes.AddRangeAsync(propertyTypes);
+                }
+                
+                if (!DbContext.UnitTypes.Any(ut => ut.Id == unitTypes[0].Id))
+                {
+                    await DbContext.UnitTypes.AddRangeAsync(unitTypes);
+                }
+                
+                if (!DbContext.Amenities.Any(a => a.Id == amenities[0].Id))
+                {
+                    await DbContext.Amenities.AddRangeAsync(amenities);
+                }
+                
+                if (!DbContext.Currencies.Any(c => c.Code == "YER"))
+                {
+                    await DbContext.Currencies.AddRangeAsync(currencies);
+                }
+                
+                await DbContext.SaveChangesAsync();
+                DbContext.ChangeTracker.Clear();
+                
+                Output.WriteLine($"✅ Database initialized with base data");
+            }
+            catch (Exception ex)
+            {
+                Output.WriteLine($"⚠️ Error initializing database: {ex.Message}");
+            }
         }
         
         /// <summary>
