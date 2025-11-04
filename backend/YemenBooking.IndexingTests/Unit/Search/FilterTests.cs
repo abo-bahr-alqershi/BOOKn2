@@ -96,6 +96,43 @@ namespace YemenBooking.IndexingTests.Unit.Search
             await dbContext.Properties.AddRangeAsync(sanaaProperties.Concat(adenProperties));
             await dbContext.SaveChangesAsync();
             
+            // إضافة المرافق للعقارات باستخدام PropertyTypeAmenities الصحيحة
+            foreach (var property in sanaaProperties.Concat(adenProperties))
+            {
+                // التأكد من وجود PropertyTypeAmenities قبل إضافة المرافق
+                var availablePtas = await dbContext.Set<PropertyTypeAmenity>()
+                    .Where(pta => pta.PropertyTypeId == property.TypeId)
+                    .Take(2)
+                    .ToListAsync();
+                
+                if (availablePtas.Any())
+                {
+                    foreach (var pta in availablePtas)
+                    {
+                        var amenity = new PropertyAmenity
+                        {
+                            Id = Guid.NewGuid(),
+                            PropertyId = property.Id,
+                            PtaId = pta.Id,
+                            IsAvailable = true,
+                            ExtraCost = new Money(0, "USD"),
+                            CreatedAt = DateTime.UtcNow
+                        };
+                        
+                        property.Amenities.Add(amenity);
+                        dbContext.Set<PropertyAmenity>().Add(amenity);
+                        TrackEntity(amenity.Id);
+                    }
+                }
+            }
+            
+            // حفظ المرافق مرة واحدة
+            if (sanaaProperties.Concat(adenProperties).Any(p => p.Amenities.Any()))
+            {
+                await dbContext.SaveChangesAsync();
+                dbContext.ChangeTracker.Clear(); // مسح التتبع لتجنب مشاكل concurrency
+            }
+            
             // فهرسة جميع العقارات
             foreach (var property in sanaaProperties.Concat(adenProperties))
             {

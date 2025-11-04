@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading;
+using System.Threading.Tasks;
 using Bogus;
-using YemenBooking.Core.ValueObjects;
+using Microsoft.EntityFrameworkCore;
 using YemenBooking.Core.Entities;
+using YemenBooking.Core.ValueObjects;
+using YemenBooking.Core.Indexing.Models;
 using YemenBooking.Core.Enums;
 
 namespace YemenBooking.IndexingTests.Infrastructure.Builders
@@ -85,20 +87,15 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
         /// <summary>
         /// إنشاء عقار مع مرافق
         /// </summary>
-        public static Property PropertyWithAmenities(int amenityCount = 5, string testId = null)
+        public static Property PropertyWithAmenities(int amenityCount, string testId = null)
         {
             var property = SimpleProperty(testId);
             
-            property.Amenities = Enumerable.Range(0, amenityCount)
-                .Select(i => new PropertyAmenity
-                {
-                    Id = Guid.NewGuid(),
-                    PropertyId = property.Id,
-                    PtaId = GetRandomAmenityId(),
-                    IsAvailable = true,
-                    CreatedAt = DateTime.UtcNow
-                })
-                .ToList();
+            // إنشاء PropertyAmenities بناءً على PropertyTypeAmenities الموجودة
+            property.Amenities = new List<PropertyAmenity>();
+            
+            // سيتم إضافة المرافق من خلال AddPropertyAmenities method
+            // التي تستخدم PropertyTypeAmenity IDs الموجودة فعلاً
             
             return property;
         }
@@ -110,17 +107,11 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
         {
             var property = PropertyWithUnits(3, testId);
             
-            // إضافة المرافق
-            property.Amenities = Enumerable.Range(0, 5)
-                .Select(i => new PropertyAmenity
-                {
-                    Id = Guid.NewGuid(),
-                    PropertyId = property.Id,
-                    PtaId = GetRandomAmenityId(),
-                    IsAvailable = true,
-                    CreatedAt = DateTime.UtcNow
-                })
-                .ToList();
+            // إنشاء قائمة فارغة للمرافق
+            property.Amenities = new List<PropertyAmenity>();
+            
+            // المرافق سيتم إضافتها من خلال AddPropertyAmenities
+            // باستخدام PropertyTypeAmenity IDs الصحيحة من قاعدة البيانات
             
             // إضافة الصور
             property.Images = Enumerable.Range(0, 3)
@@ -291,7 +282,7 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
                 CheckIn = DateTime.Today.AddDays(faker.Random.Int(1, 30)),
                 CheckOut = DateTime.Today.AddDays(faker.Random.Int(31, 60)),
                 RequiredAmenityIds = faker.Random.Bool() ? 
-                    new List<string> { GetRandomAmenityId().ToString() } : null,
+                    new List<string> { Guid.Parse("10000000-0000-0000-0000-000000000001").ToString() } : null,
                 SortBy = faker.PickRandom("price_asc", "price_desc", "rating", "newest", null),
                 PageNumber = 1,
                 PageSize = 20
@@ -327,19 +318,41 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
             return types[random.Next(types.Length)];
         }
         
-        private static Guid GetRandomAmenityId()
+        /// <summary>
+        /// إضافة مرافق للعقار باستخدام PropertyTypeAmenity IDs الصحيحة
+        /// يجب استدعاء هذه الدالة بعد حفظ Property في قاعدة البيانات
+        /// </summary>
+        public static async Task<Property> AddPropertyAmenitiesAsync(
+            Property property, 
+            Microsoft.EntityFrameworkCore.DbContext dbContext,
+            int amenityCount = 3)
         {
-            var amenities = new[]
-            {
-                Guid.Parse("10000000-0000-0000-0000-000000000001"), // WiFi
-                Guid.Parse("10000000-0000-0000-0000-000000000002"), // موقف سيارات
-                Guid.Parse("10000000-0000-0000-0000-000000000003"), // مسبح
-                Guid.Parse("10000000-0000-0000-0000-000000000004"), // مطعم
-                Guid.Parse("10000000-0000-0000-0000-000000000005"), // صالة رياضية
-            };
+            // الحصول على PropertyTypeAmenities المتاحة لنوع العقار
+            var availablePtas = await dbContext.Set<PropertyTypeAmenity>()
+                .Where(pta => pta.PropertyTypeId == property.TypeId)
+                .Take(amenityCount)
+                .ToListAsync();
             
-            var random = GetThreadSafeRandom();
-            return amenities[random.Next(amenities.Length)];
+            if (!availablePtas.Any())
+            {
+                // إذا لم نجد PropertyTypeAmenities، نحاول الحصول على أي PropertyTypeAmenities متاحة
+                availablePtas = await dbContext.Set<PropertyTypeAmenity>()
+                    .Take(amenityCount)
+                    .ToListAsync();
+            }
+            
+            // إنشاء PropertyAmenities بناءً على PropertyTypeAmenities الموجودة
+            property.Amenities = availablePtas.Select(pta => new PropertyAmenity
+            {
+                Id = Guid.NewGuid(),
+                PropertyId = property.Id,
+                PtaId = pta.Id, // استخدام PropertyTypeAmenity ID الصحيح
+                IsAvailable = true,
+                ExtraCost = new Money(0, "USD"),
+                CreatedAt = DateTime.UtcNow
+            }).ToList();
+            
+            return property;
         }
         
         #region Batch Builders
