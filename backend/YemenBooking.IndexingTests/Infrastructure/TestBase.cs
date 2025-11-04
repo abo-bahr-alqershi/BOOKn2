@@ -269,25 +269,37 @@ namespace YemenBooking.IndexingTests.Infrastructure
                         Id = Guid.Parse("20000000-0000-0000-0000-000000000001"), 
                         Name = "غرفة مفردة", 
                         Description = "غرفة لشخص واحد",
-                        DefaultPricingRules = "[]" // JSON فارغ
+                        PropertyTypeId = Guid.Parse("30000000-0000-0000-0000-000000000003"), // فندق
+                        DefaultPricingRules = "[]", // JSON فارغ
+                        MaxCapacity = 1,
+                        IsHasAdults = true
                     },
                     new UnitType { 
                         Id = Guid.Parse("20000000-0000-0000-0000-000000000002"), 
                         Name = "غرفة مزدوجة", 
                         Description = "غرفة لشخصين",
-                        DefaultPricingRules = "[]" // JSON فارغ
+                        PropertyTypeId = Guid.Parse("30000000-0000-0000-0000-000000000003"), // فندق
+                        DefaultPricingRules = "[]", // JSON فارغ
+                        MaxCapacity = 2,
+                        IsHasAdults = true
                     },
                     new UnitType { 
                         Id = Guid.Parse("20000000-0000-0000-0000-000000000003"), 
                         Name = "جناح", 
                         Description = "جناح فندقي",
-                        DefaultPricingRules = "[]" // JSON فارغ
+                        PropertyTypeId = Guid.Parse("30000000-0000-0000-0000-000000000003"), // فندق
+                        DefaultPricingRules = "[]", // JSON فارغ
+                        MaxCapacity = 4,
+                        IsHasAdults = true
                     },
                     new UnitType { 
                         Id = Guid.Parse("20000000-0000-0000-0000-000000000004"), 
                         Name = "شقة", 
                         Description = "شقة كاملة",
-                        DefaultPricingRules = "[]" // JSON فارغ
+                        PropertyTypeId = Guid.Parse("30000000-0000-0000-0000-000000000002"), // شقق مفروشة
+                        DefaultPricingRules = "[]", // JSON فارغ
+                        MaxCapacity = 6,
+                        IsHasAdults = true
                     }
                 };
                 
