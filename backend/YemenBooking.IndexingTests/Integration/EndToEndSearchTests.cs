@@ -21,7 +21,7 @@ using YemenBooking.Infrastructure.Redis.Core.Interfaces;
 using YemenBooking.Infrastructure.Redis.Core;
 using YemenBooking.Infrastructure.Redis.Indexing;
 using YemenBooking.Core.Interfaces.Repositories;
-using YemenBooking.Infrastructure.Data.Repositories;
+using YemenBooking.Infrastructure.Repositories;
 
 namespace YemenBooking.IndexingTests.Integration
 {

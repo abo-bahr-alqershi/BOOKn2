@@ -17,7 +17,10 @@ using YemenBooking.IndexingTests.Infrastructure.Builders;
 using YemenBooking.IndexingTests.Infrastructure.Assertions;
 using YemenBooking.IndexingTests.Infrastructure.Extensions;
 using Polly;
+using Polly.CircuitBreaker;
 using Microsoft.EntityFrameworkCore;
+using YemenBooking.Infrastructure.Redis.Indexing;
+using System.Net.Http;
 
 namespace YemenBooking.IndexingTests.Stress
 {
