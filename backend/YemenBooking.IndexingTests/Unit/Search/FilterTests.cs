@@ -1,63 +1,56 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
+using System.Diagnostics;
 using Xunit;
 using Xunit.Abstractions;
-using Moq;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Caching.Memory;
+using Microsoft.EntityFrameworkCore;
+using YemenBooking.Application.Features.SearchAndFilters.Services;
+using YemenBooking.Core.Entities;
 using YemenBooking.Core.Indexing.Models;
-using YemenBooking.Core.Interfaces.Repositories;
+using YemenBooking.Core.ValueObjects;
+using YemenBooking.Infrastructure.Data.Context;
 using YemenBooking.Infrastructure.Redis.Core;
 using YemenBooking.Infrastructure.Redis.Core.Interfaces;
 using YemenBooking.Infrastructure.Redis.Indexing;
+using YemenBooking.IndexingTests.Infrastructure;
 using YemenBooking.IndexingTests.Infrastructure.Builders;
+using YemenBooking.IndexingTests.Infrastructure.Fixtures;
 using YemenBooking.IndexingTests.Infrastructure.Assertions;
+using YemenBooking.IndexingTests.Infrastructure.Helpers;
 using YemenBooking.IndexingTests.Infrastructure.Extensions;
 using StackExchange.Redis;
+using Polly;
+using Newtonsoft.Json;
 
 namespace YemenBooking.IndexingTests.Unit.Search
 {
     /// <summary>
-    /// اختبارات الفلترة والبحث المتقدم
+    /// اختبارات الفلترة والبحث المتقدم - باستخدام Redis و PostgreSQL الحقيقيين
+    /// تطبق جميع مبادئ العزل الكامل والحتمية
+    /// بدون استخدام Mocks - فقط خدمات حقيقية
     /// </summary>
-    public class FilterTests : IDisposable
+    [Collection("TestContainers")]
+    public class FilterTests : TestBase
     {
-        private readonly ITestOutputHelper _output;
-        private readonly Mock<IRedisConnectionManager> _redisManagerMock;
-        private readonly Mock<IPropertyRepository> _propertyRepoMock;
-        private readonly Mock<IRedisCache> _cacheMock;
-        private readonly Mock<ILogger<SearchEngine>> _loggerMock;
-        private readonly Mock<IDatabase> _databaseMock;
-        private readonly IMemoryCache _memoryCache;
-        private readonly SearchEngine _searchEngine;
-        private readonly string _testId;
+        private readonly TestContainerFixture _containers;
+        private readonly List<TimeSpan> _searchLatencies = new();
+        private readonly Dictionary<string, int> _filterUsageCount = new();
+        private readonly SemaphoreSlim _searchLock;
         
-        public FilterTests(ITestOutputHelper output)
+        public FilterTests(TestContainerFixture containers, ITestOutputHelper output) 
+            : base(output)
         {
-            _output = output;
-            _testId = Guid.NewGuid().ToString("N");
-            
-            // إعداد Mocks
-            _redisManagerMock = new Mock<IRedisConnectionManager>();
-            _propertyRepoMock = new Mock<IPropertyRepository>();
-            _cacheMock = new Mock<IRedisCache>();
-            _loggerMock = new Mock<ILogger<SearchEngine>>();
-            _databaseMock = new Mock<IDatabase>();
-            _memoryCache = new MemoryCache(new MemoryCacheOptions());
-            
-            _redisManagerMock.Setup(x => x.GetDatabase(It.IsAny<int>())).Returns(_databaseMock.Object);
-            _redisManagerMock.Setup(x => x.IsConnectedAsync()).ReturnsAsync(true);
-            
-            var serviceProviderMock = new Mock<IServiceProvider>();
-            _searchEngine = new SearchEngine(
-                _redisManagerMock.Object,
-                serviceProviderMock.Object,
-                _loggerMock.Object
-            );
+            _containers = containers;
+            _searchLock = new SemaphoreSlim(1, 1);
         }
+        
+        protected override bool UseTestContainers() => true;
         
         [Fact]
         public async Task SearchAsync_WithCityFilter_ShouldReturnOnlyCityProperties()
