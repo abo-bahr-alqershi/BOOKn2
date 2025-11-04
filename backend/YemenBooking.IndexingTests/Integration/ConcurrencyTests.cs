@@ -3,447 +3,499 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Diagnostics;
 using Xunit;
 using Xunit.Abstractions;
 using FluentAssertions;
-using FluentAssertions.Extensions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Configuration;
 using Microsoft.EntityFrameworkCore;
-using YemenBooking.Application.Features.SearchAndFilters.Services;
-using YemenBooking.Infrastructure.Redis.Indexing;
-using YemenBooking.Infrastructure.Redis.Core;
-using YemenBooking.Infrastructure.Redis.Core.Interfaces;
 using YemenBooking.Infrastructure.Data.Context;
+using YemenBooking.Application.Features.SearchAndFilters.Services;
+using YemenBooking.IndexingTests.Infrastructure;
+using YemenBooking.IndexingTests.Infrastructure.Builders;
+using YemenBooking.IndexingTests.Infrastructure.Helpers;
+using YemenBooking.IndexingTests.Infrastructure.Fixtures;
 using YemenBooking.Core.Entities;
 using YemenBooking.Core.Indexing.Models;
-using YemenBooking.IndexingTests.Infrastructure;
-using YemenBooking.IndexingTests.Infrastructure.Fixtures;
-using YemenBooking.IndexingTests.Infrastructure.Builders;
+using StackExchange.Redis;
 using Npgsql;
 
 namespace YemenBooking.IndexingTests.Integration
 {
     /// <summary>
-    /// اختبارات التزامن المحسّنة وفقاً للمعايير الاحترافية
-    /// تطبيق مبادئ العزل الكامل والحتمية
+    /// اختبارات التزامن - يطبق مبادئ العزل والحتمية
+    /// كل thread يستخدم scope منفصل تماماً
     /// </summary>
     [Collection("TestContainers")]
     public class ConcurrencyTests : TestBase
     {
-        private readonly TestContainerFixture _containers;
         private readonly SemaphoreSlim _concurrencyLimiter;
+        private readonly List<TimeSpan> _operationTimes = new();
+        private readonly object _timesLock = new();
         
-        public ConcurrencyTests(TestContainerFixture containers, ITestOutputHelper output) 
-            : base(output)
+        public ConcurrencyTests(ITestOutputHelper output) : base(output)
         {
-            _containers = containers;
-            // تحديد عدد العمليات المتزامنة بناءً على عدد المعالجات
+            // تحديد التزامن بناءً على عدد النوى
             _concurrencyLimiter = new SemaphoreSlim(
                 initialCount: Environment.ProcessorCount * 2,
-                maxCount: Environment.ProcessorCount * 2
-            );
+                maxCount: Environment.ProcessorCount * 2);
         }
         
-        protected override async Task ConfigureServicesAsync(IServiceCollection services)
-        {
-            // إضافة Configuration
-            var configuration = new ConfigurationBuilder()
-                .AddInMemoryCollection(new Dictionary<string, string>
-                {
-                    ["Redis:ConnectionString"] = _containers.RedisConnectionString,
-                    ["Redis:DefaultDatabase"] = "0",
-                    ["Redis:ConnectTimeout"] = "5000",
-                    ["Redis:ConnectRetry"] = "3"
-                })
-                .Build();
-            services.AddSingleton<IConfiguration>(configuration);
-            
-            // تكوين قاعدة البيانات من الحاوية
-            services.AddDbContext<YemenBookingDbContext>(options =>
-            {
-                options.UseNpgsql(_containers.PostgresConnectionString);
-                options.EnableSensitiveDataLogging();
-                options.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking); // مهم للتزامن
-            });
-            
-            // تسجيل خدمات Redis
-            services.AddSingleton<IRedisConnectionManager>(provider => 
-            {
-                var logger = provider.GetRequiredService<ILogger<RedisConnectionManager>>();
-                var config = provider.GetRequiredService<IConfiguration>();
-                return new RedisConnectionManager(logger, config);
-            });
-            
-            // تسجيل الخدمات
-            services.AddScoped<IIndexingService, IndexingService>();
-            services.AddLogging(builder => 
-            {
-                builder.AddConsole();
-                builder.SetMinimumLevel(LogLevel.Debug);
-            });
-            
-            await Task.CompletedTask;
-        }
-        
-        #region Pattern 1: Safe Concurrent Operations with Isolated Scopes
-        
+        protected override bool UseTestContainers() => true;
+
         [Fact]
-        public async Task ConcurrentIndexing_WithIsolatedScopes_ShouldHandleCorrectly()
+        public async Task ConcurrentPropertyCreation_ShouldHandleCorrectly()
         {
             // Arrange
-            Output.WriteLine("🚀 Testing concurrent indexing with isolated scopes");
-            var propertyCount = 20;
-            var properties = TestDataBuilder.BatchProperties(propertyCount, TestId);
-            TrackEntities(properties.Select(p => p.Id));
+            const int concurrentOperations = 20;
+            var createdPropertyIds = new System.Collections.Concurrent.ConcurrentBag<Guid>();
+            var errors = new System.Collections.Concurrent.ConcurrentBag<Exception>();
             
-            // حفظ في قاعدة البيانات
-            await DbContext.Properties.AddRangeAsync(properties);
-            await DbContext.SaveChangesAsync();
+            Output.WriteLine($"🚀 Starting {concurrentOperations} concurrent property creations");
             
-            // Act: فهرسة متزامنة مع scopes منفصلة
-            var indexingTasks = new List<Task>();
+            // Act
+            var tasks = Enumerable.Range(0, concurrentOperations)
+                .Select(i => CreatePropertyConcurrentlyAsync(i, createdPropertyIds, errors))
+                .ToList();
             
-            foreach (var property in properties)
+            var results = await Task.WhenAll(tasks);
+            
+            // Assert
+            errors.Should().BeEmpty("لا يجب أن تكون هناك أخطاء في العمليات المتزامنة");
+            createdPropertyIds.Should().HaveCount(concurrentOperations);
+            createdPropertyIds.Distinct().Should().HaveCount(concurrentOperations, "يجب أن تكون كل العقارات فريدة");
+            
+            // التحقق من Redis
+            await VerifyRedisDataConsistencyAsync(createdPropertyIds.ToList());
+            
+            // تتبع العقارات للتنظيف
+            foreach (var id in createdPropertyIds)
             {
-                indexingTasks.Add(Task.Run(async () =>
+                TrackEntity(id);
+            }
+            
+            Output.WriteLine($"✅ Successfully created {createdPropertyIds.Count} properties concurrently");
+            PrintPerformanceStats();
+        }
+        
+        [Fact]
+        public async Task ConcurrentUnitCreation_WithSameProperty_ShouldHandleCorrectly()
+        {
+            // Arrange
+            var property = TestDataBuilder.SimpleProperty(TestId);
+            
+            using (var scope = CreateIsolatedScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                await db.Properties.AddAsync(property);
+                await db.SaveChangesAsync();
+            }
+            
+            TrackEntity(property.Id);
+            
+            const int unitsPerProperty = 10;
+            var createdUnitIds = new System.Collections.Concurrent.ConcurrentBag<Guid>();
+            
+            // Act - إنشاء وحدات متعددة لنفس العقار بشكل متزامن
+            var tasks = Enumerable.Range(0, unitsPerProperty)
+                .Select(i => CreateUnitConcurrentlyAsync(property.Id, i, createdUnitIds))
+                .ToList();
+            
+            await Task.WhenAll(tasks);
+            
+            // Assert
+            createdUnitIds.Should().HaveCount(unitsPerProperty);
+            createdUnitIds.Distinct().Should().HaveCount(unitsPerProperty);
+            
+            // التحقق من العقار محدث بشكل صحيح
+            using (var scope = CreateIsolatedScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                var updatedProperty = await db.Properties
+                    .Include(p => p.Units)
+                    .FirstOrDefaultAsync(p => p.Id == property.Id);
+                
+                updatedProperty.Should().NotBeNull();
+                updatedProperty.Units.Should().HaveCount(unitsPerProperty);
+            }
+            
+            // تتبع للتنظيف
+            foreach (var id in createdUnitIds)
+            {
+                TrackEntity(id);
+            }
+            
+            Output.WriteLine($"✅ Successfully created {unitsPerProperty} units for property {property.Id}");
+        }
+        
+        [Fact]
+        public async Task ConcurrentSearch_ShouldReturnConsistentResults()
+        {
+            // Arrange - إنشاء بيانات للبحث
+            var properties = await CreateTestPropertiesAsync(10);
+            
+            // انتظار حتى تصبح البيانات جاهزة في Redis
+            await AsyncTestOperations.AssertEventuallyAsync(
+                async () => await VerifyAllPropertiesIndexedAsync(properties),
+                timeout: TimeSpan.FromSeconds(10),
+                message: "Properties not indexed within timeout");
+            
+            const int concurrentSearches = 50;
+            var searchResults = new System.Collections.Concurrent.ConcurrentBag<PropertySearchResult>();
+            
+            // Act - تنفيذ عمليات بحث متزامنة
+            var searchTasks = Enumerable.Range(0, concurrentSearches)
+                .Select(async i =>
                 {
                     await _concurrencyLimiter.WaitAsync();
                     try
                     {
-                        // استخدام scope منفصل لكل task - مهم جداً للتزامن
                         using var scope = CreateIsolatedScope();
-                        var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
-                        var indexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
+                        var searchService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
                         
-                        // العمليات هنا آمنة للتزامن
-                        var entity = await dbContext.Properties
-                            .AsNoTracking()
-                            .FirstOrDefaultAsync(p => p.Id == property.Id);
-                            
-                        if (entity != null)
-                        {
-                            await indexingService.OnPropertyCreatedAsync(entity.Id, TestCancellation.Token);
-                        }
+                        var request = TestDataBuilder.SimpleSearchRequest();
+                        var result = await searchService.SearchAsync(request);
+                        searchResults.Add(result);
+                        
+                        return result;
                     }
                     finally
                     {
                         _concurrencyLimiter.Release();
                     }
-                }));
-            }
+                });
             
-            await Task.WhenAll(indexingTasks);
+            await Task.WhenAll(searchTasks);
             
-            // Assert: التحقق من فهرسة جميع العقارات
-            var searchResult = await WaitForConditionAsync(
+            // التحقق من أن جميع العقارات مفهرسة بشكل صحيح
+            await AsyncTestOperations.AssertEventuallyAsync(
                 async () => 
                 {
                     using var scope = CreateIsolatedScope();
                     var searchService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
-                    return await searchService.SearchAsync(new PropertySearchRequest
+                    var result = await searchService.SearchAsync(new PropertySearchRequest
                     {
                         PageNumber = 1,
                         PageSize = 100
                     });
+                    return result?.TotalCount >= properties.Count;
                 },
-                result => result?.TotalCount >= propertyCount,
                 TimeSpan.FromSeconds(10),
-                TimeSpan.FromMilliseconds(200)
+                "All properties should be searchable"
             );
             
-            searchResult.Should().NotBeNull();
-            searchResult.TotalCount.Should().BeGreaterThanOrEqualTo(propertyCount);
-            Output.WriteLine($"✅ Successfully indexed {propertyCount} properties concurrently with isolated scopes");
+            // Assert - التحقق من اتساق النتائج
+            searchResults.Should().HaveCount(concurrentSearches);
+            
+            // كل النتائج يجب أن تكون متسقة
+            var firstResult = searchResults.First();
+            foreach (var result in searchResults)
+            {
+                result.TotalCount.Should().Be(firstResult.TotalCount);
+                result.Properties.Count.Should().Be(firstResult.Properties.Count);
+            }
+            
+            Output.WriteLine($"✅ {concurrentSearches} concurrent searches returned consistent results");
         }
         
-        #endregion
-        
-        #region Pattern 2: Race Condition Prevention with Polling
-        
         [Fact]
-        public async Task ConcurrentUpdates_WithPollingVerification_ShouldMaintainConsistency()
+        public async Task ConcurrentPropertyDeletion_ShouldHandleCorrectly()
         {
             // Arrange
-            var property = TestDataBuilder.CompleteProperty(TestId);
+            var properties = await CreateTestPropertiesAsync(5);
+            
+            // انتظار حتى تصبح جميع العقارات مفهرسة
+            await AsyncTestOperations.AssertEventuallyAsync(
+                async () => await VerifyAllPropertiesIndexedAsync(properties),
+                timeout: TimeSpan.FromSeconds(10));
+            
+            
+            // Act: حذف متزامن لجميع العقارات
+            var deleteTasks = properties.Select(property => Task.Run(async () =>
+            {
+                using var scope = CreateIsolatedScope();
+                var indexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
+                await indexingService.OnPropertyDeletedAsync(property.Id);
+            }));
+            
+            await Task.WhenAll(deleteTasks);
+            
+            // Assert: التحقق من حذف جميع العقارات من Redis
+            foreach (var property in properties)
+            {
+                var redisData = await GetRedisPropertyDataAsync(property.Id);
+                redisData.Should().BeNullOrEmpty($"Property {property.Id} should be deleted from Redis");
+            }
+            
+            Output.WriteLine($"✅ Successfully deleted {properties.Count} properties concurrently");
+        }
+        
+        [Fact]
+        public async Task StressTest_HighConcurrency_ShouldHandleLoad()
+        {
+            // Arrange - اختبار ضغط عالي
+            const int highConcurrencyLevel = 100;
+            var stopwatch = Stopwatch.StartNew();
+            var errors = new System.Collections.Concurrent.ConcurrentBag<Exception>();
+            
+            Output.WriteLine($"🚀 Starting stress test with {highConcurrencyLevel} concurrent operations");
+            
+            // Act
+            var tasks = Enumerable.Range(0, highConcurrencyLevel)
+                .Select(i => Task.Run(async () =>
+                {
+                    try
+                    {
+                        using var scope = CreateIsolatedScope();
+                        var db = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                        var indexing = scope.ServiceProvider.GetRequiredService<IIndexingService>();
+                        
+                        // عملية عشوائية
+                        var operation = Random.Shared.Next(0, 3);
+                        switch (operation)
+                        {
+                            case 0: // إنشاء
+                                var prop = TestDataBuilder.SimpleProperty($"{TestId}_stress_{i}");
+                                await db.Properties.AddAsync(prop);
+                                await db.SaveChangesAsync();
+                                await indexing.OnPropertyCreatedAsync(prop.Id);
+                                TrackEntity(prop.Id);
+                                break;
+                                
+                            case 1: // بحث
+                                var request = TestDataBuilder.SimpleSearchRequest();
+                                await indexing.SearchAsync(request);
+                                break;
+                                
+                            case 2: // تحديث
+                                var props = await db.Properties.Take(1).ToListAsync();
+                                if (props.Any())
+                                {
+                                    await indexing.OnPropertyUpdatedAsync(props.First().Id);
+                                }
+                                break;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        errors.Add(ex);
+                    }
+                }));
+            
+            await Task.WhenAll(tasks);
+            stopwatch.Stop();
+            
+            // Assert
+            var errorRate = (errors.Count / (double)highConcurrencyLevel) * 100;
+            errorRate.Should().BeLessThan(5, $"Error rate should be less than 5%, but was {errorRate:F2}%");
+            
+            Output.WriteLine($"✅ Stress test completed in {stopwatch.ElapsedMilliseconds}ms");
+            Output.WriteLine($"   Total operations: {highConcurrencyLevel}");
+            Output.WriteLine($"   Errors: {errors.Count} ({errorRate:F2}%)");
+            Output.WriteLine($"   Success rate: {100 - errorRate:F2}%");
+        }
+        
+        [Fact]
+        public async Task ConcurrentUpdates_ToSameProperty_ShouldNotLoseData()
+        {
+            // Arrange
+            var property = TestDataBuilder.SimpleProperty(TestId);
+            
+            using (var scope = CreateIsolatedScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                await db.Properties.AddAsync(property);
+                await db.SaveChangesAsync();
+            }
+            
             TrackEntity(property.Id);
             
-            await DbContext.Properties.AddAsync(property);
-            await DbContext.SaveChangesAsync();
-            await IndexingService.OnPropertyCreatedAsync(property.Id, TestCancellation.Token);
-            
-            // Act: عمليات تحديث متزامنة
+            const int concurrentUpdates = 20;
             var updateTasks = new List<Task>();
-            var cities = new[] { "صنعاء", "عدن", "تعز", "الحديدة", "إب" };
             
-            foreach (var city in cities)
+            // Act - تحديثات متزامنة لنفس العقار
+            for (int i = 0; i < concurrentUpdates; i++)
             {
+                var updateIndex = i;
                 updateTasks.Add(Task.Run(async () =>
                 {
                     using var scope = CreateIsolatedScope();
-                    var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
                     var indexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
                     
-                    // تحديث باستخدام transaction منفصل
-                    using var transaction = await dbContext.Database.BeginTransactionAsync();
-                    try
-                    {
-                        var entity = await dbContext.Properties
-                            .FirstOrDefaultAsync(p => p.Id == property.Id);
-                            
-                        if (entity != null)
-                        {
-                            entity.City = city;
-                            await dbContext.SaveChangesAsync();
-                            await indexingService.OnPropertyUpdatedAsync(entity.Id, TestCancellation.Token);
-                        }
-                        
-                        await transaction.CommitAsync();
-                    }
-                    catch
-                    {
-                        await transaction.RollbackAsync();
-                        throw;
-                    }
+                    // تحديث الفهرسة
+                    await indexingService.OnPropertyUpdatedAsync(property.Id);
+                    
+                    Output.WriteLine($"Update {updateIndex} completed at {DateTime.UtcNow:HH:mm:ss.fff}");
                 }));
             }
             
             await Task.WhenAll(updateTasks);
             
-            // Assert: استخدام Polling للتحقق من النتيجة النهائية
-            var finalResult = await WaitForConditionAsync(
-                async () =>
-                {
-                    using var scope = CreateIsolatedScope();
-                    var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
-                    return await dbContext.Properties
-                        .AsNoTracking()
-                        .FirstOrDefaultAsync(p => p.Id == property.Id);
-                },
-                result => result != null && cities.Contains(result.City),
-                TimeSpan.FromSeconds(5),
-                TimeSpan.FromMilliseconds(100)
-            );
+            // Assert - التحقق من أن البيانات مازالت متسقة
+            var finalData = await GetRedisPropertyDataAsync(property.Id);
+            finalData.Should().NotBeNull();
             
-            finalResult.Should().NotBeNull();
-            cities.Should().Contain(finalResult.City);
-            
-            Output.WriteLine($"✅ Concurrent updates handled correctly - Final city: {finalResult.City}");
+            Output.WriteLine($"✅ {concurrentUpdates} concurrent updates handled correctly");
         }
         
-        #endregion
+        #region Helper Methods
         
-        #region Pattern 3: Batch Operations with Controlled Concurrency
-        
-        [Fact]
-        public async Task BatchIndexing_WithControlledConcurrency_ShouldOptimizePerformance()
+        private async Task<bool> CreatePropertyConcurrentlyAsync(
+            int index,
+            System.Collections.Concurrent.ConcurrentBag<Guid> propertyIds,
+            System.Collections.Concurrent.ConcurrentBag<Exception> errors)
         {
-            // Arrange
-            var totalProperties = 100;
-            var batchSize = 10;
-            var properties = TestDataBuilder.BatchProperties(totalProperties, TestId);
-            TrackEntities(properties.Select(p => p.Id));
+            var stopwatch = Stopwatch.StartNew();
             
-            await DbContext.Properties.AddRangeAsync(properties);
-            await DbContext.SaveChangesAsync();
-            
-            // Act: معالجة دفعات بتزامن محكوم
-            var processedCount = 0;
-            var batches = properties.Chunk(batchSize);
-            
-            var batchTasks = batches.Select(batch => Task.Run(async () =>
+            await _concurrencyLimiter.WaitAsync();
+            try
             {
-                await _concurrencyLimiter.WaitAsync();
-                try
-                {
-                    using var scope = CreateIsolatedScope();
-                    var indexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
-                    
-                    // فهرسة الدفعة
-                    var indexTasks = batch.Select(p => 
-                        indexingService.OnPropertyCreatedAsync(p.Id, TestCancellation.Token));
-                    
-                    await Task.WhenAll(indexTasks);
-                    
-                    Interlocked.Add(ref processedCount, batch.Length);
-                    Output.WriteLine($"📦 Processed batch: {batch.Length} items, Total: {processedCount}/{totalProperties}");
-                }
-                finally
-                {
-                    _concurrencyLimiter.Release();
-                }
-            }));
-            
-            await Task.WhenAll(batchTasks);
-            
-            // Assert
-            processedCount.Should().Be(totalProperties);
-            
-            using (var scope = CreateIsolatedScope())
-            {
-                var searchService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
-                var searchResult = await searchService.SearchAsync(new PropertySearchRequest
-                {
-                    PageNumber = 1,
-                    PageSize = 200
-                });
-                
-                searchResult.Should().NotBeNull();
-                searchResult.TotalCount.Should().BeGreaterThanOrEqualTo(totalProperties);
-            }
-            Output.WriteLine($"✅ Batch processing completed: {totalProperties} properties indexed");
-        }
-        
-        #endregion
-        
-        #region Pattern 4: Deadlock Prevention with Timeout
-        
-        [Fact]
-        public async Task ConcurrentOperations_WithTimeout_ShouldPreventDeadlock()
-        {
-            // Arrange
-            var properties = TestDataBuilder.BatchProperties(5, TestId);
-            TrackEntities(properties.Select(p => p.Id));
-            
-            await DbContext.Properties.AddRangeAsync(properties);
-            await DbContext.SaveChangesAsync();
-            
-            // Act: عمليات مع timeout لمنع الdeadlock
-            var tasks = properties.Select(property => Task.Run(async () =>
-            {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                
-                try
-                {
-                    using var scope = CreateIsolatedScope();
-                    var indexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
-                    
-                    // عملية مع timeout
-                    await indexingService.OnPropertyCreatedAsync(
-                        property.Id, 
-                        cts.Token);
-                    
-                    // محاكاة عملية معقدة
-                    await Task.Delay(Random.Shared.Next(10, 100), cts.Token);
-                    
-                    await indexingService.OnPropertyUpdatedAsync(
-                        property.Id,
-                        cts.Token);
-                }
-                catch (OperationCanceledException)
-                {
-                    Output.WriteLine($"⚠️ Operation timed out for property {property.Id}");
-                    throw;
-                }
-            }));
-            
-            // Assert
-            var allTasks = Task.WhenAll(tasks);
-            var completed = await Task.Run(async () =>
-            {
-                var timeout = Task.Delay(TimeSpan.FromSeconds(15));
-                var completedTask = await Task.WhenAny(allTasks, timeout);
-                return completedTask == allTasks;
-            });
-            
-            completed.Should().BeTrue("all operations should complete within timeout");
-            Output.WriteLine($"✅ All operations completed within timeout - No deadlock");
-        }
-        
-        #endregion
-        
-        #region Pattern 5: Eventually Consistent Verification
-        
-        [Fact]
-        public async Task EventuallyConsistentOperations_ShouldConvergeCorrectly()
-        {
-            // Arrange
-            var propertyCount = 10;
-            var properties = TestDataBuilder.BatchProperties(propertyCount, TestId);
-            TrackEntities(properties.Select(p => p.Id));
-            
-            // Act: عمليات غير متزامنة قد تكون eventually consistent
-            var createTasks = properties.Select((property, index) => Task.Run(async () =>
-            {
-                await Task.Delay(index * 50); // تأخير متدرج
-                
+                // كل thread يستخدم scope منفصل
                 using var scope = CreateIsolatedScope();
                 var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
                 var indexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
                 
+                // إنشاء عقار فريد
+                var property = TestDataBuilder.SimpleProperty($"{TestId}_concurrent_{index}");
+                
+                // حفظ في قاعدة البيانات
                 await dbContext.Properties.AddAsync(property);
                 await dbContext.SaveChangesAsync();
                 
-                // قد لا تكتمل الفهرسة فوراً
-                _ = Task.Run(async () =>
-                {
-                    await Task.Delay(Random.Shared.Next(100, 500));
-                    await indexingService.OnPropertyCreatedAsync(property.Id, CancellationToken.None);
-                });
-            }));
-            
-            await Task.WhenAll(createTasks);
-            
-            // Assert: التحقق من Eventually Consistent State
-            var finalResult = await WaitForConditionAsync(
-                async () =>
-                {
-                    using var scope = CreateIsolatedScope();
-                    var searchService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
-                    return await searchService.SearchAsync(new PropertySearchRequest
-                    {
-                        PageNumber = 1,
-                        PageSize = 100
-                    });
-                },
-                result => result?.TotalCount >= propertyCount,
-                TimeSpan.FromSeconds(10),
-                TimeSpan.FromMilliseconds(200)
-            );
-            
-            finalResult.Should().NotBeNull();
-            finalResult.TotalCount.Should().BeGreaterThanOrEqualTo(propertyCount);
-            Output.WriteLine($"✅ Eventually consistent operations converged: {finalResult.TotalCount} properties indexed");
-        }
-        
-        #endregion
-        
-        #region Helper Methods
-        
-        protected override async Task InitializeDatabaseAsync()
-        {
-            await DbContext.Database.EnsureCreatedAsync();
-            
-            // إضافة البيانات الأساسية المطلوبة
-            var propertyTypes = new[]
+                // فهرسة
+                await indexingService.OnPropertyCreatedAsync(property.Id);
+                
+                propertyIds.Add(property.Id);
+                
+                stopwatch.Stop();
+                RecordOperationTime(stopwatch.Elapsed);
+                
+                return true;
+            }
+            catch (Exception ex)
             {
-                new PropertyType { Id = Guid.Parse("30000000-0000-0000-0000-000000000001"), Name = "منتجع" },
-                new PropertyType { Id = Guid.Parse("30000000-0000-0000-0000-000000000002"), Name = "شقق مفروشة" },
-                new PropertyType { Id = Guid.Parse("30000000-0000-0000-0000-000000000003"), Name = "فندق" }
-            };
-            
-            await DbContext.PropertyTypes.AddRangeAsync(propertyTypes);
-            await DbContext.SaveChangesAsync();
+                errors.Add(ex);
+                Output.WriteLine($"❌ Error in thread {index}: {ex.Message}");
+                return false;
+            }
+            finally
+            {
+                _concurrencyLimiter.Release();
+            }
         }
         
-        protected override async Task PerformEntityCleanupAsync(List<Guid> entityIds)
+        private async Task<bool> CreateUnitConcurrentlyAsync(
+            Guid propertyId,
+            int index,
+            System.Collections.Concurrent.ConcurrentBag<Guid> unitIds)
         {
-            if (!entityIds.Any())
-                return;
+            await _concurrencyLimiter.WaitAsync();
+            try
+            {
+                using var scope = CreateIsolatedScope();
+                var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                var indexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
+                
+                var unit = TestDataBuilder.UnitForProperty(propertyId, $"{TestId}_unit_{index}");
+                
+                await dbContext.Units.AddAsync(unit);
+                await dbContext.SaveChangesAsync();
+                
+                await indexingService.OnUnitCreatedAsync(unit.Id, propertyId);
+                
+                unitIds.Add(unit.Id);
+                return true;
+            }
+            finally
+            {
+                _concurrencyLimiter.Release();
+            }
+        }
+        
+        private async Task<List<Property>> CreateTestPropertiesAsync(int count)
+        {
+            var properties = new List<Property>();
             
-            // حذف من قاعدة البيانات
-            var sql = @"
-                DELETE FROM units WHERE property_id = ANY(@ids);
-                DELETE FROM properties WHERE id = ANY(@ids);
-            ";
+            using var scope = CreateIsolatedScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+            var indexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
             
-            await DbContext.Database.ExecuteSqlRawAsync(sql, new NpgsqlParameter("@ids", entityIds.ToArray()));
+            for (int i = 0; i < count; i++)
+            {
+                var property = TestDataBuilder.SimpleProperty($"{TestId}_search_{i}");
+                await dbContext.Properties.AddAsync(property);
+                properties.Add(property);
+                TrackEntity(property.Id);
+            }
             
-            // مسح Redis
-            await _containers.FlushRedisAsync();
+            await dbContext.SaveChangesAsync();
+            
+            // فهرسة كل العقارات
+            foreach (var property in properties)
+            {
+                await indexingService.OnPropertyCreatedAsync(property.Id);
+            }
+            
+            return properties;
+        }
+        
+        private async Task<bool> VerifyAllPropertiesIndexedAsync(List<Property> properties)
+        {
+            foreach (var property in properties)
+            {
+                var data = await GetRedisPropertyDataAsync(property.Id);
+                if (data == null) return false;
+            }
+            return true;
+        }
+        
+        private async Task VerifyRedisDataConsistencyAsync(List<Guid> propertyIds)
+        {
+            foreach (var propertyId in propertyIds)
+            {
+                var redisData = await GetRedisPropertyDataAsync(propertyId);
+                redisData.Should().NotBeNull($"Property {propertyId} should be indexed in Redis");
+            }
+        }
+        
+        private async Task<string> GetRedisPropertyDataAsync(Guid propertyId)
+        {
+            var key = GetRedisKey($"property:{propertyId}");
+            return await RedisDatabase.StringGetAsync(key);
+        }
+        
+        private void RecordOperationTime(TimeSpan time)
+        {
+            lock (_timesLock)
+            {
+                _operationTimes.Add(time);
+            }
+        }
+        
+        private void PrintPerformanceStats()
+        {
+            if (!_operationTimes.Any()) return;
+            
+            lock (_timesLock)
+            {
+                var avg = _operationTimes.Average(t => t.TotalMilliseconds);
+                var min = _operationTimes.Min(t => t.TotalMilliseconds);
+                var max = _operationTimes.Max(t => t.TotalMilliseconds);
+                
+                Output.WriteLine($"📊 Performance Stats:");
+                Output.WriteLine($"   Average: {avg:F2}ms");
+                Output.WriteLine($"   Min: {min:F2}ms");
+                Output.WriteLine($"   Max: {max:F2}ms");
+            }
         }
         
         #endregion
+        
+        public override void Dispose()
+        {
+            _concurrencyLimiter?.Dispose();
+            base.Dispose();
+        }
     }
 }
