@@ -6,17 +6,21 @@ using System.Threading.Tasks;
 using Xunit;
 using Xunit.Abstractions;
 using FluentAssertions;
+using FluentAssertions.Extensions;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
 using YemenBooking.Application.Features.SearchAndFilters.Services;
 using YemenBooking.Infrastructure.Redis.Indexing;
+using YemenBooking.Infrastructure.Redis.Core;
+using YemenBooking.Infrastructure.Redis.Core.Interfaces;
 using YemenBooking.Infrastructure.Data.Context;
 using YemenBooking.Core.Entities;
 using YemenBooking.Core.Indexing.Models;
 using YemenBooking.IndexingTests.Infrastructure;
 using YemenBooking.IndexingTests.Infrastructure.Fixtures;
 using YemenBooking.IndexingTests.Infrastructure.Builders;
-using YemenBooking.IndexingTests.Infrastructure.Extensions;
+using Npgsql;
 
 namespace YemenBooking.IndexingTests.Integration
 {
@@ -51,8 +55,21 @@ namespace YemenBooking.IndexingTests.Integration
                 options.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking); // مهم للتزامن
             });
             
+            // تسجيل خدمات Redis
+            services.AddSingleton<IRedisConnectionManager>(provider => 
+            {
+                var redisManager = new RedisConnectionManager(_containers.RedisConnectionString);
+                redisManager.InitializeAsync().GetAwaiter().GetResult();
+                return redisManager;
+            });
+            
             // تسجيل الخدمات
             services.AddScoped<IIndexingService, IndexingService>();
+            services.AddLogging(builder => 
+            {
+                builder.AddConsole();
+                builder.SetMinimumLevel(LogLevel.Debug);
+            });
             
             await Task.CompletedTask;
         }
@@ -108,17 +125,23 @@ namespace YemenBooking.IndexingTests.Integration
             
             // Assert: التحقق من فهرسة جميع العقارات
             var searchResult = await WaitForConditionAsync(
-                async () => await IndexingService.SearchAsync(new PropertySearchRequest
+                async () => 
                 {
-                    PageNumber = 1,
-                    PageSize = 100
-                }),
-                result => result.TotalCount >= propertyCount,
+                    using var scope = CreateIsolatedScope();
+                    var searchService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
+                    return await searchService.SearchAsync(new PropertySearchRequest
+                    {
+                        PageNumber = 1,
+                        PageSize = 100
+                    });
+                },
+                result => result?.TotalCount >= propertyCount,
                 TimeSpan.FromSeconds(10),
                 TimeSpan.FromMilliseconds(200)
             );
             
-            searchResult.Should().HaveAtLeast(propertyCount);
+            searchResult.Should().NotBeNull();
+            searchResult.TotalCount.Should().BeGreaterThanOrEqualTo(propertyCount);
             Output.WriteLine($"✅ Successfully indexed {propertyCount} properties concurrently with isolated scopes");
         }
         
@@ -244,13 +267,18 @@ namespace YemenBooking.IndexingTests.Integration
             // Assert
             processedCount.Should().Be(totalProperties);
             
-            var searchResult = await IndexingService.SearchAsync(new PropertySearchRequest
+            using (var scope = CreateIsolatedScope())
             {
-                PageNumber = 1,
-                PageSize = 200
-            });
-            
-            searchResult.Should().HaveAtLeast(totalProperties);
+                var searchService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
+                var searchResult = await searchService.SearchAsync(new PropertySearchRequest
+                {
+                    PageNumber = 1,
+                    PageSize = 200
+                });
+                
+                searchResult.Should().NotBeNull();
+                searchResult.TotalCount.Should().BeGreaterThanOrEqualTo(totalProperties);
+            }
             Output.WriteLine($"✅ Batch processing completed: {totalProperties} properties indexed");
         }
         
@@ -340,17 +368,23 @@ namespace YemenBooking.IndexingTests.Integration
             
             // Assert: التحقق من Eventually Consistent State
             var finalResult = await WaitForConditionAsync(
-                async () => await IndexingService.SearchAsync(new PropertySearchRequest
+                async () =>
                 {
-                    PageNumber = 1,
-                    PageSize = 100
-                }),
-                result => result.TotalCount >= propertyCount,
+                    using var scope = CreateIsolatedScope();
+                    var searchService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
+                    return await searchService.SearchAsync(new PropertySearchRequest
+                    {
+                        PageNumber = 1,
+                        PageSize = 100
+                    });
+                },
+                result => result?.TotalCount >= propertyCount,
                 TimeSpan.FromSeconds(10),
                 TimeSpan.FromMilliseconds(200)
             );
             
-            finalResult.Should().HaveAtLeast(propertyCount);
+            finalResult.Should().NotBeNull();
+            finalResult.TotalCount.Should().BeGreaterThanOrEqualTo(propertyCount);
             Output.WriteLine($"✅ Eventually consistent operations converged: {finalResult.TotalCount} properties indexed");
         }
         
@@ -385,7 +419,7 @@ namespace YemenBooking.IndexingTests.Integration
                 DELETE FROM properties WHERE id = ANY(@ids);
             ";
             
-            await DbContext.Database.ExecuteSqlRawAsync(sql, entityIds.ToArray());
+            await DbContext.Database.ExecuteSqlRawAsync(sql, new NpgsqlParameter("@ids", entityIds.ToArray()));
             
             // مسح Redis
             await _containers.FlushRedisAsync();

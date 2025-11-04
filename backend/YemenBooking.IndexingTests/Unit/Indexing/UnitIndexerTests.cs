@@ -1,19 +1,25 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
 using Xunit.Abstractions;
 using Moq;
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.EntityFrameworkCore;
 using YemenBooking.Core.Entities;
 using YemenBooking.Core.Interfaces.Repositories;
 using YemenBooking.Infrastructure.Redis.Core;
 using YemenBooking.Infrastructure.Redis.Core.Interfaces;
 using YemenBooking.Infrastructure.Redis.Indexing;
+using YemenBooking.Infrastructure.Data.Context;
 using YemenBooking.IndexingTests.Infrastructure.Builders;
+using YemenBooking.IndexingTests.Infrastructure.Helpers;
 using StackExchange.Redis;
 using Microsoft.Extensions.Configuration;
+using System.Linq;
 
 namespace YemenBooking.IndexingTests.Unit.Indexing
 {
@@ -25,35 +31,50 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
         private readonly ITestOutputHelper _output;
         private readonly Mock<IRedisConnectionManager> _redisManagerMock;
         private readonly Mock<IServiceProvider> _serviceProviderMock;
+        private readonly Mock<IServiceScope> _serviceScopeMock;
+        private readonly Mock<IServiceScopeFactory> _serviceScopeFactoryMock;
+        private readonly Mock<YemenBookingDbContext> _dbContextMock;
         private readonly Mock<ILogger<IndexingService>> _loggerMock;
         private readonly Mock<IDatabase> _databaseMock;
         private readonly Mock<ITransaction> _transactionMock;
         private readonly IndexingService _indexingService;
         private readonly string _testId;
+        private readonly List<Guid> _trackedEntities;
         
         public UnitIndexerTests(ITestOutputHelper output)
         {
             _output = output;
             _testId = Guid.NewGuid().ToString("N");
+            _trackedEntities = new List<Guid>();
             
             // إعداد Mocks
             _redisManagerMock = new Mock<IRedisConnectionManager>();
             _serviceProviderMock = new Mock<IServiceProvider>();
+            _serviceScopeMock = new Mock<IServiceScope>();
+            _serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
+            _dbContextMock = new Mock<YemenBookingDbContext>();
             _loggerMock = new Mock<ILogger<IndexingService>>();
             _databaseMock = new Mock<IDatabase>();
             _transactionMock = new Mock<ITransaction>();
             
             // إعداد السلوك الافتراضي
             _redisManagerMock.Setup(x => x.GetDatabase()).Returns(_databaseMock.Object);
+            _redisManagerMock.Setup(x => x.IsConnectedAsync()).Returns(Task.FromResult(true));
+            
+            // إعداد Service Scope للعزل
+            _serviceScopeFactoryMock.Setup(x => x.CreateScope()).Returns(_serviceScopeMock.Object);
+            _serviceProviderMock.Setup(x => x.GetService(typeof(IServiceScopeFactory)))
+                .Returns(_serviceScopeFactoryMock.Object);
+            _serviceProviderMock.Setup(x => x.CreateScope()).Returns(_serviceScopeMock.Object);
+            
+            var scopedServiceProvider = new Mock<IServiceProvider>();
+            scopedServiceProvider.Setup(x => x.GetService(typeof(YemenBookingDbContext)))
+                .Returns(_dbContextMock.Object);
+            _serviceScopeMock.Setup(x => x.ServiceProvider).Returns(scopedServiceProvider.Object);
+            
+            // إعداد Redis transactions
             _databaseMock.Setup(x => x.CreateTransaction(It.IsAny<object>())).Returns(_transactionMock.Object);
             _transactionMock.Setup(x => x.ExecuteAsync(It.IsAny<CommandFlags>())).Returns(Task.FromResult(true));
-            
-            // إعداد Configuration
-            var _configMock = new Mock<IConfiguration>();
-            _configMock.Setup(x => x.GetSection(It.IsAny<string>()))
-                .Returns(Mock.Of<IConfigurationSection>());
-            _configMock.Setup(x => x["Performance:MaxConcurrentIndexing"])
-                .Returns("10");
             
             // إنشاء الطبقة المختبرة
             _indexingService = new IndexingService(
@@ -67,14 +88,23 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
         public async Task IndexUnitAsync_WithValidUnit_ShouldIndexAllFields()
         {
             // Arrange
-            var propertyId = Guid.NewGuid();
-            var unit = TestDataBuilder.UnitForProperty(propertyId, _testId);
+            var property = TestDataBuilder.SimpleProperty(_testId);
+            var unit = TestDataBuilder.UnitForProperty(property.Id, _testId);
             unit.AdultsCapacity = 4;
             unit.ChildrenCapacity = 2;
             unit.MaxCapacity = 6;
+            _trackedEntities.Add(property.Id);
+            _trackedEntities.Add(unit.Id);
+            
+            // إعداد Mock للتحقق من وجود العقار
+            SetupPropertyExists(property.Id, true);
+            SetupUnitWithProperty(unit, property.Id);
+            
+            // إعداد Redis operations
+            SetupRedisOperations();
             
             // Act
-            await _indexingService.OnUnitCreatedAsync(unit.Id, propertyId);
+            await _indexingService.OnUnitCreatedAsync(unit.Id, property.Id);
             
             // Assert - التحقق من النجاح
             
@@ -127,16 +157,23 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
         public async Task IndexUnitAsync_WithAvailability_ShouldIndexPricingAndAvailability()
         {
             // Arrange
-            var propertyId = Guid.NewGuid();
+            var property = TestDataBuilder.SimpleProperty(_testId);
             var unit = TestDataBuilder.UnitWithAvailability(
-                propertyId,
+                property.Id,
                 DateTime.UtcNow,
                 DateTime.UtcNow.AddDays(30),
                 _testId
             );
+            _trackedEntities.Add(property.Id);
+            _trackedEntities.Add(unit.Id);
+            
+            // إعداد Mock للتحقق من وجود العقار
+            SetupPropertyExists(property.Id, true);
+            SetupUnitWithProperty(unit, property.Id);
+            SetupRedisOperations();
             
             // Act
-            await _indexingService.OnUnitCreatedAsync(unit.Id, propertyId);
+            await _indexingService.OnUnitCreatedAsync(unit.Id, property.Id);
             
             // Assert - التحقق من النجاح
             
@@ -160,16 +197,41 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
         }
         
         [Fact]
-        public async Task IndexUnitAsync_WithInactiveUnit_ShouldNotIndexAvailability()
+        public async Task IndexUnitAsync_WithNonExistingProperty_ShouldThrowException()
         {
             // Arrange
             var propertyId = Guid.NewGuid();
+            var unit = TestDataBuilder.UnitForProperty(propertyId, _testId);
+            _trackedEntities.Add(unit.Id);
+            
+            // إعداد Mock - العقار غير موجود
+            SetupPropertyExists(propertyId, false);
+            
+            // Act & Assert
+            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                await _indexingService.OnUnitCreatedAsync(unit.Id, propertyId)
+            );
+            
+            _output.WriteLine($"✅ Exception thrown for non-existing property");
+        }
+        
+        [Fact]
+        public async Task IndexUnitAsync_WithInactiveUnit_ShouldNotIndexAvailability()
+        {
+            // Arrange
+            var property = TestDataBuilder.SimpleProperty(_testId);
             var unit = TestDataBuilder.SimpleUnit(_testId);
             unit.IsActive = false;
-            unit.PropertyId = propertyId;
+            unit.PropertyId = property.Id;
+            _trackedEntities.Add(property.Id);
+            _trackedEntities.Add(unit.Id);
+            
+            SetupPropertyExists(property.Id, true);
+            SetupUnitWithProperty(unit, property.Id);
+            SetupRedisOperations();
             
             // Act
-            await _indexingService.OnUnitCreatedAsync(unit.Id, propertyId);
+            await _indexingService.OnUnitCreatedAsync(unit.Id, property.Id);
             
             // Assert - التحقق من النجاح
             
@@ -188,13 +250,23 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
         public async Task IndexMultipleUnits_ShouldUpdatePropertyCapacity()
         {
             // Arrange
-            var propertyId = Guid.NewGuid();
-            var units = TestDataBuilder.BatchUnits(propertyId, 5, _testId);
+            var property = TestDataBuilder.SimpleProperty(_testId);
+            var units = TestDataBuilder.BatchUnits(property.Id, 5, _testId);
+            _trackedEntities.Add(property.Id);
+            _trackedEntities.AddRange(units.Select(u => u.Id));
+            
+            // إعداد Mocks
+            SetupPropertyExists(property.Id, true);
+            foreach (var unit in units)
+            {
+                SetupUnitWithProperty(unit, property.Id);
+            }
+            SetupRedisOperations();
             
             // Act
             foreach (var unit in units)
             {
-                await _indexingService.OnUnitCreatedAsync(unit.Id, propertyId);
+                await _indexingService.OnUnitCreatedAsync(unit.Id, property.Id);
             }
             
             // Assert - التحقق من النجاح
@@ -308,9 +380,70 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
             _output.WriteLine($"✅ Unit with adults={maxAdults}, children={maxChildren} indexed correctly");
         }
         
+        #region Helper Methods
+        
+        private void SetupPropertyExists(Guid propertyId, bool exists)
+        {
+            var propertiesDbSet = new Mock<DbSet<Property>>();
+            var propertiesQueryable = exists ? 
+                new[] { new Property { Id = propertyId } }.AsQueryable() :
+                new Property[0].AsQueryable();
+            
+            propertiesDbSet.As<IAsyncEnumerable<Property>>()
+                .Setup(m => m.GetAsyncEnumerator(It.IsAny<CancellationToken>()))
+                .Returns(new TestAsyncEnumerator<Property>(propertiesQueryable.GetEnumerator()));
+            
+            propertiesDbSet.As<IQueryable<Property>>().Setup(m => m.Provider)
+                .Returns(new TestAsyncQueryProvider<Property>(propertiesQueryable.Provider));
+            propertiesDbSet.As<IQueryable<Property>>().Setup(m => m.Expression).Returns(propertiesQueryable.Expression);
+            propertiesDbSet.As<IQueryable<Property>>().Setup(m => m.ElementType).Returns(propertiesQueryable.ElementType);
+            propertiesDbSet.As<IQueryable<Property>>().Setup(m => m.GetEnumerator()).Returns(propertiesQueryable.GetEnumerator());
+            
+            _dbContextMock.Setup(x => x.Properties).Returns(propertiesDbSet.Object);
+        }
+        
+        private void SetupUnitWithProperty(YemenBooking.Core.Entities.Unit unit, Guid propertyId)
+        {
+            unit.PropertyId = propertyId;
+            var unitsDbSet = new Mock<DbSet<YemenBooking.Core.Entities.Unit>>();
+            var unitsQueryable = new[] { unit }.AsQueryable();
+            
+            unitsDbSet.As<IAsyncEnumerable<YemenBooking.Core.Entities.Unit>>()
+                .Setup(m => m.GetAsyncEnumerator(It.IsAny<CancellationToken>()))
+                .Returns(new TestAsyncEnumerator<YemenBooking.Core.Entities.Unit>(unitsQueryable.GetEnumerator()));
+            
+            unitsDbSet.As<IQueryable<YemenBooking.Core.Entities.Unit>>().Setup(m => m.Provider)
+                .Returns(new TestAsyncQueryProvider<YemenBooking.Core.Entities.Unit>(unitsQueryable.Provider));
+            unitsDbSet.As<IQueryable<YemenBooking.Core.Entities.Unit>>().Setup(m => m.Expression).Returns(unitsQueryable.Expression);
+            unitsDbSet.As<IQueryable<YemenBooking.Core.Entities.Unit>>().Setup(m => m.ElementType).Returns(unitsQueryable.ElementType);
+            unitsDbSet.As<IQueryable<YemenBooking.Core.Entities.Unit>>().Setup(m => m.GetEnumerator()).Returns(unitsQueryable.GetEnumerator());
+            
+            _dbContextMock.Setup(x => x.Units).Returns(unitsDbSet.Object);
+        }
+        
+        private void SetupRedisOperations()
+        {
+            _databaseMock.Setup(x => x.StringSetAsync(
+                It.IsAny<RedisKey>(),
+                It.IsAny<RedisValue>(),
+                It.IsAny<TimeSpan?>(),
+                It.IsAny<When>(),
+                It.IsAny<CommandFlags>()))
+                .Returns(Task.FromResult(true));
+                
+            _databaseMock.Setup(x => x.HashSetAsync(
+                It.IsAny<RedisKey>(),
+                It.IsAny<HashEntry[]>(),
+                It.IsAny<CommandFlags>()))
+                .Returns(Task.FromResult(true));
+        }
+        
+        #endregion
+        
         public void Dispose()
         {
             _output.WriteLine($"🧹 Cleaning up test {_testId}");
+            _trackedEntities.Clear();
         }
     }
 }

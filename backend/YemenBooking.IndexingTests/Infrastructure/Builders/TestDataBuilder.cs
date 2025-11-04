@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using Bogus;
 using YemenBooking.Core.ValueObjects;
 using YemenBooking.Core.Entities;
@@ -10,15 +11,24 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
     /// <summary>
     /// بناء البيانات الاختبارية باستخدام Object Mother Pattern
     /// كل بيانات فريدة ومعزولة - بدون static state
+    /// Thread-safe implementation with atomic counters
     /// </summary>
     public static class TestDataBuilder
     {
+        // Thread-safe counter for unique IDs
+        private static int _globalCounter = 0;
+        
+        // Thread-local Random to avoid concurrency issues
+        private static readonly ThreadLocal<Random> _threadLocalRandom = 
+            new ThreadLocal<Random>(() => new Random(Guid.NewGuid().GetHashCode()));
+        
         /// <summary>
-        /// الحصول على معرف فريد باستخدام Guid
+        /// الحصول على معرف فريد باستخدام Guid و counter آمن
         /// </summary>
         private static string GetUniqueId()
         {
-            return Guid.NewGuid().ToString("N").Substring(0, 8);
+            var counter = Interlocked.Increment(ref _globalCounter);
+            return $"{counter}_{Guid.NewGuid():N}".Substring(0, 16);
         }
         
         #region Property Builders
@@ -290,7 +300,7 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
                 Guid.Parse("30000000-0000-0000-0000-000000000005"), // شاليه
             };
             
-            return types[Random.Shared.Next(types.Length)];
+            return types[_threadLocalRandom.Value.Next(types.Length)];
         }
         
         private static Guid GetRandomUnitTypeId()
@@ -303,7 +313,7 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
                 Guid.Parse("20000000-0000-0000-0000-000000000004"), // شقة
             };
             
-            return types[Random.Shared.Next(types.Length)];
+            return types[_threadLocalRandom.Value.Next(types.Length)];
         }
         
         private static Guid GetRandomAmenityId()
@@ -317,7 +327,7 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
                 Guid.Parse("10000000-0000-0000-0000-000000000005"), // صالة رياضية
             };
             
-            return amenities[Random.Shared.Next(amenities.Length)];
+            return amenities[_threadLocalRandom.Value.Next(amenities.Length)];
         }
         
         #endregion
