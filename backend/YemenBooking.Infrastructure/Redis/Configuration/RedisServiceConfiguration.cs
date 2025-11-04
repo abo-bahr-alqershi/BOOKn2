@@ -34,7 +34,7 @@ namespace YemenBooking.Infrastructure.Redis.Configuration
             // تسجيل الخدمات الأساسية
             services.AddSingleton<IRedisConnectionManager, RedisConnectionManager>();
             services.AddSingleton<IRedisCache, RedisCache>();
-            services.AddSingleton<IHealthCheckService, HealthCheckService>();
+            services.AddSingleton<IHealthCheckService, Monitoring.HealthCheckService>();
             
             // تسجيل خدمة الفهرسة
             services.AddScoped<IIndexingService, IndexingService>();
@@ -43,13 +43,9 @@ namespace YemenBooking.Infrastructure.Redis.Configuration
             services.AddHealthChecks()
                 .AddCheck<IndexingHealthCheck>(
                     "indexing",
-                    failureStatus: HealthStatus.Unhealthy,
+                    failureStatus: Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Unhealthy,
                     tags: new[] { "redis", "indexing" })
-                .AddRedis(
-                    redisConnectionString,
-                    name: "redis",
-                    failureStatus: HealthStatus.Unhealthy,
-                    tags: new[] { "redis", "infrastructure" });
+                ;
 
             // تكوين خيارات Redis
             services.Configure<RedisOptions>(configuration.GetSection("Redis"));

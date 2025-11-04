@@ -82,7 +82,7 @@ namespace YemenBooking.Infrastructure.Redis.HealthChecks
                     case Core.Interfaces.HealthStatus.Degraded:
                         return Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Degraded(
                             $"System is degraded. Error rate: {performanceMetrics.ErrorRate:P}",
-                            data);
+                            data: data);
                     
                     default:
                         return Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Unhealthy(

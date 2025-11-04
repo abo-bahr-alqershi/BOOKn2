@@ -623,7 +623,7 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
         {
             if (pricingRules?.Any() == true)
             {
-                var minPrice = pricingRules.Min(r => r.Amount);
+                var minPrice = pricingRules.Min(r => r.PriceAmount);
                 var db = _redisManager.GetDatabase();
                 
                 // تحديث فهرس السعر للعقار
@@ -700,7 +700,7 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
         public Guid Id { get; set; }
         public Guid PropertyId { get; set; }
         public string Name { get; set; }
-        public int? UnitTypeId { get; set; }
+        public Guid UnitTypeId { get; set; }
         public string UnitTypeName { get; set; }
         public int MaxCapacity { get; set; }
         public decimal BasePrice { get; set; }

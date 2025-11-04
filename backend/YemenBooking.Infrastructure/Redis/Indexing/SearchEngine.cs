@@ -128,9 +128,9 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
             }
             
             // البحث بنوع العقار
-            if (request.PropertyTypeId.HasValue)
+            if (!string.IsNullOrWhiteSpace(request.PropertyType))
             {
-                sets.Add($"{TYPE_INDEX_KEY}{request.PropertyTypeId}");
+                sets.Add($"{TYPE_INDEX_KEY}{request.PropertyType}");
             }
             
             // إذا لم تكن هناك فلاتر، استخدم الفهرس الرئيسي
@@ -180,12 +180,12 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
             if (request.MinPrice.HasValue || request.MaxPrice.HasValue)
             {
                 var minPrice = request.MinPrice ?? 0;
-                var maxPrice = request.MaxPrice ?? double.MaxValue;
+                var maxPrice = request.MaxPrice ?? decimal.MaxValue;
                 
                 var priceFilteredIds = await db.SortedSetRangeByScoreAsync(
                     PRICE_INDEX_KEY,
-                    minPrice,
-                    maxPrice);
+                    (double)minPrice,
+                    (double)maxPrice);
                 
                 var priceSet = new HashSet<string>(priceFilteredIds.Select(v => v.ToString()));
                 propertyIds = propertyIds.Where(id => priceSet.Contains(id)).ToList();
@@ -340,9 +340,9 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
             var hasAvailableUnits = await dbContext.Units
                 .Where(u => u.PropertyId == propertyId && u.IsActive)
                 .AnyAsync(u => !u.Bookings.Any(b => 
-                    b.Status != Core.Enums.BookingStatus.Cancelled &&
-                    b.StartDate < checkOut &&
-                    b.EndDate > checkIn), cancellationToken);
+                    b.Status != YemenBooking.Core.Enums.BookingStatus.Cancelled &&
+                    b.CheckIn < checkOut &&
+                    b.CheckOut > checkIn), cancellationToken);
             
             return hasAvailableUnits;
         }
