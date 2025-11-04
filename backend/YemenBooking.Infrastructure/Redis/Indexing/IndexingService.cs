@@ -482,8 +482,8 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 IsApproved = property.IsApproved,
                 AverageRating = property.AverageRating,
                 TotalReviews = 0, // يمكن حسابها من Reviews
-                MinPrice = property.Units?.Min(u => u.BasePrice?.Amount ?? 0) ?? 0,
-                MaxPrice = property.Units?.Max(u => u.BasePrice?.Amount ?? 0) ?? 0,
+                MinPrice = property.Units?.Any() == true ? property.Units.Min(u => u.BasePrice?.Amount ?? 0) : 0,
+                MaxPrice = property.Units?.Any() == true ? property.Units.Max(u => u.BasePrice?.Amount ?? 0) : 0,
                 TotalUnits = property.Units?.Count ?? 0,
                 Amenities = property.Amenities?.Select(a => a.Id.ToString()).ToList() ?? new List<string>(),
                 CreatedAt = property.CreatedAt,
