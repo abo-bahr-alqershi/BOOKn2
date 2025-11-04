@@ -300,21 +300,17 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
         
         #endregion
         
-        #region Helper Methods
-        
         private static Guid GetRandomPropertyTypeId()
         {
-            var types = new[]
+            var typeIds = new[]
             {
                 Guid.Parse("30000000-0000-0000-0000-000000000001"), // منتجع
                 Guid.Parse("30000000-0000-0000-0000-000000000002"), // شقق مفروشة
                 Guid.Parse("30000000-0000-0000-0000-000000000003"), // فندق
                 Guid.Parse("30000000-0000-0000-0000-000000000004"), // فيلا
-                Guid.Parse("30000000-0000-0000-0000-000000000005"), // شاليه
+                Guid.Parse("30000000-0000-0000-0000-000000000005")  // شاليه
             };
-            
-            var random = GetThreadSafeRandom();
-            return types[random.Next(types.Length)];
+            return typeIds[Random.Shared.Next(typeIds.Length)];
         }
         
         private static Guid GetRandomUnitTypeId()
@@ -345,8 +341,6 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
             var random = GetThreadSafeRandom();
             return amenities[random.Next(amenities.Length)];
         }
-        
-        #endregion
         
         #region Batch Builders
         

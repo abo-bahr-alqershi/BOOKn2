@@ -52,6 +52,9 @@ namespace YemenBooking.IndexingTests.Integration
             var createdPropertyIds = new System.Collections.Concurrent.ConcurrentBag<Guid>();
             var errors = new System.Collections.Concurrent.ConcurrentBag<Exception>();
             
+            // التحقق من وجود البيانات الأساسية أولاً
+            await VerifyBaseDataExistsAsync();
+            
             Output.WriteLine($"🚀 Starting {concurrentOperations} concurrent property creations");
             
             // Act
@@ -341,6 +344,47 @@ namespace YemenBooking.IndexingTests.Integration
         
         #region Helper Methods
         
+        private async Task VerifyBaseDataExistsAsync()
+        {
+            using var scope = CreateIsolatedScope();
+            var db = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+            
+            // التحقق من PropertyTypes
+            var propertyTypes = await db.PropertyTypes.ToListAsync();
+            Output.WriteLine($"🔍 Checking PropertyTypes: Found {propertyTypes.Count}");
+            
+            if (propertyTypes.Count == 0)
+            {
+                Output.WriteLine("⚠️ PropertyTypes not found, trying to initialize...");
+                
+                // محاولة إعادة تحميل البيانات الأساسية
+                await InitializeDatabaseAsync();
+                
+                // التحقق مرة أخرى
+                propertyTypes = await db.PropertyTypes.ToListAsync();
+                Output.WriteLine($"🔍 After initialization: PropertyTypes count = {propertyTypes.Count}");
+            }
+            
+            foreach(var pt in propertyTypes.Take(5))
+            {
+                Output.WriteLine($"   - PropertyType: {pt.Id} = {pt.Name}");
+            }
+            
+            // التحقق من Cities
+            var cities = await db.Cities.ToListAsync();
+            Output.WriteLine($"🔍 Checking Cities: Found {cities.Count}");
+            
+            // التحقق من Currencies
+            var currencies = await db.Currencies.ToListAsync();
+            Output.WriteLine($"🔍 Checking Currencies: Found {currencies.Count}");
+            
+            // إذا لم توجد بيانات أساسية
+            if (propertyTypes.Count == 0 || cities.Count == 0 || currencies.Count == 0)
+            {
+                throw new InvalidOperationException("⛔ Base data is missing! Cannot proceed with tests.");
+            }
+        }
+        
         private async Task<bool> CreatePropertyConcurrentlyAsync(
             int index,
             System.Collections.Concurrent.ConcurrentBag<Guid> propertyIds,
@@ -377,6 +421,10 @@ namespace YemenBooking.IndexingTests.Integration
             {
                 errors.Add(ex);
                 Output.WriteLine($"❌ Error in thread {index}: {ex.Message}");
+                if (ex.InnerException != null)
+                {
+                    Output.WriteLine($"   Inner: {ex.InnerException.Message}");
+                }
                 return false;
             }
             finally
