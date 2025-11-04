@@ -451,17 +451,17 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 Description = property.Description,
                 City = property.City,
                 Address = property.Address,
-                PropertyTypeId = property.PropertyTypeId,
+                PropertyTypeId = property.TypeId,
                 PropertyTypeName = property.PropertyType?.Name,
                 OwnerId = property.OwnerId,
                 IsActive = property.IsActive,
                 IsApproved = property.IsApproved,
                 AverageRating = property.AverageRating,
-                TotalReviews = property.TotalReviews,
+                TotalReviews = 0, // يمكن حسابها من Reviews
                 MinPrice = property.Units?.Min(u => u.BasePrice?.Amount ?? 0) ?? 0,
                 MaxPrice = property.Units?.Max(u => u.BasePrice?.Amount ?? 0) ?? 0,
                 TotalUnits = property.Units?.Count ?? 0,
-                Amenities = property.Amenities?.Select(a => a.Name).ToList() ?? new List<string>(),
+                Amenities = property.Amenities?.Select(a => a.Id.ToString()).ToList() ?? new List<string>(),
                 CreatedAt = property.CreatedAt,
                 UpdatedAt = property.UpdatedAt
             };
@@ -515,9 +515,9 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
             }
             
             // فهرس نوع العقار
-            if (property.PropertyTypeId.HasValue)
+            if (property.TypeId != Guid.Empty)
             {
-                var typeKey = $"{TYPE_INDEX_KEY}{property.PropertyTypeId}";
+                var typeKey = $"{TYPE_INDEX_KEY}{property.TypeId}";
                 tasks.Add(db.SetAddAsync(typeKey, property.Id.ToString()));
             }
             
@@ -576,7 +576,7 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 }
                 
                 // حذف من فهرس النوع
-                if (indexData?.PropertyTypeId.HasValue == true)
+                if (indexData?.PropertyTypeId != Guid.Empty)
                 {
                     var typeKey = $"{TYPE_INDEX_KEY}{indexData.PropertyTypeId}";
                     tasks.Add(db.SetRemoveAsync(typeKey, propertyId.ToString()));
@@ -623,7 +623,7 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
         {
             if (pricingRules?.Any() == true)
             {
-                var minPrice = pricingRules.Min(r => r.Price);
+                var minPrice = pricingRules.Min(r => r.Amount);
                 var db = _redisManager.GetDatabase();
                 
                 // تحديث فهرس السعر للعقار
@@ -677,7 +677,7 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
         public string Description { get; set; }
         public string City { get; set; }
         public string Address { get; set; }
-        public int? PropertyTypeId { get; set; }
+        public Guid PropertyTypeId { get; set; }
         public string PropertyTypeName { get; set; }
         public Guid OwnerId { get; set; }
         public bool IsActive { get; set; }

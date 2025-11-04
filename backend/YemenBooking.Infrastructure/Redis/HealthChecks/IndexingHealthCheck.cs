@@ -74,12 +74,12 @@ namespace YemenBooking.Infrastructure.Redis.HealthChecks
 
                 switch (healthStatus)
                 {
-                    case HealthStatus.Healthy:
+                    case Core.Interfaces.HealthStatus.Healthy:
                         return Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy(
                             $"System is healthy. Indexing rate: {performanceMetrics.IndexingRate:F2}/sec",
                             data);
                     
-                    case HealthStatus.Degraded:
+                    case Core.Interfaces.HealthStatus.Degraded:
                         return Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Degraded(
                             $"System is degraded. Error rate: {performanceMetrics.ErrorRate:P}",
                             data);

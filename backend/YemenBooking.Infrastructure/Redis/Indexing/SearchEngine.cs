@@ -210,18 +210,18 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
             }
             
             // تطبيق فلتر المرافق
-            if (request.Amenities?.Any() == true)
+            if (request.RequiredAmenityIds?.Any() == true)
             {
-                propertyIds = await ApplyAmenitiesFilterAsync(propertyIds, request.Amenities, cancellationToken);
+                propertyIds = await ApplyAmenitiesFilterAsync(propertyIds, request.RequiredAmenityIds, cancellationToken);
             }
             
             // تطبيق فلتر الإتاحة
-            if (request.CheckInDate.HasValue && request.CheckOutDate.HasValue)
+            if (request.CheckIn.HasValue && request.CheckOut.HasValue)
             {
                 propertyIds = await ApplyAvailabilityFilterAsync(
                     propertyIds,
-                    request.CheckInDate.Value,
-                    request.CheckOutDate.Value,
+                    request.CheckIn.Value,
+                    request.CheckOut.Value,
                     cancellationToken);
             }
             
@@ -269,7 +269,7 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
         /// </summary>
         private async Task<List<string>> ApplyAmenitiesFilterAsync(
             List<string> propertyIds,
-            List<int> requiredAmenities,
+            List<string> requiredAmenities,
             CancellationToken cancellationToken)
         {
             if (!propertyIds.Any() || !requiredAmenities.Any())
@@ -284,7 +284,7 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
             var matchingPropertyIds = await dbContext.Properties
                 .Where(p => guids.Contains(p.Id))
                 .Where(p => requiredAmenities.All(amenityId => 
-                    p.Amenities.Any(a => a.Id == amenityId)))
+                    p.Amenities.Any(a => a.Id.ToString() == amenityId)))
                 .Select(p => p.Id)
                 .ToListAsync(cancellationToken);
             
@@ -341,8 +341,8 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 .Where(u => u.PropertyId == propertyId && u.IsActive)
                 .AnyAsync(u => !u.Bookings.Any(b => 
                     b.Status != Core.Enums.BookingStatus.Cancelled &&
-                    b.CheckInDate < checkOut &&
-                    b.CheckOutDate > checkIn), cancellationToken);
+                    b.StartDate < checkOut &&
+                    b.EndDate > checkIn), cancellationToken);
             
             return hasAvailableUnits;
         }
@@ -516,19 +516,18 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                         {
                             Id = data.Id.ToString(),
                             Name = data.Name,
-                            Description = data.Description,
                             City = data.City,
-                            Address = data.Address,
                             PropertyType = data.PropertyTypeName,
                             MinPrice = data.MinPrice,
-                            MaxPrice = data.MaxPrice,
+                            Currency = "YER",
                             AverageRating = data.AverageRating,
-                            TotalReviews = data.TotalReviews,
-                            TotalUnits = data.TotalUnits,
-                            Amenities = data.Amenities,
-                            ImageUrl = null, // يمكن إضافة URL الصورة لاحقاً
-                            IsActive = data.IsActive,
-                            IsApproved = data.IsApproved
+                            StarRating = (int)Math.Round(data.AverageRating),
+                            ImageUrls = new List<string>(), // يمكن إضافة URLs الصور لاحقاً
+                            MaxCapacity = 0, // يمكن حسابها من الوحدات
+                            UnitsCount = data.TotalUnits,
+                            DynamicFields = new Dictionary<string, string>(),
+                            Latitude = 0,
+                            Longitude = 0
                         });
                     }
                     catch (Exception ex)
