@@ -5,6 +5,7 @@ using System.Threading;
 using Bogus;
 using YemenBooking.Core.ValueObjects;
 using YemenBooking.Core.Entities;
+using YemenBooking.Core.Enums;
 
 namespace YemenBooking.IndexingTests.Infrastructure.Builders
 {
@@ -51,7 +52,7 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
                 .RuleFor(p => p.OwnerId, f => Guid.NewGuid())
                 .RuleFor(p => p.IsActive, f => true)
                 .RuleFor(p => p.IsApproved, f => true)
-                .RuleFor(p => p.AverageRating, (f, p) => f.Random.Decimal(3, 5))
+                .RuleFor(p => p.AverageRating, f => f.Random.Decimal(3, 5))
                 .RuleFor(p => p.Latitude, f => f.Address.Latitude())
                 .RuleFor(p => p.Longitude, f => f.Address.Longitude())
                 .RuleFor(p => p.CreatedAt, f => DateTime.UtcNow)
@@ -124,20 +125,21 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
                     SectionId = null,
                     PropertyInSectionId = null,
                     UnitInSectionId = null,
-                    CloudinaryPublicId = $"test_image_{i}",
-                    CloudinaryVersion = 1,
-                    CloudinaryUrl = $"https://test.com/image_{i}.jpg",
-                    Width = 1920,
-                    Height = 1080,
+                    Name = $"test_image_{i}.jpg",
+                    Url = $"https://test.com/image_{i}.jpg",
                     SizeBytes = 1024 * 100,
                     Type = "image/jpeg",
-                    Category = Core.Enums.ImageCategory.Property,
+                    Category = ImageCategory.Exterior,
                     Caption = $"Image {i}",
                     AltText = $"Property Image {i}",
                     Tags = "[]",
                     Sizes = "{}",
                     IsMain = i == 0,
+                    IsMainImage = i == 0,
                     SortOrder = i,
+                    DisplayOrder = i,
+                    Status = ImageStatus.Approved,
+                    MediaType = "image",
                     Views = 0,
                     Downloads = 0,
                     UploadedAt = DateTime.UtcNow,

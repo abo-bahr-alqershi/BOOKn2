@@ -71,14 +71,10 @@ namespace YemenBooking.IndexingTests.Stress
                             using var scope = CreateIsolatedScope();
                             var service = scope.ServiceProvider.GetRequiredService<IIndexingService>();
                             
-                            var success = await service.OnPropertyCreatedAsync(property.Id, TestCancellation.Token);
+                            await service.OnPropertyCreatedAsync(property.Id, TestCancellation.Token);
                             
                             operationStopwatch.Stop();
-                            
-                            if (success)
-                                metrics.RecordSuccess(operationStopwatch.ElapsedMilliseconds);
-                            else
-                                metrics.RecordFailure(operationStopwatch.ElapsedMilliseconds);
+                            metrics.RecordSuccess(operationStopwatch.ElapsedMilliseconds);
                         }
                         catch (Exception ex)
                         {
@@ -340,14 +336,30 @@ namespace YemenBooking.IndexingTests.Stress
         
         private async Task<bool> CreateAndIndexProperty()
         {
-            var property = TestDataBuilder.SimpleProperty(TestId);
-            return await IndexingService.OnPropertyCreatedAsync(property.Id);
+            try
+            {
+                var property = TestDataBuilder.SimpleProperty(TestId);
+                await IndexingService.OnPropertyCreatedAsync(property.Id);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
         
         private async Task<bool> UpdateRandomProperty()
         {
-            var propertyId = Guid.NewGuid(); // في الواقع، يجب اختيار من قائمة موجودة
-            return await IndexingService.OnPropertyUpdatedAsync(propertyId);
+            try
+            {
+                var propertyId = Guid.NewGuid(); // في الواقع، يجب اختيار من قائمة موجودة
+                await IndexingService.OnPropertyUpdatedAsync(propertyId);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
         
         private async Task<PropertySearchResult> SearchProperties()

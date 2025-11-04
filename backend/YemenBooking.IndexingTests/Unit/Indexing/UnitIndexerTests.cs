@@ -117,7 +117,7 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
             
             // التحقق من ربط الوحدة بالعقار
             _transactionMock.Verify(x => x.SetAddAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains($"property:{propertyId}:units")),
+                It.Is<RedisKey>(k => k.ToString().Contains($"property:{property.Id}:units")),
                 It.Is<RedisValue>(v => v.ToString() == unit.Id.ToString()),
                 It.IsAny<CommandFlags>()),
                 Times.Once);

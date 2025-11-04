@@ -275,17 +275,16 @@ namespace YemenBooking.IndexingTests.Unit.Search
         }
         
         [Fact]
-        public async Task SearchAsync_WithHighlighting_ShouldHighlightMatchedText()
+        public async Task SearchAsync_WithTextMatching_ShouldReturnMatchingProperties()
         {
             // Arrange
             var searchText = "فندق";
             var request = TestDataBuilder.TextSearchRequest(searchText);
-            request.EnableHighlighting = true;
             
             var propertyId = Guid.NewGuid();
             var propertyName = "فندق الخليج";
             
-            SetupHighlightedSearch(searchText, propertyId, propertyName);
+            SetupTextSearchWithPropertyDetails(searchText, propertyId, propertyName);
             
             // Act
             var result = await _searchEngine.ExecuteSearchAsync(request);
@@ -294,11 +293,11 @@ namespace YemenBooking.IndexingTests.Unit.Search
             result.Should().HaveAtLeast(1);
             var property = result.Properties.First(p => p.Id == propertyId.ToString());
             
-            // يجب أن يحتوي على تمييز
-            property.HighlightedName?.Should().Contain("<mark>");
-            property.HighlightedName?.Should().Contain("</mark>");
+            // يجب أن يحتوي على الاسم الصحيح
+            property.Name.Should().Contain(searchText);
+            property.Name.Should().Be(propertyName);
             
-            _output.WriteLine($"✅ Text highlighting working for '{searchText}'");
+            _output.WriteLine($"✅ Text matching working for '{searchText}'");
         }
         
         #region Helper Methods
@@ -372,11 +371,11 @@ namespace YemenBooking.IndexingTests.Unit.Search
                 .ReturnsAsync((PropertySearchResult)null);
         }
         
-        private void SetupHighlightedSearch(string searchText, Guid propertyId, string propertyName)
+        private void SetupTextSearchWithPropertyDetails(string searchText, Guid propertyId, string propertyName)
         {
             SetupTextSearch(searchText, new[] { propertyId });
             
-            // Add highlighting info
+            // Add property details
             var hashEntries = new HashEntry[]
             {
                 new("id", propertyId.ToString()),

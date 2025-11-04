@@ -327,8 +327,14 @@ namespace YemenBooking.IndexingTests.Integration
             
             // Assert
             var allTasks = Task.WhenAll(tasks);
-            await allTasks.Should().CompleteWithinAsync(TimeSpan.FromSeconds(15));
+            var completed = await Task.Run(async () =>
+            {
+                var timeout = Task.Delay(TimeSpan.FromSeconds(15));
+                var completedTask = await Task.WhenAny(allTasks, timeout);
+                return completedTask == allTasks;
+            });
             
+            completed.Should().BeTrue("all operations should complete within timeout");
             Output.WriteLine($"✅ All operations completed within timeout - No deadlock");
         }
         

@@ -40,9 +40,9 @@ namespace YemenBooking.IndexingTests.Infrastructure.Helpers
             return _inner.Execute<TResult>(expression);
         }
 
-        public IAsyncEnumerable<TResult> ExecuteAsync<TResult>(Expression expression, CancellationToken cancellationToken = default)
+        public TResult ExecuteAsync<TResult>(Expression expression, CancellationToken cancellationToken = default)
         {
-            return new TestAsyncEnumerable<TResult>(expression);
+            return Execute<TResult>(expression);
         }
     }
 
