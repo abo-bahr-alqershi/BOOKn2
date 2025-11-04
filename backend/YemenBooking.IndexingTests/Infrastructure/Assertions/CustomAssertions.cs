@@ -36,10 +36,23 @@ namespace YemenBooking.IndexingTests.Infrastructure.Assertions
     public class PropertySearchResultAssertions
     {
         private readonly PropertySearchResult _result;
+        public PropertySearchResult Subject => _result;
         
         public PropertySearchResultAssertions(PropertySearchResult result)
         {
             _result = result;
+        }
+        
+        /// <summary>
+        /// التحقق من أن النتيجة ليست null
+        /// </summary>
+        public PropertySearchResultAssertions NotBeNull(string because = "")
+        {
+            Execute.Assertion
+                .ForCondition(_result != null)
+                .FailWith("Expected search result not to be null{{reason}}, but it was.", because);
+            
+            return this;
         }
         
         /// <summary>

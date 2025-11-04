@@ -22,6 +22,7 @@ using YemenBooking.IndexingTests.Infrastructure;
 using YemenBooking.IndexingTests.Infrastructure.Fixtures;
 using YemenBooking.IndexingTests.Infrastructure.Builders;
 using YemenBooking.IndexingTests.Infrastructure.Assertions;
+using YemenBooking.IndexingTests.Infrastructure.Extensions;
 using Polly;
 using Npgsql;
 using System.Net.Http;

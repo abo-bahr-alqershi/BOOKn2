@@ -15,21 +15,6 @@ namespace YemenBooking.IndexingTests.Infrastructure.Extensions
     /// </summary>
     public static class AssertionExtensions
     {
-        /// <summary>
-        /// التحقق من أن PropertySearchResultAssertions ليست null
-        /// </summary>
-        public static AndConstraint<PropertySearchResultAssertions> NotBeNull(
-            this PropertySearchResultAssertions assertions,
-            string because = "",
-            params object[] becauseArgs)
-        {
-            Execute.Assertion
-                .BecauseOf(because, becauseArgs)
-                .WithExpectation("Expected search result {0} to exist{reason}, ", "not to be null")
-                .FailWith("but it was null");
-
-            return new AndConstraint<PropertySearchResultAssertions>(assertions);
-        }
 
         /// <summary>
         /// التحقق من أن عدد النتائج يساوي الصفر

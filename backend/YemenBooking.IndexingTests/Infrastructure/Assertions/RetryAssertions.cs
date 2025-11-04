@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using FluentAssertions;
 using FluentAssertions.Execution;
+using Xunit.Sdk;
 
 namespace YemenBooking.IndexingTests.Infrastructure.Assertions
 {
@@ -48,7 +50,7 @@ namespace YemenBooking.IndexingTests.Infrastructure.Assertions
             {
                 errorMessage += $"\nLast Exception: {lastException.Message}";
             }
-            throw new AssertionFailedException(errorMessage);
+            throw new XunitException(errorMessage);
         }
         
         /// <summary>
@@ -188,7 +190,7 @@ namespace YemenBooking.IndexingTests.Infrastructure.Assertions
             
             var failureMessage = message ?? 
                 $"Assertion failed after {maxAttempts} attempts. Last error: {lastException?.Message}";
-            throw new AssertionFailedException(failureMessage, lastException);
+            throw new XunitException(failureMessage);
         }
         
         /// <summary>
