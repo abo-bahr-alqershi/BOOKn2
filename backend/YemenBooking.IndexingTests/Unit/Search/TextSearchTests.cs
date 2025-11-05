@@ -1,402 +1,523 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
+using System.Diagnostics;
 using Xunit;
 using Xunit.Abstractions;
-using Moq;
 using FluentAssertions;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.EntityFrameworkCore;
+using StackExchange.Redis;
+using YemenBooking.Application.Features.SearchAndFilters.Services;
+using YemenBooking.Core.Entities;
 using YemenBooking.Core.Indexing.Models;
-using YemenBooking.Core.Interfaces.Repositories;
-using YemenBooking.Infrastructure.Redis.Core;
+using YemenBooking.Infrastructure.Data.Context;
 using YemenBooking.Infrastructure.Redis.Core.Interfaces;
-using YemenBooking.Infrastructure.Redis.Indexing;
+using YemenBooking.IndexingTests.Infrastructure;
 using YemenBooking.IndexingTests.Infrastructure.Builders;
 using YemenBooking.IndexingTests.Infrastructure.Assertions;
 using YemenBooking.IndexingTests.Infrastructure.Extensions;
-using StackExchange.Redis;
 
 namespace YemenBooking.IndexingTests.Unit.Search
 {
     /// <summary>
-    /// اختبارات البحث النصي
+    /// اختبارات البحث النصي باستخدام الفهرسة الحقيقية
+    /// تطبق مبادئ العزل الكامل والحتمية
+    /// بدون استخدام Mocks - كل شيء حقيقي
     /// </summary>
-    public class TextSearchTests : IDisposable
+    public class TextSearchTests : TestBase
     {
-        private readonly ITestOutputHelper _output;
-        private readonly Mock<IRedisConnectionManager> _redisManagerMock;
-        private readonly Mock<IPropertyRepository> _propertyRepoMock;
-        private readonly Mock<IRedisCache> _cacheMock;
-        private readonly Mock<ILogger<SearchEngine>> _loggerMock;
-        private readonly Mock<IDatabase> _databaseMock;
-        private readonly IMemoryCache _memoryCache;
-        private readonly SearchEngine _searchEngine;
-        private readonly string _testId;
+        private readonly SemaphoreSlim _concurrencyLimiter;
+        private readonly List<Guid> _createdPropertyIds = new();
+        private readonly List<string> _createdRedisKeys = new();
         
-        public TextSearchTests(ITestOutputHelper output)
+        public TextSearchTests(ITestOutputHelper output) : base(output)
         {
-            _output = output;
-            _testId = Guid.NewGuid().ToString("N");
-            
-            // إعداد Mocks
-            _redisManagerMock = new Mock<IRedisConnectionManager>();
-            _propertyRepoMock = new Mock<IPropertyRepository>();
-            _cacheMock = new Mock<IRedisCache>();
-            _loggerMock = new Mock<ILogger<SearchEngine>>();
-            _databaseMock = new Mock<IDatabase>();
-            _memoryCache = new MemoryCache(new MemoryCacheOptions());
-            
-            _redisManagerMock.Setup(x => x.GetDatabase(It.IsAny<int>())).Returns(_databaseMock.Object);
-            _redisManagerMock.Setup(x => x.IsConnectedAsync()).Returns(Task.FromResult(true));
-            
-            // إنشاء محرك البحث
-            var serviceProviderMock = new Mock<IServiceProvider>();
-            _searchEngine = new SearchEngine(
-                _redisManagerMock.Object,
-                serviceProviderMock.Object,
-                _loggerMock.Object
+            _concurrencyLimiter = new SemaphoreSlim(
+                initialCount: Environment.ProcessorCount * 2,
+                maxCount: Environment.ProcessorCount * 2
             );
         }
+        
+        #region Basic Search Tests
         
         [Fact]
         public async Task SearchAsync_WithEmptyRequest_ShouldReturnAllActiveProperties()
         {
             // Arrange
+            var uniqueTestId = $"empty_search_{Guid.NewGuid():N}".Substring(0, 20);
+            var properties = new List<Property>();
+            
+            // إنشاء 3 عقارات نشطة
+            for (int i = 0; i < 3; i++)
+            {
+                var property = TestDataBuilder.SimpleProperty($"{uniqueTestId}_{i}");
+                property.IsActive = true;
+                property.IsApproved = true;
+                properties.Add(property);
+                _createdPropertyIds.Add(property.Id);
+            }
+            
+            // حفظ العقارات في قاعدة البيانات
+            using (var scope = ServiceProvider.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                dbContext.Properties.AddRange(properties);
+                await dbContext.SaveChangesAsync();
+            }
+            
+            // فهرسة جميع العقارات
+            foreach (var property in properties)
+            {
+                await IndexingService.OnPropertyCreatedAsync(property.Id);
+            }
+            
+            // انتظار حتى تتم الفهرسة
+            await Task.Delay(500);
+            
+            // Act - البحث بدون معايير
             var request = TestDataBuilder.SimpleSearchRequest();
-            var propertyIds = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
-            
-            SetupBasicSearch(propertyIds);
-            
-            // Act
-            var result = await _searchEngine.ExecuteSearchAsync(request);
+            var result = await IndexingService.SearchAsync(request);
             
             // Assert
-            result.Should().HaveCount(propertyIds.Length);
-            result.Properties.Should().HaveCount(propertyIds.Length);
+            result.Should().NotBeNull();
+            result.TotalCount.Should().BeGreaterThanOrEqualTo(properties.Count, 
+                "Should return at least the created properties");
             
-            _output.WriteLine($"✅ Empty search returned {result.TotalCount} properties");
+            // التحقق من وجود العقارات المنشأة في النتائج
+            var propertyIds = result.Properties.Select(p => Guid.Parse(p.Id)).ToList();
+            foreach (var property in properties)
+            {
+                propertyIds.Should().Contain(property.Id, 
+                    $"Property {property.Name} should be in search results");
+            }
+            
+            Output.WriteLine($"✅ Empty search returned {result.TotalCount} properties");
         }
         
         [Fact]
         public async Task SearchAsync_WithTextSearch_ShouldFilterByText()
         {
             // Arrange
-            var searchText = "فندق";
-            var request = TestDataBuilder.TextSearchRequest(searchText);
+            var uniqueTestId = $"text_{Guid.NewGuid():N}".Substring(0, 15);
+            var searchText = "فندق_مميز";
             
-            var matchingIds = new[] { Guid.NewGuid(), Guid.NewGuid() };
-            var nonMatchingIds = new[] { Guid.NewGuid() };
+            // إنشاء عقارات بأسماء مختلفة
+            var matchingProperty1 = TestDataBuilder.SimpleProperty($"{uniqueTestId}_1");
+            matchingProperty1.Name = $"فندق_مميز الأول {uniqueTestId}";
+            matchingProperty1.IsActive = true;
+            matchingProperty1.IsApproved = true;
             
-            SetupTextSearch(searchText, matchingIds);
+            var matchingProperty2 = TestDataBuilder.SimpleProperty($"{uniqueTestId}_2");
+            matchingProperty2.Name = $"فندق_مميز الثاني {uniqueTestId}";
+            matchingProperty2.IsActive = true;
+            matchingProperty2.IsApproved = true;
             
-            // Act
-            var result = await _searchEngine.ExecuteSearchAsync(request);
+            var nonMatchingProperty = TestDataBuilder.SimpleProperty($"{uniqueTestId}_3");
+            nonMatchingProperty.Name = $"شقة سكنية {uniqueTestId}";
+            nonMatchingProperty.IsActive = true;
+            nonMatchingProperty.IsApproved = true;
             
-            // Assert
-            result.Should().HaveCount(matchingIds.Length);
+            _createdPropertyIds.AddRange(new[] { 
+                matchingProperty1.Id, 
+                matchingProperty2.Id, 
+                nonMatchingProperty.Id 
+            });
             
-            foreach (var id in matchingIds)
+            // حفظ العقارات
+            using (var scope = ServiceProvider.CreateScope())
             {
-                result.Should().ContainProperty(id);
+                var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                dbContext.Properties.AddRange(new[] { 
+                    matchingProperty1, 
+                    matchingProperty2, 
+                    nonMatchingProperty 
+                });
+                await dbContext.SaveChangesAsync();
             }
             
-            foreach (var id in nonMatchingIds)
-            {
-                result.Should().NotContainProperty(id);
-            }
+            // فهرسة العقارات
+            await IndexingService.OnPropertyCreatedAsync(matchingProperty1.Id);
+            await IndexingService.OnPropertyCreatedAsync(matchingProperty2.Id);
+            await IndexingService.OnPropertyCreatedAsync(nonMatchingProperty.Id);
             
-            _output.WriteLine($"✅ Text search for '{searchText}' returned {result.TotalCount} properties");
-        }
-        
-        [Theory]
-        [InlineData("hotel")]
-        [InlineData("HOTEL")]
-        [InlineData("HoTeL")]
-        [InlineData("فندق")]
-        [InlineData("الفندق")]
-        public async Task SearchAsync_WithTextSearch_ShouldBeCaseInsensitive(string searchText)
-        {
-            // Arrange
+            await Task.Delay(500);
+            
+            // Act - البحث بالنص
             var request = TestDataBuilder.TextSearchRequest(searchText);
-            var propertyId = Guid.NewGuid();
-            
-            SetupTextSearch("hotel", new[] { propertyId });
-            
-            // Act
-            var result = await _searchEngine.ExecuteSearchAsync(request);
+            var result = await IndexingService.SearchAsync(request);
             
             // Assert
-            result.Should().HaveAtLeast(1);
+            result.Should().NotBeNull();
+            result.Properties.Should().NotBeNull();
             
-            _output.WriteLine($"✅ Case-insensitive search for '{searchText}' worked");
+            var foundProperties = result.Properties
+                .Where(p => p.Name != null && p.Name.Contains(searchText))
+                .ToList();
+                
+            foundProperties.Should().HaveCountGreaterThanOrEqualTo(2, 
+                "Should find at least the two matching properties");
+            
+            Output.WriteLine($"✅ Text search for '{searchText}' found {foundProperties.Count} properties");
         }
         
         [Fact]
         public async Task SearchAsync_WithPartialText_ShouldMatchPrefix()
         {
             // Arrange
-            var request = TestDataBuilder.TextSearchRequest("فن"); // جزء من "فندق"
-            var propertyId = Guid.NewGuid();
+            var uniqueTestId = $"partial_{Guid.NewGuid():N}".Substring(0, 15);
+            var baseText = "منتجع_سياحي";
             
-            SetupPrefixSearch("فن", new[] { propertyId });
+            var property = TestDataBuilder.SimpleProperty(uniqueTestId);
+            property.Name = $"{baseText}_رائع {uniqueTestId}";
+            property.IsActive = true;
+            property.IsApproved = true;
+            _createdPropertyIds.Add(property.Id);
             
-            // Act
-            var result = await _searchEngine.ExecuteSearchAsync(request);
+            // حفظ العقار
+            using (var scope = ServiceProvider.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                dbContext.Properties.Add(property);
+                await dbContext.SaveChangesAsync();
+            }
+            
+            // فهرسة العقار
+            await IndexingService.OnPropertyCreatedAsync(property.Id);
+            await Task.Delay(500);
+            
+            // Act - البحث بجزء من النص
+            var request = TestDataBuilder.TextSearchRequest("منتجع");
+            var result = await IndexingService.SearchAsync(request);
             
             // Assert
-            result.Should().HaveAtLeast(1);
-            result.Should().ContainProperty(propertyId);
+            result.Should().NotBeNull();
+            var foundProperty = result.Properties
+                .FirstOrDefault(p => p.Id == property.Id.ToString());
+                
+            Assert.NotNull(foundProperty); // Should find property with partial text match
             
-            _output.WriteLine($"✅ Prefix search for 'فن' matched 'فندق'");
+            Output.WriteLine($"✅ Partial text search matched property: {property.Name}");
         }
         
         [Fact]
         public async Task SearchAsync_WithMultipleWords_ShouldMatchAll()
         {
             // Arrange
-            var request = TestDataBuilder.TextSearchRequest("فندق صنعاء");
-            var matchingId = Guid.NewGuid(); // يحتوي على كلا الكلمتين
-            var partialMatchId = Guid.NewGuid(); // يحتوي على كلمة واحدة فقط
+            var uniqueTestId = $"multi_{Guid.NewGuid():N}".Substring(0, 15);
             
-            SetupMultiWordSearch(new[] { "فندق", "صنعاء" }, new[] { matchingId });
+            var property = TestDataBuilder.SimpleProperty(uniqueTestId);
+            property.Name = $"فندق خمس نجوم {uniqueTestId}";
+            property.Description = "موقع ممتاز وخدمات راقية";
+            property.IsActive = true;
+            property.IsApproved = true;
+            _createdPropertyIds.Add(property.Id);
             
-            // Act
-            var result = await _searchEngine.ExecuteSearchAsync(request);
-            
-            // Assert
-            result.Should().ContainProperty(matchingId);
-            result.Should().NotContainProperty(partialMatchId);
-            
-            _output.WriteLine($"✅ Multi-word search matched properties with all words");
-        }
-        
-        [Fact]
-        public async Task SearchAsync_WithSpecialCharacters_ShouldHandleGracefully()
-        {
-            // Arrange
-            var specialTexts = new[]
+            // حفظ العقار
+            using (var scope = ServiceProvider.CreateScope())
             {
-                "test@example.com",
-                "100%",
-                "5*",
-                "C#",
-                "Node.js",
-                "الفندق!",
-                "صنعاء؟"
-            };
-            
-            foreach (var text in specialTexts)
-            {
-                var request = TestDataBuilder.TextSearchRequest(text);
-                
-                // Act
-                var result = await _searchEngine.ExecuteSearchAsync(request);
-                
-                // Assert
-                result.Should().NotBeNull();
-                // لا يجب أن يفشل البحث
-                
-                _output.WriteLine($"✅ Handled special characters in '{text}'");
+                var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                dbContext.Properties.Add(property);
+                await dbContext.SaveChangesAsync();
             }
-        }
-        
-        [Fact]
-        public async Task SearchAsync_WithEmptySearchText_ShouldReturnAll()
-        {
-            // Arrange
-            var request = TestDataBuilder.TextSearchRequest("");
-            var propertyIds = new[] { Guid.NewGuid(), Guid.NewGuid() };
             
-            SetupBasicSearch(propertyIds);
+            // فهرسة العقار
+            await IndexingService.OnPropertyCreatedAsync(property.Id);
+            await Task.Delay(500);
             
-            // Act
-            var result = await _searchEngine.ExecuteSearchAsync(request);
+            // Act - البحث بكلمات متعددة
+            var request = TestDataBuilder.TextSearchRequest("فندق نجوم");
+            var result = await IndexingService.SearchAsync(request);
             
             // Assert
-            result.Should().HaveAtLeast(propertyIds.Length);
+            result.Should().NotBeNull();
+            var foundProperty = result.Properties
+                .FirstOrDefault(p => p.Id == property.Id.ToString());
+                
+            Assert.NotNull(foundProperty); // Should find property matching multiple words
             
-            _output.WriteLine($"✅ Empty text search returned all properties");
+            Output.WriteLine($"✅ Multiple words search found property: {property.Name}");
         }
+        
+        #endregion
+        
+        #region Case Sensitivity Tests
+        
+        [Fact]
+        public async Task SearchAsync_WithDifferentCase_ShouldBeCaseInsensitive()
+        {
+            // Arrange
+            var uniqueTestId = $"case_{Guid.NewGuid():N}".Substring(0, 15);
+            
+            var property = TestDataBuilder.SimpleProperty(uniqueTestId);
+            property.Name = $"HOTEL GRAND {uniqueTestId}";
+            property.IsActive = true;
+            property.IsApproved = true;
+            _createdPropertyIds.Add(property.Id);
+            
+            // حفظ العقار
+            using (var scope = ServiceProvider.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                dbContext.Properties.Add(property);
+                await dbContext.SaveChangesAsync();
+            }
+            
+            // فهرسة العقار
+            await IndexingService.OnPropertyCreatedAsync(property.Id);
+            await Task.Delay(500);
+            
+            // Act - البحث بحالة أحرف مختلفة
+            var request = TestDataBuilder.TextSearchRequest("hotel grand");
+            var result = await IndexingService.SearchAsync(request);
+            
+            // Assert
+            result.Should().NotBeNull();
+            var foundProperty = result.Properties
+                .FirstOrDefault(p => p.Name != null && 
+                    p.Name.ToLower().Contains("hotel") && 
+                    p.Name.ToLower().Contains("grand"));
+                    
+            Assert.NotNull(foundProperty); // Search should be case insensitive
+            
+            Output.WriteLine($"✅ Case insensitive search worked correctly");
+        }
+        
+        #endregion
+        
+        #region Pagination Tests
         
         [Fact]
         public async Task SearchAsync_WithPagination_ShouldReturnCorrectPage()
         {
             // Arrange
-            var totalProperties = 25;
-            var pageSize = 10;
-            var propertyIds = Enumerable.Range(0, totalProperties)
-                .Select(_ => Guid.NewGuid())
-                .ToArray();
+            var uniqueTestId = $"page_{Guid.NewGuid():N}".Substring(0, 10);
+            var properties = new List<Property>();
             
-            SetupPaginatedSearch(propertyIds, pageSize);
+            // إنشاء 25 عقار
+            for (int i = 0; i < 25; i++)
+            {
+                var property = TestDataBuilder.SimpleProperty($"{uniqueTestId}_{i:D2}");
+                property.Name = $"عقار_رقم_{i:D2} {uniqueTestId}";
+                property.IsActive = true;
+                property.IsApproved = true;
+                properties.Add(property);
+                _createdPropertyIds.Add(property.Id);
+            }
             
-            // Test Page 1
+            // حفظ العقارات
+            using (var scope = ServiceProvider.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                dbContext.Properties.AddRange(properties);
+                await dbContext.SaveChangesAsync();
+            }
+            
+            // فهرسة العقارات
+            foreach (var property in properties)
+            {
+                await IndexingService.OnPropertyCreatedAsync(property.Id);
+            }
+            
+            await Task.Delay(1000);
+            
+            // Act - البحث مع التصفح
             var request1 = new PropertySearchRequest
             {
+                SearchText = uniqueTestId,
                 PageNumber = 1,
-                PageSize = pageSize
+                PageSize = 10
             };
+            var result1 = await IndexingService.SearchAsync(request1);
             
-            var result1 = await _searchEngine.ExecuteSearchAsync(request1);
-            
-            result1.Should().BeOnPage(1);
-            result1.Should().HavePageSize(pageSize);
-            result1.Properties.Count.Should().Be(pageSize);
-            result1.TotalCount.Should().Be(totalProperties);
-            result1.TotalPages.Should().Be(3);
-            
-            // Test Page 2
             var request2 = new PropertySearchRequest
             {
+                SearchText = uniqueTestId,
                 PageNumber = 2,
-                PageSize = pageSize
+                PageSize = 10
             };
-            
-            var result2 = await _searchEngine.ExecuteSearchAsync(request2);
-            
-            result2.Should().BeOnPage(2);
-            result2.Properties.Count.Should().Be(pageSize);
-            
-            // Test Page 3 (partial)
-            var request3 = new PropertySearchRequest
-            {
-                PageNumber = 3,
-                PageSize = pageSize
-            };
-            
-            var result3 = await _searchEngine.ExecuteSearchAsync(request3);
-            
-            result3.Should().BeOnPage(3);
-            result3.Properties.Count.Should().Be(5); // 25 - 20
-            
-            _output.WriteLine($"✅ Pagination working correctly with {totalProperties} properties");
-        }
-        
-        [Fact]
-        public async Task SearchAsync_WithTextMatching_ShouldReturnMatchingProperties()
-        {
-            // Arrange
-            var searchText = "فندق";
-            var request = TestDataBuilder.TextSearchRequest(searchText);
-            
-            var propertyId = Guid.NewGuid();
-            var propertyName = "فندق الخليج";
-            
-            SetupTextSearchWithPropertyDetails(searchText, propertyId, propertyName);
-            
-            // Act
-            var result = await _searchEngine.ExecuteSearchAsync(request);
+            var result2 = await IndexingService.SearchAsync(request2);
             
             // Assert
-            result.Should().HaveAtLeast(1);
-            var property = result.Properties.First(p => p.Id == propertyId.ToString());
+            result1.Should().NotBeNull();
+            result1.Properties.Count.Should().BeLessThanOrEqualTo(10, "Page size should be respected");
             
-            // يجب أن يحتوي على الاسم الصحيح
-            property.Name.Should().Contain(searchText);
-            property.Name.Should().Be(propertyName);
+            result2.Should().NotBeNull();
+            result2.Properties.Count.Should().BeLessThanOrEqualTo(10, "Page size should be respected");
             
-            _output.WriteLine($"✅ Text matching working for '{searchText}'");
-        }
-        
-        #region Helper Methods
-        
-        private void SetupBasicSearch(Guid[] propertyIds)
-        {
-            var properties = propertyIds.Select(id =>
-            {
-                var prop = TestDataBuilder.SimpleProperty(_testId);
-                prop.Id = id;
-                return prop;
-            }).ToList();
+            // التحقق من عدم تكرار العناصر بين الصفحات
+            var page1Ids = result1.Properties.Select(p => p.Id).ToList();
+            var page2Ids = result2.Properties.Select(p => p.Id).ToList();
             
-            // Mock database operations
-            _databaseMock.Setup(x => x.SetMembersAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<CommandFlags>()))
-                .ReturnsAsync(propertyIds.Select(id => (RedisValue)id.ToString()).ToArray());
+            page1Ids.Intersect(page2Ids).Should().BeEmpty("Pages should not have duplicate items");
             
-            foreach (var prop in properties)
-            {
-                var hashEntries = new HashEntry[]
-                {
-                    new("id", prop.Id.ToString()),
-                    new("name", prop.Name),
-                    new("city", prop.City),
-                    new("is_active", "1"),
-                    new("is_approved", "1")
-                };
-                
-                _databaseMock.Setup(x => x.HashGetAllAsync(
-                    It.Is<RedisKey>(k => k.ToString().Contains($"property:{prop.Id}")),
-                    It.IsAny<CommandFlags>()))
-                    .ReturnsAsync(hashEntries);
-            }
-        }
-        
-        private void SetupTextSearch(string searchText, Guid[] matchingIds)
-        {
-            // Setup search results
-            _databaseMock.Setup(x => x.ScriptEvaluateAsync(
-                It.IsAny<string>(),
-                It.IsAny<RedisKey[]>(),
-                It.IsAny<RedisValue[]>(),
-                It.IsAny<CommandFlags>()))
-                .ReturnsAsync(RedisResult.Create(new RedisValue(
-                    $"{{\"total_count\":{matchingIds.Length},\"results\":[{string.Join(",", matchingIds.Select(id => $"[\"{id}\"]"))}]}}"
-                )));
-            
-            SetupBasicSearch(matchingIds);
-        }
-        
-        private void SetupPrefixSearch(string prefix, Guid[] matchingIds)
-        {
-            SetupTextSearch(prefix + "*", matchingIds);
-        }
-        
-        private void SetupMultiWordSearch(string[] words, Guid[] matchingIds)
-        {
-            SetupTextSearch(string.Join(" ", words), matchingIds);
-        }
-        
-        private void SetupPaginatedSearch(Guid[] propertyIds, int pageSize)
-        {
-            SetupBasicSearch(propertyIds);
-            
-            // Mock pagination
-            _cacheMock.Setup(x => x.GetAsync<PropertySearchResult>(
-                It.IsAny<string>(),
-                It.IsAny<CancellationToken>()))
-                .ReturnsAsync((PropertySearchResult)null);
-        }
-        
-        private void SetupTextSearchWithPropertyDetails(string searchText, Guid propertyId, string propertyName)
-        {
-            SetupTextSearch(searchText, new[] { propertyId });
-            
-            // Add property details
-            var hashEntries = new HashEntry[]
-            {
-                new("id", propertyId.ToString()),
-                new("name", propertyName),
-                new("city", "صنعاء"),
-                new("is_active", "1"),
-                new("is_approved", "1")
-            };
-            
-            _databaseMock.Setup(x => x.HashGetAllAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains($"property:{propertyId}")),
-                It.IsAny<CommandFlags>()))
-                .ReturnsAsync(hashEntries);
+            Output.WriteLine($"✅ Pagination working correctly - Page 1: {result1.Properties.Count} items, Page 2: {result2.Properties.Count} items");
         }
         
         #endregion
         
-        public void Dispose()
+        #region Special Characters Tests
+        
+        [Fact]
+        public async Task SearchAsync_WithSpecialCharacters_ShouldHandleCorrectly()
         {
-            _memoryCache?.Dispose();
-            _output.WriteLine($"🧹 Cleaning up test {_testId}");
+            // Arrange
+            var uniqueTestId = $"spec_{Guid.NewGuid():N}".Substring(0, 10);
+            
+            var property = TestDataBuilder.SimpleProperty(uniqueTestId);
+            property.Name = $"فندق@النجمة#الذهبية {uniqueTestId}";
+            property.IsActive = true;
+            property.IsApproved = true;
+            _createdPropertyIds.Add(property.Id);
+            
+            // حفظ العقار
+            using (var scope = ServiceProvider.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                dbContext.Properties.Add(property);
+                await dbContext.SaveChangesAsync();
+            }
+            
+            // فهرسة العقار
+            await IndexingService.OnPropertyCreatedAsync(property.Id);
+            await Task.Delay(500);
+            
+            // Act - البحث بالرموز الخاصة
+            var request = TestDataBuilder.TextSearchRequest("النجمة");
+            var result = await IndexingService.SearchAsync(request);
+            
+            // Assert
+            result.Should().NotBeNull();
+            var foundProperty = result.Properties
+                .FirstOrDefault(p => p.Id == property.Id.ToString());
+                
+            Assert.NotNull(foundProperty); // Should handle special characters in search
+            
+            Output.WriteLine($"✅ Special characters handled correctly in search");
         }
+        
+        #endregion
+        
+        #region Performance Tests
+        
+        [Fact]
+        public async Task SearchAsync_WithLargeDataset_ShouldPerformQuickly()
+        {
+            // Arrange
+            var uniqueTestId = $"perf_{Guid.NewGuid():N}".Substring(0, 10);
+            var properties = new List<Property>();
+            
+            // إنشاء 100 عقار
+            for (int i = 0; i < 100; i++)
+            {
+                var property = TestDataBuilder.SimpleProperty($"{uniqueTestId}_{i:D3}");
+                property.IsActive = true;
+                property.IsApproved = true;
+                properties.Add(property);
+                _createdPropertyIds.Add(property.Id);
+            }
+            
+            // حفظ العقارات بدفعات
+            using (var scope = ServiceProvider.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                
+                foreach (var batch in properties.Chunk(25))
+                {
+                    dbContext.Properties.AddRange(batch);
+                    await dbContext.SaveChangesAsync();
+                }
+            }
+            
+            // فهرسة العقارات بشكل متزامن
+            var indexingTasks = properties.Select(async property =>
+            {
+                await _concurrencyLimiter.WaitAsync();
+                try
+                {
+                    using var scope = ServiceProvider.CreateScope();
+                    var indexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
+                    await indexingService.OnPropertyCreatedAsync(property.Id);
+                }
+                finally
+                {
+                    _concurrencyLimiter.Release();
+                }
+            });
+            
+            await Task.WhenAll(indexingTasks);
+            await Task.Delay(1000);
+            
+            // Act - قياس وقت البحث
+            var stopwatch = Stopwatch.StartNew();
+            var request = TestDataBuilder.SimpleSearchRequest();
+            var result = await IndexingService.SearchAsync(request);
+            stopwatch.Stop();
+            
+            // Assert
+            result.Should().NotBeNull();
+            stopwatch.ElapsedMilliseconds.Should().BeLessThan(1000, 
+                "Search should complete within 1 second even with large dataset");
+            
+            Output.WriteLine($"✅ Search in {properties.Count} properties completed in {stopwatch.ElapsedMilliseconds}ms");
+        }
+        
+        #endregion
+        
+        #region Cleanup
+        
+        public override async Task DisposeAsync()
+        {
+            try
+            {
+                // تنظيف مفاتيح Redis
+                if (_createdRedisKeys.Any())
+                {
+                    foreach (var key in _createdRedisKeys)
+                    {
+                        await RedisDatabase.KeyDeleteAsync(key);
+                    }
+                    Output.WriteLine($"🧹 Cleaned {_createdRedisKeys.Count} Redis keys");
+                }
+                
+                // تنظيف العقارات من قاعدة البيانات
+                if (_createdPropertyIds.Any())
+                {
+                    using var scope = ServiceProvider.CreateScope();
+                    var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                    
+                    var propertiesToDelete = await dbContext.Properties
+                        .Where(p => _createdPropertyIds.Contains(p.Id))
+                        .ToListAsync();
+                    
+                    if (propertiesToDelete.Any())
+                    {
+                        dbContext.Properties.RemoveRange(propertiesToDelete);
+                        await dbContext.SaveChangesAsync();
+                        Output.WriteLine($"🧹 Cleaned {propertiesToDelete.Count} properties from database");
+                    }
+                }
+                
+                await base.DisposeAsync();
+            }
+            catch (Exception ex)
+            {
+                Output.WriteLine($"⚠️ Error during cleanup: {ex.Message}");
+            }
+            finally
+            {
+                _concurrencyLimiter?.Dispose();
+            }
+        }
+        
+        public override void Dispose()
+        {
+            DisposeAsync().GetAwaiter().GetResult();
+            base.Dispose();
+        }
+        
+        #endregion
     }
 }

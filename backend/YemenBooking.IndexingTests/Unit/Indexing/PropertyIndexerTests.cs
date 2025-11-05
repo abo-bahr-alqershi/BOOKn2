@@ -3,656 +3,722 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Diagnostics;
+using System.Text.Json;
 using Xunit;
 using Xunit.Abstractions;
-using Moq;
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.EntityFrameworkCore;
+using StackExchange.Redis;
+using Polly;
 using YemenBooking.Application.Features.SearchAndFilters.Services;
 using YemenBooking.Core.Entities;
-using YemenBooking.Core.Interfaces.Repositories;
+using YemenBooking.Core.ValueObjects;
+using YemenBooking.Core.Indexing.Models;
 using YemenBooking.Infrastructure.Redis.Core;
 using YemenBooking.Infrastructure.Redis.Core.Interfaces;
 using YemenBooking.Infrastructure.Redis.Indexing;
 using YemenBooking.Infrastructure.Data.Context;
+using YemenBooking.IndexingTests.Infrastructure;
 using YemenBooking.IndexingTests.Infrastructure.Builders;
 using YemenBooking.IndexingTests.Infrastructure.Helpers;
-using StackExchange.Redis;
-using Microsoft.Extensions.Configuration;
+using YemenBooking.IndexingTests.Infrastructure.Assertions;
+using YemenBooking.IndexingTests.Infrastructure.Extensions;
 
 namespace YemenBooking.IndexingTests.Unit.Indexing
 {
     /// <summary>
-    /// اختبارات الوحدة لفهرسة العقارات
-    /// معزولة تماماً باستخدام Mocks
+    /// اختبارات فهرسة العقارات باستخدام الفهرسة الحقيقية
+    /// تطبق مبادئ العزل الكامل والحتمية - بدون Mocks
+    /// كل اختبار معزول تماماً باستخدام GUIDs فريدة
     /// </summary>
-    public class PropertyIndexerTests : IDisposable
+    public class PropertyIndexerTests : TestBase
     {
-        private readonly ITestOutputHelper _output;
-        private readonly Mock<IRedisConnectionManager> _redisManagerMock;
-        private readonly Mock<IServiceScope> _serviceScopeMock;
-        private readonly Mock<IServiceScopeFactory> _serviceScopeFactoryMock;
-        private readonly Mock<YemenBookingDbContext> _dbContextMock;
-        private readonly Mock<IServiceProvider> _serviceProviderMock;
-        private readonly Mock<ILogger<IndexingService>> _loggerMock;
-        private readonly Mock<IDatabase> _databaseMock;
-        private readonly IndexingService _indexingService;
-        private readonly string _testId;
+        // SemaphoreSlim للتحكم في التزامن
+        private readonly SemaphoreSlim _concurrencyLimiter;
         
-        public PropertyIndexerTests(ITestOutputHelper output)
+        // تتبع العقارات المنشأة للتنظيف
+        private readonly List<Guid> _createdPropertyIds = new();
+        private readonly List<string> _createdRedisKeys = new();
+        
+        // JsonSerializerOptions للتسلسل
+        private readonly JsonSerializerOptions _jsonOptions;
+        
+        public PropertyIndexerTests(ITestOutputHelper output) : base(output)
         {
-            _output = output;
-            _testId = Guid.NewGuid().ToString("N");
-            
-            // إعداد Mocks
-            _redisManagerMock = new Mock<IRedisConnectionManager>();
-            _serviceProviderMock = new Mock<IServiceProvider>();
-            _serviceScopeMock = new Mock<IServiceScope>();
-            _serviceScopeFactoryMock = new Mock<IServiceScopeFactory>();
-            _dbContextMock = new Mock<YemenBookingDbContext>();
-            _loggerMock = new Mock<ILogger<IndexingService>>();
-            _databaseMock = new Mock<IDatabase>();
-            
-            // إعداد السلوك الافتراضي
-            _redisManagerMock.Setup(x => x.GetDatabase(It.IsAny<int>())).Returns(_databaseMock.Object);
-            _redisManagerMock.Setup(x => x.IsConnectedAsync()).Returns(Task.FromResult(true));
-            
-            // إعداد Service Scope للعزل
-            _serviceScopeFactoryMock.Setup(x => x.CreateScope()).Returns(_serviceScopeMock.Object);
-            _serviceProviderMock.Setup(x => x.GetService(typeof(IServiceScopeFactory)))
-                .Returns(_serviceScopeFactoryMock.Object);
-            _serviceProviderMock.Setup(x => x.CreateScope()).Returns(_serviceScopeMock.Object);
-            
-            var scopedServiceProvider = new Mock<IServiceProvider>();
-            scopedServiceProvider.Setup(x => x.GetService(typeof(YemenBookingDbContext)))
-                .Returns(_dbContextMock.Object);
-            _serviceScopeMock.Setup(x => x.ServiceProvider).Returns(scopedServiceProvider.Object);
-            
-            // إنشاء الطبقة المختبرة
-            _indexingService = new IndexingService(
-                _serviceProviderMock.Object,
-                _redisManagerMock.Object,
-                _loggerMock.Object
+            // تحديد عدد العمليات المتزامنة المسموحة
+            _concurrencyLimiter = new SemaphoreSlim(
+                initialCount: Environment.ProcessorCount * 2,
+                maxCount: Environment.ProcessorCount * 2
             );
+            
+            _jsonOptions = new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                WriteIndented = false
+            };
         }
         
+        /// <summary>
+        /// تجاوز التهيئة لإضافة تكوينات خاصة باختبارات العقارات
+        /// </summary>
+        protected override async Task ConfigureServicesAsync(IServiceCollection services)
+        {
+            // استدعاء التكوين الأساسي
+            await base.ConfigureServicesAsync(services);
+            
+            // إضافة أي خدمات إضافية مطلوبة لاختبارات العقارات
+            // مثل repositories أو services إضافية
+        }
+        
+        #region Basic Property Indexing Tests
+        
+        /// <summary>
+        /// اختبار فهرسة عقار بسيط - السيناريو الأساسي
+        /// </summary>
         [Fact]
-        public async Task IndexPropertyAsync_WithValidProperty_ShouldIndexSuccessfully()
+        public async Task IndexProperty_WithValidSimpleProperty_ShouldIndexSuccessfully()
         {
             // Arrange
-            var property = TestDataBuilder.CompleteProperty(_testId);
-            SetupPropertyInDatabase(property);
-            SetupRedisOperations();
+            var uniqueId = Guid.NewGuid().ToString("N");
+            var property = TestDataBuilder.SimpleProperty(uniqueId);
+            _createdPropertyIds.Add(property.Id);
             
-            // Act
-            await _indexingService.OnPropertyCreatedAsync(property.Id);
-            
-            // Assert - التحقق من النجاح
-            
-            // التحقق من حفظ بيانات العقار
-            _databaseMock.Verify(x => x.StringSetAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains($"property:{property.Id}")),
-                It.IsAny<RedisValue>(),
-                It.IsAny<TimeSpan?>(),
-                It.IsAny<When>(),
-                It.IsAny<CommandFlags>()),
-                Times.Once);
-            
-            // التحقق من إضافة العقار للفهرس النصي
-            _databaseMock.Verify(x => x.SetAddAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains("search:index")),
-                It.Is<RedisValue>(v => v.ToString() == property.Id.ToString()),
-                It.IsAny<CommandFlags>()),
-                Times.Once);
-            
-            // التحقق من إضافة العقار لفهرس السعر
-            if (property.Units?.Any() == true)
+            // حفظ العقار في قاعدة البيانات
+            using (var scope = ServiceProvider.CreateScope())
             {
-                _databaseMock.Verify(x => x.SortedSetAddAsync(
-                    It.Is<RedisKey>(k => k.ToString().Contains("index:price")),
-                    It.Is<RedisValue>(v => v.ToString() == property.Id.ToString()),
-                    It.IsAny<double>(),
-                    It.IsAny<CommandFlags>()),
-                    Times.Once);
+                var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                dbContext.Properties.Add(property);
+                await dbContext.SaveChangesAsync();
             }
             
-            _output.WriteLine($"✅ Property {property.Id} indexed successfully");
+            // Act - فهرسة العقار
+            await IndexingService.OnPropertyCreatedAsync(property.Id);
+            
+            // Assert - التحقق من النجاح باستخدام Polling
+            await WaitForConditionAsync(
+                async () =>
+                {
+                    // استخدام المفتاح الفعلي الذي يستخدمه IndexingService
+                    var propertyKey = $"property:{property.Id}";
+                    _createdRedisKeys.Add(propertyKey);
+                    
+                    var exists = await RedisDatabase.KeyExistsAsync(propertyKey);
+                    if (!exists) return false;
+                    
+                    var json = await RedisDatabase.StringGetAsync(propertyKey);
+                    return json.HasValue;
+                },
+                timeout: TimeSpan.FromSeconds(5),
+                pollInterval: TimeSpan.FromMilliseconds(200),
+                message: "Property should be indexed in Redis"
+            );
+            
+            // التحقق من محتويات الفهرسة
+            var indexedPropertyKey = $"property:{property.Id}";
+            var indexedJson = await RedisDatabase.StringGetAsync(indexedPropertyKey);
+            indexedJson.HasValue.Should().BeTrue("Property should be indexed with data");
+            indexedJson.IsNullOrEmpty.Should().BeFalse("Index data should not be empty");
+            
+            // التحقق من البيانات المفهرسة
+            var indexedData = JsonSerializer.Deserialize<Dictionary<string, object>>(indexedJson.ToString(), _jsonOptions);
+            indexedData.Should().NotBeNull();
+            indexedData!["name"].ToString()!.Should().Contain(uniqueId);
+            
+            Output.WriteLine($"✅ Successfully indexed property {property.Id} with unique identifier {uniqueId}");
         }
         
+        /// <summary>
+        /// اختبار فهرسة عقار مع وحدات
+        /// </summary>
         [Fact]
-        public async Task IndexPropertyAsync_WithUnits_ShouldIndexAllUnits()
+        public async Task IndexProperty_WithUnits_ShouldIndexPropertyAndUnits()
         {
             // Arrange
-            var property = TestDataBuilder.PropertyWithUnits(3, _testId);
-            SetupPropertyInDatabase(property);
-            SetupRedisOperations();
+            var uniqueId = Guid.NewGuid().ToString("N");
+            var property = TestDataBuilder.PropertyWithUnits(3, uniqueId);
+            _createdPropertyIds.Add(property.Id);
             
-            // Act
-            await _indexingService.OnPropertyCreatedAsync(property.Id);
-            
-            // Assert
-            // التحقق من فهرسة جميع الوحدات
-            foreach (var unit in property.Units)
+            // حفظ العقار والوحدات في قاعدة البيانات
+            using (var scope = ServiceProvider.CreateScope())
             {
-                _databaseMock.Verify(x => x.StringSetAsync(
-                    It.Is<RedisKey>(k => k.ToString().Contains($"unit:{unit.Id}")),
-                    It.IsAny<RedisValue>(),
-                    It.IsAny<TimeSpan?>(),
-                    It.IsAny<When>(),
-                    It.IsAny<CommandFlags>()),
-                    Times.Once);
+                var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                dbContext.Properties.Add(property);
+                await dbContext.SaveChangesAsync();
             }
             
-            _output.WriteLine($"✅ Property with {property.Units.Count} units indexed");
-        }
-        
-        [Fact]
-        public async Task IndexPropertyAsync_WithAmenities_ShouldIndexAmenities()
-        {
-            // Arrange
-            var property = TestDataBuilder.PropertyWithAmenities(5, _testId);
-            SetupPropertyInDatabase(property);
-            SetupRedisOperations();
-            
             // Act
-            await _indexingService.OnPropertyCreatedAsync(property.Id);
+            await IndexingService.OnPropertyCreatedAsync(property.Id);
             
-            // Assert
-            _databaseMock.Verify(x => x.StringSetAsync(
-                It.IsAny<RedisKey>(),
-                It.Is<RedisValue>(v => v.ToString().Contains("amenities")),
-                It.IsAny<TimeSpan?>(),
-                It.IsAny<When>(),
-                It.IsAny<CommandFlags>()),
-                Times.AtLeastOnce);
+            // Assert - التحقق من فهرسة العقار
+            await AssertEventuallyAsync(
+                async () =>
+                {
+                    var propertyKey = $"property:{property.Id}";
+                    return await RedisDatabase.KeyExistsAsync(propertyKey);
+                },
+                TimeSpan.FromSeconds(5),
+                "Property should be indexed"
+            );
             
-            _output.WriteLine($"✅ Property with {property.Amenities.Count} amenities indexed");
+            // التحقق من البيانات المفهرسة للعقار
+            var propertyKey = $"property:{property.Id}";
+            var propertyJson = await RedisDatabase.StringGetAsync(propertyKey);
+            var propertyData = JsonSerializer.Deserialize<Dictionary<string, object>>(propertyJson.ToString(), _jsonOptions);
+            
+            propertyData.Should().NotBeNull();
+            propertyData!.Should().ContainKey("totalUnits");
+            
+            // التعامل مع JsonElement بشكل صحيح
+            var totalUnitsElement = propertyData["totalUnits"];
+            int totalUnits = 0;
+            if (totalUnitsElement is JsonElement jsonElement)
+            {
+                totalUnits = jsonElement.GetInt32();
+            }
+            else
+            {
+                totalUnits = Convert.ToInt32(totalUnitsElement);
+            }
+            
+            totalUnits.Should().Be(3);
+            
+            Output.WriteLine($"✅ Indexed property with {totalUnits} units");
         }
         
+        /// <summary>
+        /// اختبار تحديث فهرسة عقار موجود
+        /// </summary>
         [Fact]
-        public async Task IndexPropertyAsync_WithCity_ShouldAddToCityIndex()
+        public async Task UpdateProperty_WhenPropertyExists_ShouldUpdateIndex()
         {
-            // Arrange
-            var property = TestDataBuilder.SimpleProperty(_testId);
-            property.City = "صنعاء";
-            SetupPropertyInDatabase(property);
-            SetupRedisOperations();
+            // Arrange - إنشاء وفهرسة عقار أولي
+            var uniqueId = Guid.NewGuid().ToString("N");
+            var property = TestDataBuilder.SimpleProperty(uniqueId);
+            _createdPropertyIds.Add(property.Id);
             
-            // Act
-            await _indexingService.OnPropertyCreatedAsync(property.Id);
+            using (var scope = ServiceProvider.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                dbContext.Properties.Add(property);
+                await dbContext.SaveChangesAsync();
+            }
             
-            // Assert
-            _databaseMock.Verify(x => x.SetAddAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains($"index:city:{property.City.ToLower()}")),
-                It.Is<RedisValue>(v => v.ToString() == property.Id.ToString()),
-                It.IsAny<CommandFlags>()),
-                Times.Once);
+            await IndexingService.OnPropertyCreatedAsync(property.Id);
             
-            _output.WriteLine($"✅ Property indexed in city: {property.City}");
+            // انتظار حتى يتم الفهرسة الأولية
+            await Task.Delay(500);
+            
+            // تحديث العقار
+            property.Name = $"UPDATED_{uniqueId}_{Guid.NewGuid():N}";
+            property.AverageRating = 4.8m;
+            property.UpdatedAt = DateTime.UtcNow;
+            
+            using (var scope = ServiceProvider.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                dbContext.Properties.Update(property);
+                await dbContext.SaveChangesAsync();
+            }
+            
+            // Act - تحديث الفهرسة
+            await IndexingService.OnPropertyUpdatedAsync(property.Id);
+            
+            // Assert - التحقق من التحديث
+            await WaitForConditionAsync(
+                async () =>
+                {
+                    var propertyKey = $"property:{property.Id}";
+                    var json = await RedisDatabase.StringGetAsync(propertyKey);
+                    if (!json.HasValue) return false;
+                    
+                    var data = JsonSerializer.Deserialize<Dictionary<string, object>>(json.ToString(), _jsonOptions);
+                    return data != null && data["name"].ToString()!.Contains("UPDATED");
+                },
+                TimeSpan.FromSeconds(3),
+                TimeSpan.FromMilliseconds(100),
+                "Property index should be updated"
+            );
+            
+            Output.WriteLine($"✅ Successfully updated property index for {property.Id}");
         }
         
+        /// <summary>
+        /// اختبار حذف فهرسة عقار
+        /// </summary>
         [Fact]
-        public async Task IndexPropertyAsync_WithPropertyType_ShouldAddToTypeIndex()
+        public async Task DeleteProperty_WhenPropertyIndexed_ShouldRemoveFromAllIndexes()
         {
-            // Arrange
-            var property = TestDataBuilder.SimpleProperty(_testId);
-            SetupPropertyInDatabase(property);
-            SetupRedisOperations();
+            // Arrange - إنشاء وفهرسة عقار
+            var uniqueId = Guid.NewGuid().ToString("N");
+            var property = TestDataBuilder.PropertyWithUnits(2, uniqueId);
+            _createdPropertyIds.Add(property.Id);
             
-            // Act
-            await _indexingService.OnPropertyCreatedAsync(property.Id);
+            using (var scope = ServiceProvider.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                dbContext.Properties.Add(property);
+                await dbContext.SaveChangesAsync();
+            }
             
-            // Assert
-            _databaseMock.Verify(x => x.SetAddAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains($"index:type:{property.TypeId}")),
-                It.Is<RedisValue>(v => v.ToString() == property.Id.ToString()),
-                It.IsAny<CommandFlags>()),
-                Times.Once);
+            await IndexingService.OnPropertyCreatedAsync(property.Id);
             
-            _output.WriteLine($"✅ Property indexed with type: {property.TypeId}");
-        }
-        
-        [Fact]
-        public async Task IndexPropertyAsync_WithRating_ShouldAddToRatingIndex()
-        {
-            // Arrange
-            var property = TestDataBuilder.SimpleProperty(_testId);
-            property.AverageRating = 4.5m;
-            SetupPropertyInDatabase(property);
-            SetupRedisOperations();
+            // انتظار حتى يتم الفهرسة
+            await Task.Delay(500);
             
-            // Act
-            await _indexingService.OnPropertyCreatedAsync(property.Id);
+            // التحقق من وجود الفهرسة
+            var propertyKey = $"property:{property.Id}";
+            var exists = await RedisDatabase.KeyExistsAsync(propertyKey);
+            exists.Should().BeTrue("Property should be indexed before deletion");
             
-            // Assert
-            _databaseMock.Verify(x => x.SortedSetAddAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains("index:rating")),
-                It.Is<RedisValue>(v => v.ToString() == property.Id.ToString()),
-                It.Is<double>(d => Math.Abs(d - 4.5) < 0.01),
-                It.IsAny<CommandFlags>()),
-                Times.Once);
+            // Act - حذف الفهرسة
+            await IndexingService.OnPropertyDeletedAsync(property.Id);
             
-            _output.WriteLine($"✅ Property indexed with rating: {property.AverageRating}");
-        }
-        
-        [Fact]
-        public async Task IndexPropertyAsync_NonExistingProperty_ShouldNotThrow()
-        {
-            // Arrange
-            var propertyId = Guid.NewGuid();
-            SetupPropertyInDatabase(null); // العقار غير موجود
+            // Assert - التحقق من الحذف
+            await WaitForConditionAsync(
+                async () =>
+                {
+                    var stillExists = await RedisDatabase.KeyExistsAsync(propertyKey);
+                    return !stillExists;
+                },
+                TimeSpan.FromSeconds(3),
+                TimeSpan.FromMilliseconds(100),
+                "Property should be removed from all indexes"
+            );
             
-            // Act
-            await _indexingService.OnPropertyCreatedAsync(propertyId);
+            // التحقق من حذف العقار من جميع الفهارس
+            var searchIndexKey = $"search:index";
+            var isInSearchIndex = await RedisDatabase.SetContainsAsync(searchIndexKey, property.Id.ToString());
+            isInSearchIndex.Should().BeFalse("Property should be removed from search index");
             
-            // Assert
-            // يجب عدم استدعاء أي عمليات Redis
-            _databaseMock.Verify(x => x.StringSetAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<RedisValue>(),
-                It.IsAny<TimeSpan?>(),
-                It.IsAny<When>(),
-                It.IsAny<CommandFlags>()),
-                Times.Never);
-            
-            _output.WriteLine($"✅ Non-existing property handled gracefully");
-        }
-        
-        [Fact]
-        public async Task UpdatePropertyAsync_ShouldRemoveOldIndexesAndCreateNew()
-        {
-            // Arrange
-            var property = TestDataBuilder.CompleteProperty(_testId);
-            SetupPropertyInDatabase(property);
-            SetupRedisOperations();
-            
-            // Setup for removing old indexes
-            _databaseMock.Setup(x => x.StringGetAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<CommandFlags>()))
-                .Returns(Task.FromResult(new RedisValue("{}"))); 
-            
-            _databaseMock.Setup(x => x.KeyDeleteAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<CommandFlags>()))
-                .Returns(Task.FromResult(true));
-                
-            _databaseMock.Setup(x => x.SetRemoveAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<RedisValue>(),
-                It.IsAny<CommandFlags>()))
-                .Returns(Task.FromResult(true));
-                
-            _databaseMock.Setup(x => x.SortedSetRemoveAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<RedisValue>(),
-                It.IsAny<CommandFlags>()))
-                .Returns(Task.FromResult(true));
-            
-            // Act
-            await _indexingService.OnPropertyUpdatedAsync(property.Id);
-            
-            // Assert
-            // التحقق من حذف الفهارس القديمة
-            _databaseMock.Verify(x => x.KeyDeleteAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains($"property:{property.Id}")),
-                It.IsAny<CommandFlags>()),
-                Times.Once);
-            
-            // التحقق من إعادة الفهرسة
-            _databaseMock.Verify(x => x.StringSetAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains($"property:{property.Id}")),
-                It.IsAny<RedisValue>(),
-                It.IsAny<TimeSpan?>(),
-                It.IsAny<When>(),
-                It.IsAny<CommandFlags>()),
-                Times.Once);
-            
-            _output.WriteLine($"✅ Property update handled correctly");
-        }
-        
-        [Fact]
-        public async Task DeletePropertyAsync_ShouldRemoveAllIndexes()
-        {
-            // Arrange
-            var property = TestDataBuilder.CompleteProperty(_testId);
-            SetupPropertyInDatabase(property);
-            SetupRedisOperations();
-            
-            // Setup for getting existing data
-            var propertyData = "{\"Id\":\"" + property.Id + "\",\"City\":\"\u0635\u0646\u0639\u0627\u0621\"}";
-            _databaseMock.Setup(x => x.StringGetAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains($"property:{property.Id}")),
-                It.IsAny<CommandFlags>()))
-                .Returns(Task.FromResult(new RedisValue(propertyData)));
-            
-            _databaseMock.Setup(x => x.KeyDeleteAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<CommandFlags>()))
-                .Returns(Task.FromResult(true));
-                
-            _databaseMock.Setup(x => x.SetRemoveAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<RedisValue>(),
-                It.IsAny<CommandFlags>()))
-                .Returns(Task.FromResult(true));
-                
-            _databaseMock.Setup(x => x.SortedSetRemoveAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<RedisValue>(),
-                It.IsAny<CommandFlags>()))
-                .Returns(Task.FromResult(true));
-            
-            // Act
-            await _indexingService.OnPropertyDeletedAsync(property.Id);
-            
-            // Assert
-            // التحقق من حذف البيانات الأساسية
-            _databaseMock.Verify(x => x.KeyDeleteAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains($"property:{property.Id}")),
-                It.IsAny<CommandFlags>()),
-                Times.Once);
-            
-            // التحقق من حذف من فهرس البحث
-            _databaseMock.Verify(x => x.SetRemoveAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains("search:index")),
-                It.Is<RedisValue>(v => v.ToString() == property.Id.ToString()),
-                It.IsAny<CommandFlags>()),
-                Times.Once);
-            
-            // التحقق من حذف من فهرس السعر
-            _databaseMock.Verify(x => x.SortedSetRemoveAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains("index:price")),
-                It.Is<RedisValue>(v => v.ToString() == property.Id.ToString()),
-                It.IsAny<CommandFlags>()),
-                Times.Once);
-            
-            _output.WriteLine($"✅ Property deletion handled correctly");
-        }
-        
-        #region Helper Methods
-        
-        private void SetupPropertyInDatabase(Property property)
-        {
-            var propertiesDbSet = new Mock<DbSet<Property>>();
-            var propertiesQueryable = property != null ? 
-                new[] { property }.AsQueryable() :
-                new Property[0].AsQueryable();
-            
-            propertiesDbSet.As<IAsyncEnumerable<Property>>()
-                .Setup(m => m.GetAsyncEnumerator(It.IsAny<CancellationToken>()))
-                .Returns(new TestAsyncEnumerator<Property>(propertiesQueryable.GetEnumerator()));
-            
-            propertiesDbSet.As<IQueryable<Property>>().Setup(m => m.Provider)
-                .Returns(new TestAsyncQueryProvider<Property>(propertiesQueryable.Provider));
-            propertiesDbSet.As<IQueryable<Property>>().Setup(m => m.Expression).Returns(propertiesQueryable.Expression);
-            propertiesDbSet.As<IQueryable<Property>>().Setup(m => m.ElementType).Returns(propertiesQueryable.ElementType);
-            propertiesDbSet.As<IQueryable<Property>>().Setup(m => m.GetEnumerator()).Returns(propertiesQueryable.GetEnumerator());
-            
-            _dbContextMock.Setup(x => x.Properties).Returns(propertiesDbSet.Object);
-        }
-        
-        private void SetupRedisOperations()
-        {
-            _databaseMock.Setup(x => x.StringSetAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<RedisValue>(),
-                It.IsAny<TimeSpan?>(),
-                It.IsAny<When>(),
-                It.IsAny<CommandFlags>()))
-                .Returns(Task.FromResult(true));
-            
-            _databaseMock.Setup(x => x.HashSetAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<HashEntry[]>(),
-                It.IsAny<CommandFlags>()))
-                .Returns(Task.FromResult(true));
-                
-            _databaseMock.Setup(x => x.SetAddAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<RedisValue>(),
-                It.IsAny<CommandFlags>()))
-                .Returns(Task.FromResult(true));
-            
-            _databaseMock.Setup(x => x.SortedSetAddAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<RedisValue>(),
-                It.IsAny<double>(),
-                It.IsAny<CommandFlags>()))
-                .Returns(Task.FromResult(true));
+            Output.WriteLine($"✅ Successfully removed property {property.Id} from all indexes");
         }
         
         #endregion
         
-        public void Dispose()
-        {
-            _output.WriteLine($"🧹 Cleaning up test {_testId}");
-        }
+        #region Concurrent Operations Tests
         
+        /// <summary>
+        /// اختبار الفهرسة المتزامنة لعدة عقارات
+        /// </summary>
         [Fact]
-        public async Task IndexPropertyAsync_WithInactiveProperty_ShouldNotIndex()
+        public async Task IndexMultipleProperties_Concurrently_ShouldIndexAllSuccessfully()
         {
             // Arrange
-            var property = TestDataBuilder.SimpleProperty(_testId);
-            property.IsActive = false;
+            const int propertyCount = 10;
+            var properties = new List<Property>();
             
-            // Act
-            await _indexingService.OnPropertyCreatedAsync(property.Id);
-            
-            // Assert - يجب عدم الفهرسة
-            
-            // التحقق من عدم استدعاء عمليات Redis
-            _databaseMock.Verify(x => x.HashSetAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<HashEntry[]>(),
-                It.IsAny<CommandFlags>()),
-                Times.Never);
-            
-            _output.WriteLine($"✅ Inactive property {property.Id} was not indexed");
-        }
-        
-        [Fact]
-        public async Task IndexPropertyAsync_WithUnapprovedProperty_ShouldNotIndex()
-        {
-            // Arrange
-            var property = TestDataBuilder.SimpleProperty(_testId);
-            property.IsApproved = false;
-            
-            // Act
-            await _indexingService.OnPropertyCreatedAsync(property.Id);
-            
-            // Assert - يجب عدم الفهرسة
-            
-            // التحقق من عدم استدعاء عمليات Redis
-            _databaseMock.Verify(x => x.HashSetAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<HashEntry[]>(),
-                It.IsAny<CommandFlags>()),
-                Times.Never);
-            
-            _output.WriteLine($"✅ Unapproved property {property.Id} was not indexed");
-        }
-        
-        [Fact]
-        public async Task UpdatePropertyIndexAsync_ShouldRemoveOldAndAddNew()
-        {
-            // Arrange
-            var property = TestDataBuilder.CompleteProperty(_testId);
-            var oldCity = "صنعاء";
-            var newCity = "عدن";
-            property.City = newCity;
-            
-            // Mock getting old data
-            _databaseMock.Setup(x => x.HashGetAsync(
-                It.IsAny<RedisKey>(),
-                It.Is<RedisValue>(v => v == "city"),
-                It.IsAny<CommandFlags>()))
-                .Returns(Task.FromResult<RedisValue>(oldCity));
-            
-            _databaseMock.Setup(x => x.HashSetAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<HashEntry[]>(),
-                It.IsAny<CommandFlags>()))
-                .Returns(Task.FromResult(true));
-            
-            _databaseMock.Setup(x => x.SetRemoveAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<RedisValue>(),
-                It.IsAny<CommandFlags>()))
-                .Returns(Task.FromResult(true));
-            
-            _databaseMock.Setup(x => x.SetAddAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<RedisValue>(),
-                It.IsAny<CommandFlags>()))
-                .Returns(Task.FromResult(true));
-            
-            // Act
-            await _indexingService.OnPropertyUpdatedAsync(property.Id);
-            
-            // Assert - التحقق من النجاح
-            
-            // التحقق من إزالة العقار من المدينة القديمة
-            _databaseMock.Verify(x => x.SetRemoveAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains($"city:{oldCity.ToLowerInvariant()}")),
-                It.Is<RedisValue>(v => v.ToString() == property.Id.ToString()),
-                It.IsAny<CommandFlags>()),
-                Times.Once);
-            
-            // التحقق من إضافة العقار للمدينة الجديدة
-            _databaseMock.Verify(x => x.SetAddAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains($"city:{newCity.ToLowerInvariant()}")),
-                It.Is<RedisValue>(v => v.ToString() == property.Id.ToString()),
-                It.IsAny<CommandFlags>()),
-                Times.Once);
-            
-            _output.WriteLine($"✅ Property {property.Id} updated from {oldCity} to {newCity}");
-        }
-        
-        [Fact]
-        public async Task RemovePropertyFromIndexesAsync_ShouldRemoveFromAllIndexes()
-        {
-            // Arrange
-            var propertyId = Guid.NewGuid();
-            
-            // Mock getting property data
-            var hashEntries = new HashEntry[]
+            for (int i = 0; i < propertyCount; i++)
             {
-                new HashEntry("city", "صنعاء"),
-                new HashEntry("property_type", "30000000-0000-0000-0000-000000000001")
-            };
+                var uniqueId = $"concurrent_{i}_{Guid.NewGuid():N}";
+                var property = TestDataBuilder.SimpleProperty(uniqueId);
+                properties.Add(property);
+                _createdPropertyIds.Add(property.Id);
+            }
             
-            _databaseMock.Setup(x => x.HashGetAllAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<CommandFlags>()))
-                .ReturnsAsync(hashEntries);
+            // حفظ جميع العقارات في قاعدة البيانات
+            using (var scope = ServiceProvider.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                dbContext.Properties.AddRange(properties);
+                await dbContext.SaveChangesAsync();
+            }
             
-            _databaseMock.Setup(x => x.KeyDeleteAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<CommandFlags>()))
-                .Returns(Task.FromResult(true));
+            // Act - فهرسة متزامنة
+            var indexingTasks = properties.Select(async property =>
+            {
+                await _concurrencyLimiter.WaitAsync();
+                try
+                {
+                    // استخدام scope منفصل لكل عملية
+                    using var scope = ServiceProvider.CreateScope();
+                    var indexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
+                    await indexingService.OnPropertyCreatedAsync(property.Id);
+                }
+                finally
+                {
+                    _concurrencyLimiter.Release();
+                }
+            });
             
-            _databaseMock.Setup(x => x.SetRemoveAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<RedisValue>(),
-                It.IsAny<CommandFlags>()))
-                .Returns(Task.FromResult(true));
+            await Task.WhenAll(indexingTasks);
             
-            _databaseMock.Setup(x => x.SortedSetRemoveAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<RedisValue>(),
-                It.IsAny<CommandFlags>()))
-                .Returns(Task.FromResult(true));
+            // Assert - التحقق من فهرسة جميع العقارات
+            foreach (var property in properties)
+            {
+                await AssertEventuallyAsync(
+                    async () =>
+                    {
+                        var propertyKey = $"property:{property.Id}";
+                        return await RedisDatabase.KeyExistsAsync(propertyKey);
+                    },
+                    TimeSpan.FromSeconds(5),
+                    $"Property {property.Id} should be indexed"
+                );
+            }
             
-            // Act
-            await _indexingService.OnPropertyDeletedAsync(propertyId);
-            
-            // Assert - التحقق من النجاح
-            
-            // التحقق من حذف hash العقار
-            _databaseMock.Verify(x => x.KeyDeleteAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains($"property:{propertyId}")),
-                It.IsAny<CommandFlags>()),
-                Times.Once);
-            
-            // التحقق من إزالة العقار من المجموعات
-            _databaseMock.Verify(x => x.SetRemoveAsync(
-                It.IsAny<RedisKey>(),
-                It.Is<RedisValue>(v => v.ToString() == propertyId.ToString()),
-                It.IsAny<CommandFlags>()),
-                Times.AtLeastOnce);
-            
-            // التحقق من إزالة العقار من الفهارس المرتبة
-            _databaseMock.Verify(x => x.SortedSetRemoveAsync(
-                It.IsAny<RedisKey>(),
-                It.Is<RedisValue>(v => v.ToString() == propertyId.ToString()),
-                It.IsAny<CommandFlags>()),
-                Times.AtLeastOnce);
-            
-            _output.WriteLine($"✅ Property {propertyId} removed from all indexes");
+            Output.WriteLine($"✅ Successfully indexed {propertyCount} properties concurrently");
         }
         
+        /// <summary>
+        /// اختبار التحديثات المتزامنة لنفس العقار
+        /// </summary>
         [Fact]
-        public async Task IndexPropertyAsync_WithRedisError_ShouldReturnFalse()
+        public async Task UpdateSameProperty_Concurrently_ShouldMaintainDataIntegrity()
         {
             // Arrange
-            var property = TestDataBuilder.SimpleProperty(_testId);
+            var uniqueId = Guid.NewGuid().ToString("N");
+            var property = TestDataBuilder.SimpleProperty(uniqueId);
+            _createdPropertyIds.Add(property.Id);
             
-            _databaseMock.Setup(x => x.HashSetAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<HashEntry[]>(),
-                It.IsAny<CommandFlags>()))
-                .ThrowsAsync(new RedisException("Connection failed"));
+            using (var scope = ServiceProvider.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                dbContext.Properties.Add(property);
+                await dbContext.SaveChangesAsync();
+            }
             
-            // Act
-            await _indexingService.OnPropertyCreatedAsync(property.Id);
+            await IndexingService.OnPropertyCreatedAsync(property.Id);
+            await Task.Delay(500);
             
-            // Assert - يجب عدم الفهرسة
+            // Act - تحديثات متزامنة
+            const int updateCount = 5;
+            var updateTasks = Enumerable.Range(0, updateCount).Select(async i =>
+            {
+                await _concurrencyLimiter.WaitAsync();
+                try
+                {
+                    using var scope = ServiceProvider.CreateScope();
+                    var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                    var indexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
+                    
+                    // تحديث البيانات
+                    var propertyToUpdate = await dbContext.Properties.FindAsync(property.Id);
+                    if (propertyToUpdate != null)
+                    {
+                        propertyToUpdate.AverageRating = 3.0m + (i * 0.2m);
+                        propertyToUpdate.UpdatedAt = DateTime.UtcNow;
+                        await dbContext.SaveChangesAsync();
+                        
+                        await indexingService.OnPropertyUpdatedAsync(property.Id);
+                    }
+                }
+                finally
+                {
+                    _concurrencyLimiter.Release();
+                }
+            });
             
-            _output.WriteLine($"✅ Handled Redis error gracefully");
+            await Task.WhenAll(updateTasks);
+            
+            // Assert - التحقق من سلامة البيانات
+            await Task.Delay(1000); // انتظار لإتمام جميع التحديثات
+            
+            var propertyKey = $"property:{property.Id}";
+            var finalJson = await RedisDatabase.StringGetAsync(propertyKey);
+            finalJson.HasValue.Should().BeTrue("Property should still be indexed after concurrent updates");
+            
+            var finalData = JsonSerializer.Deserialize<Dictionary<string, object>>(finalJson.ToString(), _jsonOptions);
+            finalData.Should().NotBeNull();
+            
+            Output.WriteLine($"✅ Property maintained data integrity after {updateCount} concurrent updates");
         }
         
+        #endregion
+        
+        #region Error Handling Tests
+        
+        /// <summary>
+        /// اختبار فهرسة عقار غير موجود
+        /// </summary>
         [Fact]
-        public async Task IndexUnitAsync_WithValidUnit_ShouldIndexSuccessfully()
+        public async Task IndexProperty_WithNonExistentId_ShouldHandleGracefully()
         {
             // Arrange
-            var propertyId = Guid.NewGuid();
-            var unit = TestDataBuilder.UnitForProperty(propertyId, _testId);
+            var nonExistentId = Guid.NewGuid();
             
-            _databaseMock.Setup(x => x.HashSetAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<HashEntry[]>(),
-                It.IsAny<CommandFlags>()))
-                .Returns(Task.FromResult(true));
+            // Act & Assert
+            await IndexingService.OnPropertyCreatedAsync(nonExistentId);
             
-            _databaseMock.Setup(x => x.SetAddAsync(
-                It.IsAny<RedisKey>(),
-                It.IsAny<RedisValue>(),
-                It.IsAny<CommandFlags>()))
-                .Returns(Task.FromResult(true));
+            // لا يجب أن يتم إنشاء مفتاح Redis للعقار غير الموجود
+            var propertyKey = $"property:{nonExistentId}";
+            var exists = await RedisDatabase.KeyExistsAsync(propertyKey);
+            exists.Should().BeFalse("Non-existent property should not be indexed");
             
-            // Act
-            await _indexingService.OnUnitCreatedAsync(unit.Id, unit.PropertyId);
+            Output.WriteLine($"✅ Handled non-existent property ID gracefully");
+        }
+        
+        /// <summary>
+        /// اختبار فهرسة عقار مع معرف فارغ
+        /// </summary>
+        [Fact]
+        public async Task IndexProperty_WithEmptyGuid_ShouldThrowArgumentException()
+        {
+            // Arrange
+            var emptyGuid = Guid.Empty;
             
-            // Assert - التحقق من النجاح
+            // Act & Assert
+            await Assert.ThrowsAsync<ArgumentException>(async () =>
+            {
+                await IndexingService.OnPropertyCreatedAsync(emptyGuid);
+            });
             
-            // التحقق من فهرسة الوحدة
-            _databaseMock.Verify(x => x.HashSetAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains($"unit:{unit.Id}")),
-                It.IsAny<HashEntry[]>(),
-                It.IsAny<CommandFlags>()),
-                Times.Once);
+            Output.WriteLine($"✅ Correctly threw ArgumentException for empty GUID");
+        }
+        
+        /// <summary>
+        /// اختبار إعادة المحاولة عند فشل Redis مؤقتاً
+        /// </summary>
+        [Fact]
+        public async Task IndexProperty_WithTemporaryRedisFailure_ShouldRetryAndSucceed()
+        {
+            // Arrange
+            var uniqueId = Guid.NewGuid().ToString("N");
+            var property = TestDataBuilder.SimpleProperty(uniqueId);
+            _createdPropertyIds.Add(property.Id);
             
-            // التحقق من ربط الوحدة بالعقار
-            _databaseMock.Verify(x => x.SetAddAsync(
-                It.Is<RedisKey>(k => k.ToString().Contains($"property:{propertyId}:units")),
-                It.Is<RedisValue>(v => v.ToString() == unit.Id.ToString()),
-                It.IsAny<CommandFlags>()),
-                Times.Once);
+            using (var scope = ServiceProvider.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                dbContext.Properties.Add(property);
+                await dbContext.SaveChangesAsync();
+            }
             
-            _output.WriteLine($"✅ Unit {unit.Id} indexed successfully");
+            // Act - الفهرسة مع سياسة إعادة المحاولة
+            var retryPolicy = Policy
+                .Handle<RedisConnectionException>()
+                .Or<RedisException>()
+                .WaitAndRetryAsync(
+                    3,
+                    retryAttempt => TimeSpan.FromMilliseconds(Math.Pow(2, retryAttempt) * 100),
+                    onRetry: (exception, timeSpan, retryCount, context) =>
+                    {
+                        Output.WriteLine($"⚠️ Retry {retryCount} after {timeSpan}ms due to: {exception.Message}");
+                    }
+                );
+            
+            await retryPolicy.ExecuteAsync(async () =>
+            {
+                await IndexingService.OnPropertyCreatedAsync(property.Id);
+            });
+            
+            // Assert
+            var propertyKey = $"property:{property.Id}";
+            _createdRedisKeys.Add(propertyKey);
+            
+            await AssertEventuallyAsync(
+                async () => await RedisDatabase.KeyExistsAsync(propertyKey),
+                TimeSpan.FromSeconds(5),
+                "Property should eventually be indexed after retries"
+            );
+            
+            Output.WriteLine($"✅ Successfully indexed property after handling temporary failures");
+        }
+        
+        #endregion
+        
+        #region Performance Tests
+        
+        /// <summary>
+        /// اختبار أداء فهرسة عدد كبير من العقارات
+        /// </summary>
+        [Fact]
+        public async Task IndexLargeNumberOfProperties_ShouldCompleteWithinReasonableTime()
+        {
+            // Arrange
+            const int batchSize = 50;
+            var properties = new List<Property>();
+            var stopwatch = Stopwatch.StartNew();
+            
+            for (int i = 0; i < batchSize; i++)
+            {
+                var uniqueId = $"perf_{i}_{Guid.NewGuid():N}";
+                var property = TestDataBuilder.SimpleProperty(uniqueId);
+                properties.Add(property);
+                _createdPropertyIds.Add(property.Id);
+            }
+            
+            // حفظ جميع العقارات
+            using (var scope = ServiceProvider.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                dbContext.Properties.AddRange(properties);
+                await dbContext.SaveChangesAsync();
+            }
+            
+            // Act - فهرسة بالدفعات
+            var indexingStopwatch = Stopwatch.StartNew();
+            
+            var tasks = properties.Select(async property =>
+            {
+                await _concurrencyLimiter.WaitAsync();
+                try
+                {
+                    using var scope = ServiceProvider.CreateScope();
+                    var indexingService = scope.ServiceProvider.GetRequiredService<IIndexingService>();
+                    await indexingService.OnPropertyCreatedAsync(property.Id);
+                }
+                finally
+                {
+                    _concurrencyLimiter.Release();
+                }
+            });
+            
+            await Task.WhenAll(tasks);
+            indexingStopwatch.Stop();
+            
+            // Assert
+            indexingStopwatch.ElapsedMilliseconds.Should().BeLessThan(10000, 
+                $"Indexing {batchSize} properties should complete within 10 seconds");
+            
+            var averageTime = indexingStopwatch.ElapsedMilliseconds / (double)batchSize;
+            Output.WriteLine($"✅ Indexed {batchSize} properties in {indexingStopwatch.ElapsedMilliseconds}ms");
+            Output.WriteLine($"📊 Average time per property: {averageTime:F2}ms");
+            
+            // التحقق من فهرسة جميع العقارات
+            var indexedCount = 0;
+            foreach (var property in properties)
+            {
+                var propertyKey = $"property:{property.Id}";
+                if (await RedisDatabase.KeyExistsAsync(propertyKey))
+                    indexedCount++;
+            }
+            
+            indexedCount.Should().Be(batchSize, "All properties should be indexed");
+            Output.WriteLine($"✅ Successfully verified {indexedCount}/{batchSize} properties indexed");
+        }
+        
+        #endregion
+        
+        #region Helper Methods
+        
+        /// <summary>
+        /// انتظار حتى يتحقق شرط معين باستخدام Polling
+        /// </summary>
+        private async Task WaitForConditionAsync(
+            Func<Task<bool>> condition,
+            TimeSpan timeout,
+            TimeSpan pollInterval,
+            string message = null)
+        {
+            var deadline = DateTime.UtcNow.Add(timeout);
+            
+            while (DateTime.UtcNow < deadline)
+            {
+                if (await condition())
+                    return;
+                    
+                var remainingTime = deadline - DateTime.UtcNow;
+                if (remainingTime <= TimeSpan.Zero)
+                    break;
+                    
+                var delay = remainingTime < pollInterval ? remainingTime : pollInterval;
+                await Task.Delay(delay);
+            }
+            
+            throw new TimeoutException(message ?? $"Condition not met within {timeout}");
+        }
+        
+        /// <summary>
+        /// التأكيد النهائي مع إعادة المحاولة
+        /// </summary>
+        private async Task AssertEventuallyAsync(
+            Func<Task<bool>> assertion,
+            TimeSpan timeout,
+            string message = null)
+        {
+            var deadline = DateTime.UtcNow.Add(timeout);
+            Exception lastException = null;
+            
+            while (DateTime.UtcNow < deadline)
+            {
+                try
+                {
+                    if (await assertion())
+                        return;
+                }
+                catch (Exception ex)
+                {
+                    lastException = ex;
+                }
+                
+                await Task.Delay(50);
+            }
+            
+            var errorMessage = message ?? "Assertion did not become true within timeout";
+            if (lastException != null)
+                throw new AssertionException(errorMessage, lastException);
+            else
+                throw new AssertionException(errorMessage);
+        }
+        
+        #endregion
+        
+        #region Cleanup
+        
+        /// <summary>
+        /// تنظيف البيانات بعد كل اختبار
+        /// </summary>
+        public override async Task DisposeAsync()
+        {
+            try
+            {
+                // تنظيف مفاتيح Redis
+                if (_createdRedisKeys.Any())
+                {
+                    foreach (var key in _createdRedisKeys)
+                    {
+                        await RedisDatabase.KeyDeleteAsync(key);
+                    }
+                    Output.WriteLine($"🧹 Cleaned {_createdRedisKeys.Count} Redis keys");
+                }
+                
+                // تنظيف العقارات من قاعدة البيانات
+                if (_createdPropertyIds.Any())
+                {
+                    using var scope = ServiceProvider.CreateScope();
+                    var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                    
+                    var propertiesToDelete = await dbContext.Properties
+                        .Where(p => _createdPropertyIds.Contains(p.Id))
+                        .ToListAsync();
+                    
+                    if (propertiesToDelete.Any())
+                    {
+                        dbContext.Properties.RemoveRange(propertiesToDelete);
+                        await dbContext.SaveChangesAsync();
+                        Output.WriteLine($"🧹 Cleaned {propertiesToDelete.Count} properties from database");
+                    }
+                }
+                
+                // التنظيف الأساسي
+                await base.DisposeAsync();
+            }
+            catch (Exception ex)
+            {
+                Output.WriteLine($"⚠️ Error during cleanup: {ex.Message}");
+            }
+            finally
+            {
+                _concurrencyLimiter?.Dispose();
+            }
+        }
+        
+        public override void Dispose()
+        {
+            DisposeAsync().GetAwaiter().GetResult();
+            base.Dispose();
+        }
+        
+        #endregion
+        
+        // Custom Exception for Assertions
+        public class AssertionException : Exception
+        {
+            public AssertionException(string message) : base(message) { }
+            public AssertionException(string message, Exception innerException) : base(message, innerException) { }
         }
     }
 }

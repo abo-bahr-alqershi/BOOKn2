@@ -48,12 +48,12 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
         {
             // استخدام GUID كامل لكل عقار
             var propertyGuid = Guid.NewGuid();
-            var uniqueName = GetUniqueId("PROP");
-            testId ??= Guid.NewGuid().ToString("N");
+            var uniqueName = GetUniqueId("P"); // تقصير لتجنب تجاوز 100 حرف
+            testId ??= Guid.NewGuid().ToString("N").Substring(0, 8); // تقصير testId
             
             var faker = new Faker<Property>("ar")
                 .RuleFor(p => p.Id, f => propertyGuid)
-                .RuleFor(p => p.Name, f => $"TEST_PROP_{uniqueName}_{testId}")
+                .RuleFor(p => p.Name, f => $"TP_{uniqueName.Substring(0, Math.Min(uniqueName.Length, 15))}_{testId}")
                 .RuleFor(p => p.Description, f => f.Lorem.Paragraph())
                 .RuleFor(p => p.City, f => f.PickRandom("صنعاء", "عدن", "تعز", "الحديدة", "إب"))
                 .RuleFor(p => p.Address, f => f.Address.FullAddress())
@@ -159,14 +159,13 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
         /// </summary>
         public static YemenBooking.Core.Entities.Unit SimpleUnit(string testId = null)
         {
-            // استخدام GUID كامل لكل وحدة
             var unitGuid = Guid.NewGuid();
-            var uniqueName = GetUniqueId("UNIT");
-            testId ??= Guid.NewGuid().ToString("N");
+            var uniqueName = GetUniqueId("U"); // تقصير
+            testId ??= Guid.NewGuid().ToString("N").Substring(0, 8); // تقصير testId
             
             var faker = new Faker<YemenBooking.Core.Entities.Unit>("ar")
                 .RuleFor(u => u.Id, f => unitGuid)
-                .RuleFor(u => u.Name, f => $"TEST_UNIT_{uniqueName}_{testId}")
+                .RuleFor(u => u.Name, f => $"TU_{uniqueName.Substring(0, Math.Min(uniqueName.Length, 15))}_{testId}")
                 .RuleFor(u => u.UnitTypeId, f => GetRandomUnitTypeId())
                 .RuleFor(u => u.AdultsCapacity, f => f.Random.Int(1, 4))
                 .RuleFor(u => u.ChildrenCapacity, f => f.Random.Int(0, 2))
@@ -187,6 +186,12 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
         {
             var unit = SimpleUnit(testId);
             unit.PropertyId = propertyId;
+            unit.UnitTypeId = Guid.Parse("20000000-0000-0000-0000-000000000001"); // غرفة مفردة
+            // تقصير الاسم إذا كان طويلاً جداً
+            if (unit.Name.Length > 100)
+            {
+                unit.Name = unit.Name.Substring(0, 100);
+            }
             return unit;
         }
         
@@ -205,6 +210,7 @@ namespace YemenBooking.IndexingTests.Infrastructure.Builders
                     UnitId = unit.Id,
                     StartDate = from,
                     EndDate = to,
+                    Status = "available", // إضافة الحالة المطلوبة
                     CreatedAt = DateTime.UtcNow
                 }
             };

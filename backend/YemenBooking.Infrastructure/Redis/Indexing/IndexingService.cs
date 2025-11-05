@@ -514,6 +514,8 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 UnitTypeId = unit.UnitTypeId,
                 UnitTypeName = unit.UnitType?.Name,
                 MaxCapacity = unit.MaxCapacity,
+                AdultsCapacity = unit.AdultsCapacity ?? 0,
+                ChildrenCapacity = unit.ChildrenCapacity ?? 0,
                 BasePrice = unit.BasePrice?.Amount ?? 0,
                 Currency = unit.BasePrice?.Currency ?? "YER",
                 IsActive = unit.IsActive
@@ -629,8 +631,14 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
                 var propertyKey = $"{PROPERTY_KEY_PREFIX}{propertyId}";
                 
                 // تحديث الأسعار
-                var minPrice = property.Units?.Min(u => u.BasePrice?.Amount ?? 0) ?? 0;
-                var maxPrice = property.Units?.Max(u => u.BasePrice?.Amount ?? 0) ?? 0;
+                decimal minPrice = 0;
+                decimal maxPrice = 0;
+                
+                if (property.Units?.Any() == true)
+                {
+                    minPrice = property.Units.Min(u => u.BasePrice?.Amount ?? 0);
+                    maxPrice = property.Units.Max(u => u.BasePrice?.Amount ?? 0);
+                }
                 
                 // تحديث فهرس السعر
                 if (minPrice > 0)
@@ -727,6 +735,8 @@ namespace YemenBooking.Infrastructure.Redis.Indexing
         public Guid UnitTypeId { get; set; }
         public string UnitTypeName { get; set; }
         public int MaxCapacity { get; set; }
+        public int AdultsCapacity { get; set; }
+        public int ChildrenCapacity { get; set; }
         public decimal BasePrice { get; set; }
         public string Currency { get; set; }
         public bool IsActive { get; set; }

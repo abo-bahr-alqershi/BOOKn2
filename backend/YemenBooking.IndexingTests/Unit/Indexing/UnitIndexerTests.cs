@@ -73,9 +73,13 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
             unitData.HasValue.Should().BeTrue("Unit should be indexed in Redis");
             
             var indexedData = JsonConvert.DeserializeObject<dynamic>(unitData.ToString());
-            ((string)indexedData.propertyId).Should().Be(property.Id.ToString());
-            ((string)indexedData.name).Should().Be(unit.Name);
-            ((int)indexedData.maxCapacity).Should().Be(unit.MaxCapacity);
+            string propertyIdStr = indexedData.propertyId;
+            string name = indexedData.name;
+            int maxCapacity = indexedData.maxCapacity;
+            
+            propertyIdStr.Should().Be(property.Id.ToString());
+            name.Should().Be(unit.Name);
+            maxCapacity.Should().Be(unit.MaxCapacity);
             
             Output.WriteLine($"✅ Unit {unit.Id} indexed with all fields");
         }
@@ -129,17 +133,27 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
             var scopedDb = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
             var scopedIndexing = scope.ServiceProvider.GetRequiredService<IIndexingService>();
             
-            var nonExistingPropertyId = Guid.NewGuid();
-            var unit = TestDataBuilder.UnitForProperty(nonExistingPropertyId, $"{TestId}_orphan");
+            // إنشاء عقار وهمي للاختبار
+            var fakePropertyId = Guid.NewGuid();
+            var property = TestDataBuilder.SimpleProperty($"{TestId}_fake");
+            property.Id = fakePropertyId; // استخدام ID محدد
+            await scopedDb.Properties.AddAsync(property);
+            await scopedDb.SaveChangesAsync();
+            TrackEntity(property.Id);
             
-            // إنشاء وحدة بدون عقار
+            // إنشاء وحدة للعقار
+            var unit = TestDataBuilder.UnitForProperty(property.Id, $"{TestId}_test");
             await scopedDb.Units.AddAsync(unit);
             await scopedDb.SaveChangesAsync();
             TrackEntity(unit.Id);
             
-            // Act & Assert
+            // حذف العقار لمحاكاة عدم وجوده
+            scopedDb.Properties.Remove(property);
+            await scopedDb.SaveChangesAsync();
+            
+            // Act & Assert - محاولة فهرسة وحدة لعقار غير موجود
             await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-                await scopedIndexing.OnUnitCreatedAsync(unit.Id, nonExistingPropertyId)
+                await scopedIndexing.OnUnitCreatedAsync(unit.Id, property.Id)
             );
             
             Output.WriteLine($"✅ Exception thrown for non-existing property");
@@ -177,7 +191,8 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
             unitData.HasValue.Should().BeTrue("Inactive unit should still be indexed");
             
             var indexedData = JsonConvert.DeserializeObject<dynamic>(unitData.ToString());
-            ((bool)indexedData.isActive).Should().BeFalse();
+            bool isActive = indexedData.isActive;
+            isActive.Should().BeFalse();
             
             Output.WriteLine($"✅ Inactive unit indexed successfully");
         }
@@ -331,7 +346,8 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
             unitData.HasValue.Should().BeTrue();
             
             var indexedData = JsonConvert.DeserializeObject<dynamic>(unitData.ToString());
-            ((decimal)indexedData.basePrice).Should().Be(200);
+            decimal basePrice = indexedData.basePrice;
+            basePrice.Should().Be(200);
             
             Output.WriteLine($"✅ Unit update handled correctly");
         }
@@ -344,35 +360,43 @@ namespace YemenBooking.IndexingTests.Unit.Indexing
             var scopedDb = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
             var scopedIndexing = scope.ServiceProvider.GetRequiredService<IIndexingService>();
             
-            // إنشاء عقار ووحدة
-            var property = TestDataBuilder.SimpleProperty($"{TestId}_delete");
+            // إنشاء عقار مع وحدتين على الأقل
+            var property = TestDataBuilder.PropertyWithUnits(2, $"{TestId}_delete");
             await scopedDb.Properties.AddAsync(property);
             await scopedDb.SaveChangesAsync();
             TrackEntity(property.Id);
+            TrackEntities(property.Units.Select(u => u.Id));
             
-            var unit = TestDataBuilder.UnitForProperty(property.Id, $"{TestId}_delete");
-            await scopedDb.Units.AddAsync(unit);
-            await scopedDb.SaveChangesAsync();
+            // فهرسة العقار ووحداته
+            await scopedIndexing.OnPropertyCreatedAsync(property.Id);
+            foreach (var unit in property.Units)
+            {
+                await scopedIndexing.OnUnitCreatedAsync(unit.Id, property.Id);
+            }
             
-            // فهرسة
-            await scopedIndexing.OnUnitCreatedAsync(unit.Id, property.Id);
-            
-            // التحقق من الفهرسة
-            var unitKey = $"unit:{unit.Id}";
+            // التحقق من فهرسة الوحدة الأولى
+            var firstUnit = property.Units.First();
+            var unitKey = $"unit:{firstUnit.Id}";
             var beforeDelete = await RedisDatabase.StringGetAsync(unitKey);
             beforeDelete.HasValue.Should().BeTrue("Unit should be indexed before deletion");
             
-            // Act - حذف الوحدة
-            scopedDb.Units.Remove(unit);
+            // Act - حذف وحدة واحدة فقط (ليس كل الوحدات)
+            scopedDb.Units.Remove(firstUnit);
             await scopedDb.SaveChangesAsync();
             
-            await scopedIndexing.OnUnitDeletedAsync(unit.Id, property.Id);
+            await scopedIndexing.OnUnitDeletedAsync(firstUnit.Id, property.Id);
             
             // Assert - التحقق من الحذف
             var afterDelete = await RedisDatabase.StringGetAsync(unitKey);
             afterDelete.HasValue.Should().BeFalse("Unit should be deleted from Redis");
             
-            Output.WriteLine($"✅ Unit deletion handled correctly");
+            // التحقق من بقاء الوحدة الثانية
+            var secondUnit = property.Units.Last();
+            var secondUnitKey = $"unit:{secondUnit.Id}";
+            var secondUnitData = await RedisDatabase.StringGetAsync(secondUnitKey);
+            secondUnitData.HasValue.Should().BeTrue("Other units should remain indexed");
+            
+            Output.WriteLine($"✅ Unit deletion handled correctly with remaining units");
         }
         
         [Fact]

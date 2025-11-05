@@ -231,38 +231,73 @@ namespace YemenBooking.IndexingTests.Infrastructure.Helpers
         /// </summary>
         public async Task CleanupAsync()
         {
-            using var scope = _serviceProvider.CreateScope();
-            var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
-            
-            // حذف من Redis
-            foreach (var id in _trackedPropertyIds)
+            try
             {
-                var key = $"property:{id}";
-                await _redisDatabase.KeyDeleteAsync(key);
-                _trackedRedisKeys.Remove(key);
-            }
-            
-            // حذف مفاتيح Redis الأخرى
-            foreach (var key in _trackedRedisKeys)
-            {
-                await _redisDatabase.KeyDeleteAsync(key);
-            }
-            
-            // حذف من قاعدة البيانات
-            if (_trackedPropertyIds.Any())
-            {
-                var properties = await dbContext.Properties
-                    .Where(p => _trackedPropertyIds.Contains(p.Id))
-                    .ToListAsync();
+                // حذف من Redis أولاً (لا يحتاج ServiceProvider)
+                foreach (var id in _trackedPropertyIds)
+                {
+                    var key = $"property:{id}";
+                    try
+                    {
+                        await _redisDatabase.KeyDeleteAsync(key);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning($"Failed to delete Redis key {key}: {ex.Message}");
+                    }
+                    _trackedRedisKeys.Remove(key);
+                }
                 
-                dbContext.Properties.RemoveRange(properties);
-                await dbContext.SaveChangesAsync();
+                // حذف مفاتيح Redis الأخرى
+                foreach (var key in _trackedRedisKeys)
+                {
+                    try
+                    {
+                        await _redisDatabase.KeyDeleteAsync(key);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning($"Failed to delete Redis key {key}: {ex.Message}");
+                    }
+                }
+                
+                // حذف من قاعدة البيانات فقط إذا كان ServiceProvider متاحاً
+                if (_trackedPropertyIds.Any())
+                {
+                    try
+                    {
+                        using var scope = _serviceProvider.CreateScope();
+                        var dbContext = scope.ServiceProvider.GetRequiredService<YemenBookingDbContext>();
+                        
+                        var properties = await dbContext.Properties
+                            .Where(p => _trackedPropertyIds.Contains(p.Id))
+                            .ToListAsync();
+                        
+                        if (properties.Any())
+                        {
+                            dbContext.Properties.RemoveRange(properties);
+                            await dbContext.SaveChangesAsync();
+                        }
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        _logger.LogWarning("ServiceProvider was disposed, skipping database cleanup");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning($"Failed to cleanup database: {ex.Message}");
+                    }
+                }
+                
+                _trackedPropertyIds.Clear();
+                _trackedRedisKeys.Clear();
+                
+                _logger.LogDebug("Test data cleaned up successfully");
             }
-            
-            _trackedPropertyIds.Clear();
-            _trackedRedisKeys.Clear();
-            
-            _logger.LogDebug("Test data cleaned up successfully");
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during test data cleanup");
+            }
         }
         
         private Guid GetPropertyTypeId(string typeName)

@@ -17,22 +17,38 @@ namespace YemenBooking.IndexingTests.Integration
 {
     /// <summary>
     /// اختبارات تكاملية للبحث - تستخدم Redis و PostgreSQL الحقيقيين
+    /// تطبق مبادئ العزل الكامل والحتمية
     /// </summary>
     [Collection("TestContainers")]
     public class SearchIntegrationTests : TestBase
     {
-        private readonly IndexingTestHelper _indexingHelper;
-        private readonly SearchEngine _searchEngine;
+        private IndexingTestHelper _indexingHelper;
+        private SearchEngine _searchEngine;
         
         public SearchIntegrationTests(ITestOutputHelper output) : base(output)
         {
-            var logger = ServiceProvider.GetRequiredService<ILogger<IndexingTestHelper>>();
-            _indexingHelper = new IndexingTestHelper(ServiceProvider, logger);
-            
-            _searchEngine = ServiceProvider.GetRequiredService<SearchEngine>();
+            // التهيئة ستتم في InitializeAsync بعد إنشاء ServiceProvider
         }
         
         protected override bool UseTestContainers() => true;
+        
+        /// <summary>
+        /// تهيئة الخدمات بعد إنشاء ServiceProvider
+        /// </summary>
+        public override async Task InitializeAsync()
+        {
+            await base.InitializeAsync();
+            
+            // استخدام ServiceProvider الرئيسي وليس scope
+            var logger = ServiceProvider.GetRequiredService<ILogger<IndexingTestHelper>>();
+            _indexingHelper = new IndexingTestHelper(ServiceProvider, logger);
+            
+            // إنشاء SearchEngine باستخدام الخدمات المهيئة
+            _searchEngine = new SearchEngine(
+                RedisManager,
+                ServiceProvider,
+                Logger);
+        }
         
         [Fact]
         public async Task SearchAsync_WithEmptyRequest_ShouldReturnAllActiveProperties()
@@ -349,8 +365,21 @@ namespace YemenBooking.IndexingTests.Integration
         
         public override async Task DisposeAsync()
         {
-            await _indexingHelper.CleanupAsync();
-            await base.DisposeAsync();
+            try
+            {
+                if (_indexingHelper != null)
+                {
+                    await _indexingHelper.CleanupAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                Output.WriteLine($"⚠️ Error during cleanup: {ex.Message}");
+            }
+            finally
+            {
+                await base.DisposeAsync();
+            }
         }
     }
 }
